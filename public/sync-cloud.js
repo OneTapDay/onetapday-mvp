@@ -20,8 +20,16 @@ const firebaseConfig = {
   measurementId: "G-DEDSHTT30C"
 };
 
+
+
+
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
+
+const isLocalEnv =
+  ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname) ||
+  window.location.protocol === 'file:';
+
 
 // тот же формат ключа, который ты уже видишь в базе: 1tapday@gmail,com
 function keyFromEmail(email) {
@@ -204,6 +212,11 @@ function writeLocalState(st) {
 if (!window.FirebaseSync) {
   window.FirebaseSync = {
     async saveUserState(email, fullState) {
+      if (isLocalEnv) {
+        console.log("[FirebaseSync] local env, skip cloud save for", email);
+        return;
+      }
+
       const key = keyFromEmail(email);
       if (!key) {
         console.warn("[FirebaseSync] empty email, skip save");
@@ -235,6 +248,14 @@ if (!window.FirebaseSync) {
     },
 
     subscribeUserState(email, callback) {
+      if (isLocalEnv) {
+        console.log("[FirebaseSync] local env, skip cloud subscribe for", email);
+        if (typeof callback === "function") {
+          callback({ kasa: [], tx: [], bills: [], accMeta: {}, settings: {} });
+        }
+        return;
+      }
+
       const key = keyFromEmail(email);
       if (!key) {
         console.warn("[FirebaseSync] empty email, skip subscribe");
@@ -255,3 +276,5 @@ if (!window.FirebaseSync) {
     }
   };
 }
+
+

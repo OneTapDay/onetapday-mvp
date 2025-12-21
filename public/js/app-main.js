@@ -1,4 +1,5 @@
 // OneTapDay front-end main script
+window.__OTD_PATCH = 'P0_XLSX_SIGN_DATE_2025-12-17';
 let _trendSeries = null;
 let _trendColor = '#47b500';
 
@@ -12,7 +13,10 @@ const SUB_TO     = 'otd_sub_to';
 const DEMO_START = 'otd_demo_started_at';
 const DEMO_USED  = 'otd_demo_used'; // флаг: демо уже один раз запускали
 const USER_KEY = 'otd_user'; // email
+const ROLE_KEY = 'otd_role';
+const STATUS_KEY = 'otd_status';
 let REMOTE_OK = localStorage.getItem('remote_disabled')==='1' ? false : true;
+let CLOUD_READY = false;
 
 /* ==== I18N ==== */
 // Old i18n system (M.* dictionaries) removed - now using i18n.js with JSON files
@@ -258,6 +262,13 @@ const asNum = v=>{
   s=s.replace(/[^\d\.\-]/g,'');
   const n=Number(s); return isNaN(n)?0:n;
 };
+
+function escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g, (ch)=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'
+  }[ch]));
+}
+
 function detectCurrency(s){
   s=(s||'').toUpperCase();
   if(/PLN|ZŁ|ZL/.test(s)) return 'PLN';
@@ -268,7 +279,7 @@ function detectCurrency(s){
 function toISO(d){
   if(!d) return ""; const s=String(d).trim();
   let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[0];
-  m=s.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})$/);
+  m=s.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$/);
   if(m){const dd=m[1].padStart(2,'0'),mm=m[2].padStart(2,'0'),yy=m[3].length===2?('20'+m[3]):m[3]; return yy+'-'+mm+'-'+dd;}
   const months = {
     'stycznia':'01','lutego':'02','marca':'03','kwietnia':'04','maja':'05','czerwca':'06','lipca':'07','sierpnia':'08','września':'09','pazdziernika':'10','października':'10','listopada':'11','grudnia':'12',
@@ -300,13 +311,370 @@ function parseCSV(text){
     head.forEach((h,i)=>{let v=(cells[i]||"").trim(); v=v.replace(/\u00A0/g,' ').trim(); obj[h]=v;}); return obj;
   });
 }
+function parseMT940(text){
+  if(!text) return [];
+  text = text.replace(/\r/g,"");
+  const lines = text.split("\n");
+  const out = [];
+  let current = null;
+
+  function pushCurrent(){
+    if(!current) return;
+    if(current.date && current.amount){
+      out.push({
+        "Data": current.date,
+        "Kwota": current.amount,
+        "Opis": current.desc || "",
+        "Kontrahent": current.cp || "",
+        "_src": "mt940"
+      });
+    }
+    current = null;
+  }
+
+  for(const raw of lines){
+    const line = raw.trim();
+    if(!line) continue;
+
+    if(line.startsWith(":61:")){
+      pushCurrent();
+      const body = line.slice(4);
+      const m = body.match(/^(\d{6})(\d{4})?([DC])([0-9,.,]+)(.*)$/);
+      if(!m){
+        continue;
+      }
+      const yy = parseInt(m[1].slice(0,2),10);
+      const mm = m[1].slice(2,4);
+      const dd = m[1].slice(4,6);
+      const year = yy < 70 ? 2000 + yy : 1900 + yy;
+      const dateStr = year + "-" + mm + "-" + dd;
+      let amt = String(m[4] || "").replace(',', '.');
+      if(m[3] === 'D'){
+        if(amt[0] !== '-') amt = "-" + amt;
+      }
+      current = { date: dateStr, amount: amt, desc: "" };
+    }else if(line.startsWith(":86:")){
+      if(!current) continue;
+      const payload = line.slice(4).trim();
+      current.desc = current.desc ? (current.desc + " " + payload) : payload;
+    }else{
+      if(current && line){
+        current.desc = current.desc ? (current.desc + " " + line) : line;
+      }
+    }
+  }
+
+  pushCurrent();
+  return out;
+}
+
+
+
+
+// ===== TX CSV IMPORT SAFE (MVP) =====
+function getTxCsvHeader(text){
+  text = String(text||"").replace(/^\uFEFF/,'').replace(/\r/g,"");
+  const lines = text.split("\n").filter(l=>l.trim());
+  if(!lines.length) return [];
+  const sep=(lines[0].split(";").length>lines[0].split(",").length)?";":",";
+  return smartSplit(lines[0], sep).map(h=>h.trim());
+}
+
+function runTxCsvWizard(header){
+  const cleanHeader = (Array.isArray(header) ? header : []).map(h => String(h||"").trim());
+  const lower = cleanHeader.map(h => h.toLowerCase());
+
+  function findIndex(candidates){
+    // сначала точные совпадения
+    for(let i=0;i<lower.length;i++){
+      const h = lower[i];
+      for(const cand of candidates){
+        if(h === cand) return i;
+      }
+    }
+    // потом "похоже на" (для created/available_on и т.п.)
+    for(let i=0;i<lower.length;i++){
+      const h = lower[i];
+      for(const cand of candidates){
+        if(h.includes(cand) && h.length <= cand.length + 8){
+          return i;
+        }
+      }
+    }
+    return -1;
+  }
+
+  // дата: PLN-банки + Stripe (created / available_on)
+  const dateIdxAuto = findIndex([
+    "data księgowania","data zaksięgowania","data operacji",
+    "data","date","дата","available_on","created"
+  ]);
+
+  // сумма: PLN-банки + Stripe (amount / net)
+  const amountIdxAuto = findIndex([
+    "kwota","kwота","amount","kwota_raw","net"
+  ]);
+
+  // описание
+  const descIdxAuto = findIndex([
+    "opis","tytuł","tytul","description","statement_descriptor","details"
+  ]);
+
+  // контрагент
+  const cpIdxAuto = findIndex([
+    "kontrahent","nazwa kontrahenta","counterparty",
+    "customer","client","sender","recipient","email"
+  ]);
+
+  // если нашли хотя бы дату и сумму — предлагаем автонастройку
+  if(dateIdxAuto >= 0 && amountIdxAuto >= 0){
+    const lines = cleanHeader.map((h,i)=> i + ": " + h).join("\n");
+    let autoInfo =
+      "Попробовал автоматически подобрать колонки для выписки.\n\n" +
+      "Дата: " + dateIdxAuto + " → " + cleanHeader[dateIdxAuto] + "\n" +
+      "Сумма: " + amountIdxAuto + " → " + cleanHeader[amountIdxAuto] + "\n";
+
+    if(descIdxAuto >= 0){
+      autoInfo += "Описание: " + descIdxAuto + " → " + cleanHeader[descIdxAuto] + "\n";
+    }
+    if(cpIdxAuto >= 0){
+      autoInfo += "Контрагент: " + cpIdxAuto + " → " + cleanHeader[cpIdxAuto] + "\n";
+    }
+
+    autoInfo += "\nЕсли всё ок, нажмите OK. Если нет — нажмите Cancel, и можно будет выбрать колонки вручную.\n\n" +
+      "Колонки:\n" + lines;
+
+    const useAuto = confirm(autoInfo);
+    if(useAuto){
+      return {
+        dateIdx: dateIdxAuto,
+        amountIdx: amountIdxAuto,
+        descIdx: descIdxAuto >= 0 ? descIdxAuto : -1,
+        cpIdx: cpIdxAuto >= 0 ? cpIdxAuto : -1
+      };
+    }
+  }
+
+  // fallback: старый ручной режим, но с подсказками по индексам
+  const list = cleanHeader.map((h,i)=> `${i}: ${h}`).join("\n");
+  alert(
+    "Файл выписки не распознан автоматически.\n" +
+    "Выберите колонки вручную.\n\n" +
+    "Колонки:\n" + list
+  );
+
+  const dateIdx = Number(
+    prompt("Номер колонки ДАТЫ:\n\n" + list, String(dateIdxAuto >= 0 ? dateIdxAuto : 0))
+  );
+  const amountIdx = Number(
+    prompt("Номер колонки СУММЫ:\n\n" + list, String(amountIdxAuto >= 0 ? amountIdxAuto : 1))
+  );
+  const descIdx = Number(
+    prompt("Номер колонки ОПИСАНИЯ (можно пусто):\n\n" + list, String(descIdxAuto >= 0 ? descIdxAuto : 2))
+  );
+  const cpIdx = Number(
+    prompt("Номер колонки КОНТРАГЕНТА (можно пусто):\n\n" + list, String(cpIdxAuto >= 0 ? cpIdxAuto : 3))
+  );
+
+  if(Number.isNaN(dateIdx) || Number.isNaN(amountIdx)) return null;
+
+  return {
+    dateIdx,
+    amountIdx,
+    descIdx: Number.isNaN(descIdx) ? -1 : descIdx,
+    cpIdx: Number.isNaN(cpIdx) ? -1 : cpIdx
+  };
+}
+
+
+function buildTxFromMapping(text, m){
+  text = String(text||"").replace(/^\uFEFF/,'').replace(/\r/g,"");
+  const lines = text.split("\n").filter(l=>l.trim());
+  if(lines.length < 2) return [];
+
+  const sep=(lines[0].split(";").length>lines[0].split(",").length)?";":",";
+  lines.shift(); // header line
+
+  const out=[];
+  lines.forEach(line=>{
+    const cells = smartSplit(line, sep);
+
+    const date = (cells[m.dateIdx]||"").trim();
+    const amountRaw = (cells[m.amountIdx]||"").trim();
+    if(!date || !amountRaw) return;
+
+    const amount = (typeof asNum === "function")
+      ? asNum(amountRaw)
+      : Number(String(amountRaw).replace(",", "."));
+
+    if(!amount) return;
+
+    const desc = m.descIdx>=0 ? (cells[m.descIdx]||"").trim() : "";
+    const cp = m.cpIdx>=0 ? (cells[m.cpIdx]||"").trim() : "";
+
+    out.push({
+      "Data": date,
+      "Kwota": amount,
+      "Opis": desc,
+      "Kontrahent": cp,
+      "_src": "csv_wizard"
+    });
+  });
+
+  return out;
+}
+
+function importTxCsvSafe(text){
+  const rows = parseCSV(text);
+
+  // Проверка: есть ли хотя бы одна строка с нормальной датой и суммой
+  const ok = rows.some(r=>{
+    const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"]));
+    const a = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+    return !!d && !!a;
+  });
+
+  if(ok) return rows;
+
+  const header = getTxCsvHeader(text);
+  if(!header.length) return [];
+
+  const m = runTxCsvWizard(header);
+  if(!m) return [];
+
+  return buildTxFromMapping(text, m);
+}
+function buildTxPreviewText(rows){
+  const arr = Array.isArray(rows) ? rows : [];
+  const sample = arr.slice(0, 10);
+
+  const keys = sample[0] ? Object.keys(sample[0]) : [];
+  const showKeys = keys.slice(0, 6);
+
+  let txt = "Превью импорта (первые " + sample.length + " из " + arr.length + ")\n\n";
+
+  if(showKeys.length){
+    txt += "Колонки: " + showKeys.join(", ") + (keys.length > showKeys.length ? "..." : "") + "\n\n";
+  }
+
+  sample.forEach((r, i)=>{
+    const line = showKeys.length
+      ? showKeys.map(k => String(r[k] ?? "")).join(" | ")
+      : JSON.stringify(r);
+
+    txt += (i+1) + ") " + line + "\n";
+  });
+
+  return txt;
+}
+
+function confirmTxImport(rows){
+  const preview = buildTxPreviewText(rows);
+  return confirm(preview + "\n\nИмпортировать эти операции?");
+}
+
+// ===== /TX CSV IMPORT SAFE =====
+
+async function importTxByFile(f){
+  // MVP safety: limit file size to reduce risk of XLSX/regex DoS
+  const MAX_IMPORT_MB = 5;
+  const MAX_IMPORT_BYTES = MAX_IMPORT_MB * 1024 * 1024;
+
+  if(f && f.size && f.size > MAX_IMPORT_BYTES){
+    alert("Файл слишком большой для MVP-импорта (" + MAX_IMPORT_MB + "MB). Рекомендуем экспортировать CSV.");
+    return [];
+  }
+
+  const name = String(f?.name || "").toLowerCase();
+
+  // 1) MT940
+  if(name.endsWith(".mt940") || name.endsWith(".sta") || name.includes("mt940")){
+    const text = await f.text();
+
+    // если у тебя есть парсер MT940
+    if(typeof parseMT940 === "function"){
+      const rows = parseMT940(text);
+      return Array.isArray(rows) ? rows : [];
+    }
+
+    // лёгкая эвристика
+    if(text.includes(":61:") || text.includes(":86:")){
+      alert("Похоже на MT940, но парсер не подключён в этой версии.");
+      return [];
+    }
+  }
+
+// 2) XLSX
+if(name.endsWith(".xlsx") || name.endsWith(".xls")){
+  if(typeof XLSX !== "undefined"){
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+
+    // читаем как 2D массив
+    const table = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+
+    if(!table.length){
+      alert("Пустой XLSX.");
+      return [];
+    }
+
+    // если первая строка выглядит как заголовок-описание выписки
+    let headerRowIndex = 0;
+    const firstCell = String((table[0] && table[0][0]) || "").toLowerCase();
+    if(firstCell.includes("виписка") || firstCell.includes("выписка") || firstCell.includes("statement")){
+      headerRowIndex = 1;
+    }
+
+    const header = (table[headerRowIndex] || []).map(h => String(h || "").trim());
+    const dataRows = table.slice(headerRowIndex + 1);
+
+    const json = dataRows.map(row=>{
+      const o = {};
+      header.forEach((h, i)=>{
+        if(h) o[h] = row[i];
+      });
+      return o;
+    }).filter(o => Object.keys(o).length);
+
+    return json;
+  }
+
+  alert("XLSX не поддерживается в этой сборке (библиотека не подключена).");
+  return [];
+}
+
+
+  // 3) CSV и всё текстовое
+  const text = await f.text();
+
+  // если это выглядит как MT940 по содержимому
+  if(text.includes(":61:") || text.includes(":86:")){
+    if(typeof parseMT940 === "function"){
+      const rows = parseMT940(text);
+      return Array.isArray(rows) ? rows : [];
+    }
+  }
+
+  // основной безопасный путь
+  if(typeof importTxCsvSafe === "function"){
+    return importTxCsvSafe(text) || [];
+  }
+
+  // fallback на старый парсер, если вдруг так
+  if(typeof parseCSV === "function"){
+    return parseCSV(text) || [];
+  }
+
+  return [];
+}
+
 function getVal(obj,keys){
   if(!obj) return ""; for(const k of keys){ if(k in obj && String(obj[k]).trim()!=="") return obj[k]; }
   const low=Object.keys(obj).reduce((m,x)=>(m[x.toLowerCase()]=obj[x],m),{});
   for(const k of keys){const kk=k.toLowerCase(); if(kk in low && String(low[kk]).trim()!="") return low[kk];}
   return "";
 }
-
 
 
 // ==== TREND & SPENDING PANELS ====
@@ -318,7 +686,7 @@ function buildTrendSeries(){
   const kasaArr = Array.isArray(kasa) ? kasa : [];
 
   txArr.forEach(r=>{
-    const d = toISO(getVal(r,["Data księgowania","date","Дата"]));
+    const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"]));
     if(!d) return;
     const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
     if(!amt) return;
@@ -482,6 +850,627 @@ function getAllSpCats(){
   return Object.values(byId);
 }
 
+function getCatById(id){
+  if(!id) return null;
+  const cats = getAllSpCats();
+  return cats.find(c=>String(c.id)===String(id)) || null;
+}
+function formatCatLabel(id){
+  if(!id) return "—";
+  const c = getCatById(id);
+  if(!c) return id;
+  const em = c.emoji || "📦";
+  const lbl = c.label || id;
+  return `${em} ${lbl}`;
+}
+
+function fillQuickCashCat(){
+  const sel = $id('quickCashCat');
+  if(!sel) return;
+  const current = sel.value || "";
+  const cats = getAllSpCats();
+  sel.innerHTML = '';
+  sel.appendChild(new Option("Категория", ""));
+  cats.forEach(c=>{
+    sel.appendChild(new Option(`${c.emoji||"📦"} ${c.label||c.id}`, c.id));
+  });
+  sel.value = current;
+}
+
+
+let catModalState = null;
+
+function getMerchantKeyFor(kind, obj){
+  try{
+    if(kind==='tx'){
+      return String(getVal(obj,["Kontrahent","Counterparty"]) || getVal(obj,["Tytuł/Opis","Opis","title"]) || "").trim().toLowerCase();
+    }
+    if(kind==='bill'){
+      return String(getVal(obj,["Dostawca","Supplier"]) || getVal(obj,["Numer faktury","Invoice number"]) || "").trim().toLowerCase();
+    }
+    if(kind==='kasa'){
+      return String(obj.source || obj.comment || "").trim().toLowerCase();
+    }
+  }catch(e){}
+  return "";
+}
+
+function openCatModal(kind, id){
+  const sel = $id('catSelect');
+  const chk = $id('catApplySame');
+  const mSave = $id('catSaveBtn');
+  const mCancel = $id('catCancelBtn');
+  const overlay = $id('catModal');
+  if(!sel || !overlay) return;
+
+  // Always bring the category modal on top.
+  // On mobile Safari, multiple overlays with the same z-index can make the picker appear “dead”.
+  try{
+    if(overlay.parentElement !== document.body) document.body.appendChild(overlay);
+    else document.body.appendChild(overlay); // move to the end so it stays above other overlays
+    overlay.style.zIndex = '99999';
+  }catch(_){ }
+
+  const cats = getAllSpCats();
+  sel.innerHTML = '';
+  sel.appendChild(new Option("— без категории —", ""));
+  cats.forEach(c=>{
+    const opt = new Option(`${c.emoji||"📦"} ${c.label||c.id}`, c.id);
+    sel.appendChild(opt);
+  });
+
+  let currentObj = null;
+  if(kind==='tx') currentObj = tx.find(x=> String(getVal(x,["ID transakcji","ID","id"])||"")===String(id));
+  if(kind==='bill') currentObj = bills.find(x=> String(getVal(x,["Numer faktury","Numer фактуры","Invoice number"])||"")===String(id));
+  if(kind==='kasa') currentObj = kasa.find(x=> String(x.id)===String(id));
+
+  const currentCat = kind==='kasa' ? (currentObj?.category||"") : (getVal(currentObj,["Kategoria","Category","category"]) || "");
+  sel.value = currentCat || "";
+  if(chk) chk.checked = false;
+
+  catModalState = {kind, id};
+
+  overlay.classList.add('show');
+
+  const close = ()=>{
+    overlay.classList.remove('show');
+    catModalState = null;
+  };
+
+  mCancel && (mCancel.onclick = close);
+
+  mSave && (mSave.onclick = ()=>{
+    if(!catModalState) return close();
+    const newCat = sel.value || "";
+    const applySame = chk && chk.checked;
+
+    if(catModalState.kind==='kasa'){
+      const idx = kasa.findIndex(x=> String(x.id)===String(catModalState.id));
+      if(idx>=0){
+        kasa[idx].category = newCat;
+      }
+      if(applySame){
+        const key = getMerchantKeyFor('kasa', kasa[idx]||{});
+        kasa.forEach(k=>{
+          if(!k.category && getMerchantKeyFor('kasa', k)===key){
+            k.category = newCat;
+          }
+        });
+      }
+    }
+
+    if(catModalState.kind==='tx'){
+      const idx = tx.findIndex(x=> String(getVal(x,["ID transakcji","ID","id"])||"")===String(catModalState.id));
+      if(idx>=0){
+        tx[idx]["Kategoria"] = newCat;
+      }
+      if(applySame){
+        const key = getMerchantKeyFor('tx', tx[idx]||{});
+        tx.forEach(r=>{
+          const has = getVal(r,["Kategoria","Category","category"]);
+          if(!has && getMerchantKeyFor('tx', r)===key){
+            r["Kategoria"] = newCat;
+          }
+        });
+      }
+    }
+
+    if(catModalState.kind==='bill'){
+      const idx = bills.findIndex(x=> String(getVal(x,["Numer faktury","Numer фактуры","Invoice number"])||"")===String(catModalState.id));
+      if(idx>=0){
+        bills[idx]["Kategoria"] = newCat;
+      }
+      if(applySame){
+        const key = getMerchantKeyFor('bill', bills[idx]||{});
+        bills.forEach(r=>{
+          const has = getVal(r,["Kategoria","Category","category"]);
+          if(!has && getMerchantKeyFor('bill', r)===key){
+            r["Kategoria"] = newCat;
+          }
+        });
+      }
+    }
+if(catModalState.kind==='kasa'){
+  const idx = (kasa || []).findIndex(x => String(x.id || '') === String(catModalState.id));
+  if(idx >= 0){
+    kasa[idx].category = newCat;
+  }
+
+  // applySame для кассы можно сделать мягко по comment/source
+  if(applySame && idx >= 0){
+    const key = getMerchantKeyFor ? getMerchantKeyFor('kasa', kasa[idx]||{}) : (
+      (kasa[idx].source || kasa[idx].comment || "")
+    );
+
+    (kasa || []).forEach(r=>{
+      const has = String(r.category || r.Kategoria || "").trim();
+      const rKey = getMerchantKeyFor ? getMerchantKeyFor('kasa', r) : (r.source || r.comment || "");
+      if(!has && rKey === key){
+        r.category = newCat;
+      }
+    });
+  }
+}
+
+
+    saveLocal(); render(); pushState();
+    try{
+      if(window._otdUpdateUncatBadge) window._otdUpdateUncatBadge();
+      const um = document.getElementById('uncatModal');
+      if(um && um.classList.contains('show') && window._otdRenderUncatList) window._otdRenderUncatList();
+    }catch(e){}
+
+    close();
+  });
+}
+
+/* === CSV IMPORT LITE WIZARD (MVP) === */
+function parseCsvRows(text){
+  const lines = String(text||'').split(/\r?\n/).filter(l=>l.trim().length);
+  if(lines.length < 2) return { header: [], rows: [], delim: ',' };
+
+  const delim = (lines[0].includes(';') && !lines[0].includes(',')) ? ';' : ',';
+  const header = lines[0].split(delim).map(s=>s.trim());
+  const rows = lines.slice(1).map(l=> l.split(delim));
+  return { header, rows, delim };
+}
+
+function guessColIndex(header, variants){
+  const low = header.map(h=>String(h||'').toLowerCase());
+  for(const v of variants){
+    const i = low.indexOf(String(v).toLowerCase());
+    if(i >= 0) return i;
+  }
+  return -1;
+}
+
+function runCsvMapWizard(header){
+  const list = header.map((h,i)=> `${i}: ${h}`).join('\n');
+
+  alert(
+    "Файл не распознан автоматически.\n" +
+    "Выберите колонки вручную.\n\n" +
+    "Колонки:\n" + list
+  );
+
+  const dateIdx = Number(prompt("Номер колонки ДАТЫ:\n\n" + list, "0"));
+  const amountIdx = Number(prompt("Номер колонки СУММЫ:\n\n" + list, "1"));
+  const descIdx = Number(prompt("Номер колонки ОПИСАНИЯ (если нет — оставь пустым):\n\n" + list, "2"));
+  const cpIdx = Number(prompt("Номер колонки КОНТРАГЕНТА (если нет — оставь пустым):\n\n" + list, "3"));
+
+  if(Number.isNaN(dateIdx) || Number.isNaN(amountIdx)){
+    throw new Error("Wizard cancelled");
+  }
+
+  return {
+    dateIdx,
+    amountIdx,
+    descIdx: Number.isNaN(descIdx) ? -1 : descIdx,
+    cpIdx: Number.isNaN(cpIdx) ? -1 : cpIdx
+  };
+}
+
+function buildTxFromMappedRows(header, rows, mapping){
+  const out = [];
+  rows.forEach((cells)=>{
+    const date = (cells[mapping.dateIdx] || "").trim();
+    const amountRaw = (cells[mapping.amountIdx] || "").trim();
+    if(!date || !amountRaw) return;
+
+    const amount = (typeof asNum === "function")
+      ? asNum(amountRaw)
+      : Number(String(amountRaw).replace(',', '.'));
+
+    if(!amount) return;
+
+    const desc = mapping.descIdx >= 0 ? (cells[mapping.descIdx] || "").trim() : "";
+    const cp = mapping.cpIdx >= 0 ? (cells[mapping.cpIdx] || "").trim() : "";
+
+    out.push({
+      "Data": date,
+      "Kwota": amount,
+      "Opis": desc,
+      "Kontrahent": cp,
+      "_src": "csv_wizard"
+    });
+  });
+  return out;
+}
+
+async function importTxCsvLiteWizard(text){
+  const { header, rows } = parseCsvRows(text);
+  if(!header.length) throw new Error("empty csv");
+
+  let dateIdx = guessColIndex(header, ["data","date","booking date","transaction date"]);
+  let amountIdx = guessColIndex(header, ["kwota","amount","suma","value"]);
+  let descIdx = guessColIndex(header, ["opis","description","tytuł/opis","title"]);
+  let cpIdx = guessColIndex(header, ["kontrahent","counterparty","nazwa"]);
+
+  let mapping = { dateIdx, amountIdx, descIdx, cpIdx };
+
+  if(dateIdx < 0 || amountIdx < 0){
+    mapping = runCsvMapWizard(header);
+  }
+
+  const newTx = buildTxFromMappedRows(header, rows, mapping);
+  if(!newTx.length) throw new Error("no rows parsed");
+  return newTx;
+}
+/* === /CSV IMPORT LITE WIZARD === */
+
+// Ручная привязка импортированных транзакций к счёту
+function assignImportedTxToAccount(imported){
+  if(!Array.isArray(imported) || !imported.length) return imported;
+
+  accMeta = accMeta && typeof accMeta === "object" ? accMeta : {};
+
+  // Собираем список счетов для выбора
+  const ids = Object.keys(accMeta);
+  const list = ids.map(id=>{
+    const acc = accMeta[id] || {};
+    const name = acc.name || id;
+    const type = acc.type || "";
+    const cur = acc.currency || acc.cur || "";
+    let label = name;
+    if(type) label += " ("+type+")";
+    if(cur) label += " ["+cur+"]";
+    return { id, label };
+  });
+
+  let chosenId = null;
+
+  if(list.length === 0){
+    // нет ни одного счёта — создаём тех-счёт для импортов
+    if(!accMeta["imported_acc"]){
+      accMeta["imported_acc"] = {
+        name: "Imported account",
+        type: "imported",
+        currency: "PLN",
+        include: true
+      };
+    }
+    chosenId = "imported_acc";
+  }else if(list.length === 1){
+    // один счёт — не мучаем пользователя выбором
+    chosenId = list[0].id;
+  }else{
+    // несколько счетов — даём человеку выбрать
+    const msg =
+      "К какому счёту относится эта выписка?\n\n" +
+      list.map((a,idx)=> idx + ": " + a.label).join("\n") +
+      "\n\nВведите номер счёта (или отмените, чтобы пропустить привязку).";
+
+    const ans = prompt(msg, "0");
+    if(ans === null){
+      // пользователь отменил — ничего не трогаем
+      return imported;
+    }
+    const idx = Number(ans);
+    if(!Number.isNaN(idx) && idx >= 0 && idx < list.length){
+      chosenId = list[idx].id;
+    }
+  }
+
+  if(!chosenId) return imported;
+
+  imported.forEach(t=>{
+    if(t){
+      if(!t._acc) t._acc = chosenId;
+      // make account visible to exporters & account manager (most code reads 'ID konta')
+      if(!getVal(t,["ID konta","IBAN","account"])) t["ID konta"] = chosenId;
+    }
+  });
+
+  return imported;
+}
+
+
+// ===== AUTO ACCOUNTS FIX (MVP) =====
+function normalizeAutoAccountsAfterImport(){
+  try{
+    tx = Array.isArray(tx) ? tx : [];
+    accMeta = accMeta && typeof accMeta === "object" ? accMeta : {};
+
+    // 1) соберём список аккаунтов, которые выглядят как мусор из inferAccounts
+    const keys = Object.keys(accMeta);
+    const txLike = keys.filter(k => /^tx-\d{4}-\d{2}-\d{2}/.test(String(k)));
+
+    // если мусора мало - не трогаем
+    if(txLike.length < 5) return;
+
+    // 2) создаём единый тех-счёт
+    if(!accMeta["imported_acc"]){
+      accMeta["imported_acc"] = {
+        name: "Imported account",
+        currency: "PLN",
+        type: "Biznes",
+        start: 0
+      };
+    }
+
+    // 3) помечаем транзакции без нормального счёта
+    tx.forEach(r=>{
+      if(!r) return;
+
+      const hasAcc =
+        (typeof getVal === "function" && getVal(r, [
+          "ID konta","ID konta (lub IBAN)","Konto","Account","IBAN",
+          "konto","account","iban","id konto","id.conto.iban.account.id"
+        ])) ||
+        r._acc;
+
+      if(!hasAcc){
+        r._acc = "imported_acc";
+      }
+    });
+
+    // 4) удаляем мусорные авто-счета
+    txLike.forEach(k => { delete accMeta[k]; });
+
+    if(typeof saveLocal === "function") saveLocal();
+  }catch(e){
+    console.error("normalizeAutoAccountsAfterImport error", e);
+  }
+}
+// ===== /AUTO ACCOUNTS FIX (MVP) =====
+// ===== XLSX/CSV NORMALIZE TO TX SCHEMA (MVP) =====
+function safeStr(x){ return String(x ?? "").trim(); }
+
+function normalizeImportedTxRows(rows){
+  const arr = Array.isArray(rows) ? rows : [];
+  const out = [];
+
+  arr.forEach(r=>{
+    if(!r || typeof r !== "object") return;
+
+    // дата
+    const date =
+      getVal(r, ["Data","Дата","Дата операції","Data księgowania","Date"]) || "";
+
+    // описание
+    const desc =
+      getVal(r, ["Opis","Опис","Опис операції","Tytuł/Opis","description","Title"]) || "";
+
+    // карта/счёт из файла (ключ к нормальным аккаунтам)
+    const card =
+      getVal(r, ["Картка","Karta","Card","Карта"]) || "";
+
+    // суммы: сначала в валюте транзакции, потом карты
+    const amountTxRaw =
+      getVal(r, ["Kwota","amount","Kwota_raw",
+                 "Сума","Сума в валюті транзакції","Сума в валюті операції"]) || "";
+
+    const amountCardRaw =
+      getVal(r, ["Сума в валюті картки","Сума в валюті карти","Сума в валюті рахунку","Сума в валюті картки/рахунку","Сума в валюті картки"]) || "";
+
+    const currencyTx =
+      getVal(r, ["Waluta","currency",
+                 "Валюта","Валюта транзакції","Валюта операції"]) || "";
+
+    const currencyCard =
+      getVal(r, ["Валюта картки","Валюта карти","Валюта рахунку","Валюта картки"]) || "";
+
+    const currency = safeStr(currencyTx || currencyCard) || "PLN";
+
+    const cat =
+      getVal(r, ["Kategoria","Category","category",
+                 "Категорія","Категория"]) || "";
+
+    const cp =
+      getVal(r, ["Kontrahent","Counterparty","Контрагент"]) || "";
+
+    const _n = (v)=> (typeof asNum === "function") ? asNum(v) : Number(String(v||"").replace(",", "."));
+    const amtTx = _n(amountTxRaw);
+    const amtCard = _n(amountCardRaw);
+
+    // переносим знак: если в валюте транзакции нет минуса, но в валюте карты он есть — применяем минус к валюте транзакции
+    let kw = 0;
+    if(Number.isFinite(amtTx) && amtTx !== 0){
+      kw = amtTx;
+      if(kw > 0 && Number.isFinite(amtCard) && amtCard < 0) kw = -Math.abs(kw);
+      if(kw < 0 && Number.isFinite(amtCard) && amtCard > 0) kw = -Math.abs(kw);
+    } else if(Number.isFinite(amtCard) && amtCard !== 0){
+      kw = amtCard;
+    }
+
+    // если вообще нечего нормализовать - пропускаем
+    if(!safeStr(date) && !kw && !safeStr(desc)) return;
+
+    const nr = { ...r };
+    const iso = toISO(date);
+    nr["Data"] = safeStr(iso || date);
+    nr["date"] = safeStr(iso || "");
+    if(iso) nr["Data księgowania"] = iso;
+    if(iso) nr["Дата"] = iso;
+    nr["Kwota"] = kw || 0;
+    nr["Opis"] = safeStr(desc);
+    nr["Kontrahent"] = safeStr(cp);
+    nr["Waluta"] = safeStr(currency) || "PLN";
+    if(cat) nr["Kategoria"] = safeStr(cat);
+
+    // стабилизируем аккаунт по "Картка"
+    if(card){
+      const accId = "card_" + safeStr(card).toLowerCase().replace(/\s+/g,"_").slice(0,40);
+      nr._acc = accId;
+      nr._accLabel = safeStr(card);
+      if(!getVal(nr,["ID konta","IBAN","account"])) nr["ID konta"] = accId;
+    }
+
+    out.push(nr);
+  });
+
+  return out;
+}
+
+function ensureCardAccountsFromTx(){
+  accMeta = accMeta && typeof accMeta === "object" ? accMeta : {};
+  const arr = Array.isArray(tx) ? tx : [];
+
+  arr.forEach(r=>{
+    if(!r || !r._acc || !String(r._acc).startsWith("card_")) return;
+
+    if(!accMeta[r._acc]){
+      const label = r._accLabel || r._acc;
+      const cur = getVal(r, ["Waluta","Валюта","Валюта транзакції","Валюта картки"]) || "PLN";
+
+      accMeta[r._acc] = {
+        name: String(label),
+        currency: String(cur),
+        type: "Biznes",
+        start: 0
+      };
+    }
+  });
+}
+
+function dropTxGeneratedAccounts(){
+  accMeta = accMeta && typeof accMeta === "object" ? accMeta : {};
+  Object.keys(accMeta).forEach(k=>{
+    if(/^tx-\d{4}-\d{2}-\d{2}/.test(String(k))){
+      delete accMeta[k];
+    }
+  });
+}
+// ===== /XLSX/CSV NORMALIZE TO TX SCHEMA =====
+// ===== BILLS IMPORT NORMALIZE (MVP) =====
+function normalizeImportedBillsRows(rows){
+  const arr = Array.isArray(rows) ? rows : [];
+  const out = [];
+
+  arr.forEach(r=>{
+    if(!r || typeof r !== "object") return;
+
+    const nr = { ...r };
+
+    const number =
+      getVal(r, ["Numer faktury","Nr faktury","Invoice number","Номер фактуры","Номер рахунку","Номер"]) || "";
+
+    const date =
+      getVal(r, ["Data","Date","Дата","Data wystawienia","Дата виставлення"]) || "";
+
+    const due =
+      getVal(r, ["Termin płatności","Due date","Срок оплаты","Термін оплати"]) || "";
+
+    const seller =
+      getVal(r, ["Kontrahent","Sprzedawca","Seller","Контрагент","Постачальник"]) || "";
+
+    const amountRaw =
+      getVal(r, ["Kwota","Amount","Suma","Сума","Kwota brutto","Brutto"]) || "";
+
+    const currency =
+      getVal(r, ["Waluta","Currency","Валюта"]) || "PLN";
+
+    const cat =
+      getVal(r, ["Kategoria","Category","category","Категорія","Категория"]) || "";
+
+    const amount = (typeof asNum === "function")
+      ? asNum(amountRaw)
+      : Number(String(amountRaw).replace(",", "."));
+
+    // Канонизируем ключи под твой UI
+    if(number) nr["Numer faktury"] = String(number).trim();
+    if(date) nr["Data"] = String(date).trim();
+    if(due) nr["Termin płatności"] = String(due).trim();
+    if(seller) nr["Kontrahent"] = String(seller).trim();
+
+    nr["Kwota"] = amount || 0;
+    nr["Waluta"] = String(currency || "PLN").trim();
+
+    if(cat) nr["Kategoria"] = String(cat).trim();
+
+    // Минимальный статус по умолчанию
+    if(!getVal(nr, ["Status","status"])){
+      nr["Status"] = "Oczekuje";
+    }
+
+    out.push(nr);
+  });
+
+  return out;
+}
+
+// Превью для фактур
+function buildBillsPreviewText(rows){
+  const arr = Array.isArray(rows) ? rows : [];
+  const sample = arr.slice(0, 10);
+
+  let txt = "Превью фактур (первые " + sample.length + " из " + arr.length + ")\n\n";
+
+  sample.forEach((r, i)=>{
+    const n = getVal(r, ["Numer faktury","Invoice number","Номер"]) || "";
+    const d = getVal(r, ["Data","Дата"]) || "";
+    const s = getVal(r, ["Kontrahent","Seller","Контрагент"]) || "";
+    const a = getVal(r, ["Kwota","Amount","Suma","Сума"]) || 0;
+    const c = getVal(r, ["Waluta","Currency","Валюта"]) || "PLN";
+
+    txt += (i+1) + ") " + String(n) + " | " + String(d) + " | " + String(s) +
+      " | " + String(a) + " " + String(c) + "\n";
+  });
+
+  return txt;
+}
+
+function confirmBillsImport(rows){
+  const preview = buildBillsPreviewText(rows);
+  return confirm(preview + "\n\nИмпортировать эти фактуры?");
+}
+
+// Роутер фактур: используем твой общий импорт файлов
+async function importBillsByFile(f){
+  // safety лимит, если ты уже вставлял - дубль не страшен
+  const MAX_IMPORT_MB = 5;
+  const MAX_IMPORT_BYTES = MAX_IMPORT_MB * 1024 * 1024;
+  if(f && f.size && f.size > MAX_IMPORT_BYTES){
+    alert("Файл слишком большой для MVP-импорта (" + MAX_IMPORT_MB + "MB). Рекомендуем CSV.");
+    return [];
+  }
+
+  // Если у тебя уже есть универсальный роутер
+  if(typeof importTxByFile === "function"){
+    return await importTxByFile(f);
+  }
+
+  // Фоллбек
+  const name = String(f?.name || "").toLowerCase();
+  if(name.endsWith(".xlsx") || name.endsWith(".xls")){
+    if(typeof XLSX === "undefined"){
+      alert("XLSX не поддерживается в этой сборке (библиотека не подключена).");
+      return [];
+    }
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    return Array.isArray(json) ? json : [];
+  }
+
+  const text = await f.text();
+  if(typeof parseCSV === "function") return parseCSV(text) || [];
+  return [];
+}
+// ===== /BILLS IMPORT NORMALIZE =====
+
+
 const MERCHANT_MAP = {
   'żabka':'food',
   'zabka':'food',
@@ -514,9 +1503,93 @@ function detectCategoryForMerchant(name){
 function getMerchantFromTxRow(r){
   return getVal(r,["Kontrahent","Counterparty","Nazwa właściciela rachunku","Tytuł/Opis","Opis","description"]) || "";
 }
+ function normalizeCatIdByList(x){
+  const raw = String(x || "").trim();
+  if(!raw) return "";
+
+  const v = raw.toLowerCase();
+  const cats = (typeof getAllSpCats === "function") ? getAllSpCats() : [];
+
+  // 1) если пользователь уже ввёл id
+  const byId = cats.find(c => String(c.id || "").toLowerCase() === v);
+  if(byId) return byId.id;
+
+  // 2) если ввёл label ("Продукты", "Kategoria", etc)
+  const byLabel = cats.find(c => String(c.label || "").toLowerCase() === v);
+  if(byLabel) return byLabel.id;
+
+  // 3) fallback
+  return raw;
+}
+
+
+function resolveCategoryForTx(r){
+  const manualRaw =
+    getVal(r, ["Kategoria","Category","category","Категория","Категорія"]) || "";
+  const manual = normalizeCatIdByList(manualRaw);
+  if(manual) return manual;
+
+  const m = getMerchantFromTxRow(r);
+  return detectCategoryForMerchant(m);
+}
+
+
+function resolveCategoryForKasa(k){
+  const cats = (typeof getAllSpCats === "function") ? getAllSpCats() : [];
+
+  // 1) явное поле категории
+  const manualRaw = (k && (
+    k.category ||
+    k.cat ||
+    k.Kategoria ||
+    k["Kategoria"] ||
+    k["Категория"] ||
+    ""
+  )) || "";
+
+  const manual = normalizeCatIdByList ? normalizeCatIdByList(manualRaw) : String(manualRaw||"").trim();
+  if(manual) return manual;
+
+  // 2) попытка найти категорию в комментарии
+  const comment = String((k && (k.comment || k.title || k.source)) || "").toLowerCase();
+  if(comment && cats.length){
+    const byId = cats.find(c => comment.includes(String(c.id||"").toLowerCase()));
+    if(byId) return byId.id;
+
+    const byLabel = cats.find(c => comment.includes(String(c.label||"").toLowerCase()));
+    if(byLabel) return byLabel.id;
+  }
+
+  // 3) авто
+  const m = getMerchantFromKasaRow(k);
+  return detectCategoryForMerchant(m);
+}
+
+
 
 function getMerchantFromKasaRow(k){
   return k.source || k.comment || "";
+}
+
+
+// --- KASA amount sign helpers (global) ---
+function isOutKasaRow(k){
+  const t = String((k && (k.type || k.flow || k.kind || k.direction)) || "").toLowerCase();
+  return (
+    t === "out" || t === "expense" || t === "rozchod" ||
+    t === "wydanie" || t === "расход" || t === "vydata" || t === "wydatki"
+  );
+}
+
+function getSignedKasaAmount(k){
+  const raw = (typeof asNum === 'function') ? asNum(k?.amount||0) : Number(k?.amount||0);
+  if(!raw) return 0;
+
+  // "zamknięcie dnia" / balance set rows should not be treated as movement
+  const t = String(k?.type || "").toLowerCase();
+  if(t.includes('zamk')) return 0;
+
+  return isOutKasaRow(k) ? -Math.abs(raw) : Math.abs(raw);
 }
 
 function buildSpendingAggregates(catId){
@@ -524,37 +1597,104 @@ function buildSpendingAggregates(catId){
   const txArr = Array.isArray(tx) ? tx : [];
   const kasaArr = Array.isArray(kasa) ? kasa : [];
 
+  const includeIncome = !!catId;
+
   function addRow(amount, merchant){
     if(!amount || !merchant) return;
-    if(amount > 0) return;
+    // In "All" view we keep expenses focus; when a category is selected we also allow income categories (e.g., salary)
+    if(!includeIncome && amount > 0) return;
     const key = String(merchant||'').trim();
     if(!key) return;
     agg[key] = (agg[key] || 0) + amount;
   }
 
-  txArr.forEach(r=>{
-    const m = getMerchantFromTxRow(r);
-    const a = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
-    if(!a) return;
-    const cat = detectCategoryForMerchant(m);
-    if(catId && cat!==catId) return;
-    addRow(a, m);
-  });
+txArr.forEach(r=>{
+  const m = getMerchantFromTxRow(r);
+  const a = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+  if(!a) return;
 
-  kasaArr.forEach(k=>{
-    const d = String(k.date||'').slice(0,10);
-    if(!d) return;
-    const a = Number(k.amount||0);
-    if(!a) return;
-    const m = getMerchantFromKasaRow(k);
-    const cat = detectCategoryForMerchant(m);
-    if(catId && cat!==catId) return;
-    addRow(a, m);
-  });
+  const cat = resolveCategoryForTx(r);
+  if(catId && cat !== catId) return;
+
+  const showMerchant = m || (cat ? ("Категория: " + cat) : "Без контрагента");
+  addRow(a, showMerchant);
+});
+
+
+
+kasaArr.forEach(k=>{
+  const a = getSignedKasaAmount(k);
+  if(!a) return;
+
+  const cat = resolveCategoryForKasa(k);
+  if(catId && cat!==catId) return;
+
+  const m = getMerchantFromKasaRow(k);
+  const showMerchant = m || (cat ? ("Категория: " + cat) : "Касса");
+  addRow(a, showMerchant);
+});
+
 
   const list = Object.entries(agg).map(([merchant,sum])=>({merchant,sum}));
   list.sort((a,b)=>a.sum - b.sum);
   return list;
+}
+
+function buildSpendingEntries(catId){
+  const out = [];
+  const txArr = Array.isArray(tx) ? tx : [];
+  const kasaArr = Array.isArray(kasa) ? kasa : [];
+
+  const includeIncome = !!catId;
+
+  function push(kind, id, date, merchant, amount){
+    if(!amount) return;
+    // In "All" view we keep expenses focus; when a category is selected we also allow income categories
+    if(!includeIncome && amount > 0) return;
+    out.push({kind, id:String(id||''), date:String(date||''), merchant:String(merchant||''), amount:Number(amount)||0});
+  }
+
+  // TX expenses
+  txArr.forEach(r=>{
+    const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+    if(!amt) return;
+    if(!includeIncome && amt > 0) return;
+    const cat = resolveCategoryForTx(r);
+    if(catId && String(cat) !== String(catId)) return;
+
+    const id = String(getVal(r,["ID transakcji","ID","id"])||r.id||"");
+    if(!id) return;
+
+    const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"])) || "";
+    const merchant = getMerchantFromTxRow(r) || (getVal(r,["Kontrahent","Counterparty"])||"") || "Wyciąg";
+    push('tx', id, d, merchant, amt);
+  });
+
+  // KASA expenses
+  kasaArr.forEach(k=>{
+    const amt = getSignedKasaAmount(k);
+    if(!amt) return;
+    if(!includeIncome && amt > 0) return;
+    const cat = resolveCategoryForKasa(k);
+    if(catId && String(cat) !== String(catId)) return;
+
+    const id = String(k.id||"");
+    if(!id) return;
+
+    const d = String(k.date||"").slice(0,10);
+    const merchant = getMerchantFromKasaRow(k) || "Kasa";
+    push('kasa', id, d, merchant, amt);
+  });
+
+  // sort: newest first by date, then by amount
+  out.sort((a,b)=>{
+    const da = a.date || '';
+    const db = b.date || '';
+    if(da !== db) return db.localeCompare(da);
+    return (a.amount||0) - (b.amount||0);
+  });
+
+  return out;
 }
 
 function renderSpendingFilters(activeId){
@@ -571,84 +1711,1052 @@ function renderSpendingFilters(activeId){
     btn.addEventListener('click', ()=>{
       const id = btn.getAttribute('data-cat') || '';
       renderSpendingFilters(id || '');
+      try{ window._otdSpendingActiveCatId = (id||null); }catch(e){}
       renderSpendingStats(id || null);
     });
   });
 }
 
+function ensureSpendingListModal(){
+  if(document.getElementById('spListModal')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'spListModal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h3 style="margin:0;flex:1" id="spListTitle">Wydatki</h3>
+        <button class="btn secondary small" id="spListClose" style="min-width:90px">Zamknij</button>
+      </div>
+      <div class="muted small" id="spListSubtitle" style="margin:6px 0 10px">—</div>
+      <input id="spListSearch" class="input" style="width:100%;margin-bottom:10px" placeholder="Szukaj…"/>
+      <div id="spListBody" style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow:auto"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = ()=> overlay.classList.remove('show');
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  overlay.querySelector('#spListClose')?.addEventListener('click', close);
+  window._otdCloseSpList = close;
+}
+
+function ensureSpendingCategoryModals(){
+  // Some builds lost these modals in HTML merges. Create them dynamically so buttons always work.
+
+  // Add/Edit category modal
+  if(!document.getElementById('addSpCatModal')){
+    const overlay = document.createElement('div');
+    overlay.id = 'addSpCatModal';
+    overlay.className = 'modal-overlay';
+    const emojis = ['🍔','🛒','⛽','🏠','💳','📦','🎁','💡','🧾','🚗','🚌','📱','👶','🐶','🏥','🎓','🎮','✈️','🍻','🧋'];
+    overlay.innerHTML = `
+      <div class="modal-card" style="max-width:520px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;flex:1">Kategoria</h3>
+          <button class="btn secondary small" id="spCatCancel" style="min-width:90px">Zamknij</button>
+        </div>
+        <input type="hidden" id="spCatEditId" value=""/>
+        <div class="muted small" style="margin:8px 0 6px">Nazwa</div>
+        <input id="spCatName" class="input" style="width:100%" placeholder="Np. Transport"/>
+        <div class="muted small" style="margin:10px 0 6px">Ikona (emoji)</div>
+        <div id="spCatEmojiList" style="display:flex;gap:8px;flex-wrap:wrap">
+          ${emojis.map(e=>`<button type="button" class="btn secondary small" style="padding:6px 10px;border-radius:12px" data-emoji="${e}">${e}</button>`).join('')}
+        </div>
+        <div class="muted small" style="margin:10px 0 6px">Własne emoji</div>
+        <input id="spCatEmojiCustom" class="input" style="width:100%" placeholder="Np. 🧋"/>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap">
+          <button class="btn secondary" id="spCatDelete" style="border-color:rgba(255,80,80,.55);color:rgba(255,140,140,.95);display:none">Usuń</button>
+          <button class="btn" id="spCatSave">Zapisz</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e)=>{ if(e.target===overlay) overlay.classList.remove('show'); });
+  }
+
+  // Category manager modal
+  if(!document.getElementById('spCatMgrModal')){
+    const overlay = document.createElement('div');
+    overlay.id = 'spCatMgrModal';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-card" style="max-width:640px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;flex:1">Kategorie</h3>
+          <button class="btn secondary small" id="spCatMgrAdd" style="min-width:110px">Dodaj</button>
+          <button class="btn secondary small" id="spCatMgrClose" style="min-width:90px">Zamknij</button>
+        </div>
+        <div class="muted small" style="margin:6px 0 10px">Edytuj nazwy/emoji. Domyślne możesz tylko „nadpisać”.</div>
+        <div id="spCatMgrList" style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow:auto"></div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e)=>{ if(e.target===overlay) overlay.classList.remove('show'); });
+  }
+
+  // Uncategorized modal
+  if(!document.getElementById('uncatModal')){
+    const overlay = document.createElement('div');
+    overlay.id = 'uncatModal';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-card" style="max-width:700px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;flex:1">Bez kategorii</h3>
+          <button class="btn secondary small" id="uncatClose" style="min-width:90px">Zamknij</button>
+        </div>
+        <div class="muted small" style="margin:6px 0 10px">Wydatki, które nie mają ustawionej kategorii.</div>
+        <div id="uncatList" style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow:auto"></div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e)=>{ if(e.target===overlay) overlay.classList.remove('show'); });
+  }
+}
+
+function openSpendingList(catId){
+  ensureSpendingListModal();
+  const overlay = document.getElementById('spListModal');
+  const body = document.getElementById('spListBody');
+  const title = document.getElementById('spListTitle');
+  const sub = document.getElementById('spListSubtitle');
+  const search = document.getElementById('spListSearch');
+
+  const cats = getAllSpCats();
+  const catObj = catId ? cats.find(c=>String(c.id)===String(catId)) : null;
+
+  const titleKey = 'spending.title';
+  let baseTitle = (window.i18n && window.i18n.t) ? (window.i18n.t(titleKey) || '') : '';
+  if(!baseTitle || baseTitle === titleKey) baseTitle = 'Wydatki';
+
+  const label = catObj ? ((catObj.emoji||'📦') + ' ' + (catObj.label||catObj.id)) : baseTitle;
+  if(title) title.textContent = label;
+
+  const data = buildSpendingEntries(catId);
+  const total = data.reduce((s,r)=> s + (Number(r.amount)||0), 0);
+  if(sub){
+    const sign = total < 0 ? '−' : '+';
+    sub.textContent = `Suma: ${sign}${Math.abs(total).toFixed(2)} PLN`;
+  }
+
+  function kindLabel(kind){
+    if(kind==='kasa') return 'Kasa';
+    if(kind==='tx') return 'Wyciąg';
+    return kind;
+  }
+
+  function renderList(filter){
+    const f = String(filter||'').trim().toLowerCase();
+    const list = f ? data.filter(r=> (
+      String(r.merchant||'').toLowerCase().includes(f) ||
+      String(r.date||'').toLowerCase().includes(f) ||
+      kindLabel(r.kind).toLowerCase().includes(f)
+    )) : data;
+
+    if(!list.length){
+      const emptyKey = 'spending.empty';
+      let emptyTxt = (window.i18n && window.i18n.t) ? (window.i18n.t(emptyKey) || '') : '';
+      if(!emptyTxt || emptyTxt === emptyKey) emptyTxt = 'Brak danych.';
+      body.innerHTML = `<div class="muted small">${emptyTxt}</div>`;
+      return;
+    }
+
+    body.innerHTML = list.slice(0,400).map(r=>{
+      const amt = Number(r.amount)||0;
+      const sign = amt < 0 ? '−' : '+';
+      const val = Math.abs(amt);
+      const dateTxt = escapeHtml((r.date||'').slice(0,10));
+      const kLbl = kindLabel(r.kind);
+      return `
+        <div style="display:flex;gap:10px;align-items:center;padding:8px;border:1px solid rgba(255,255,255,.08);border-radius:12px">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.merchant||'—')}</div>
+            <div class="muted small">${dateTxt} · ${escapeHtml(kLbl)} · ${sign}${val.toFixed(2)} PLN</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  if(search){
+    search.value = '';
+    search.oninput = ()=> renderList(search.value);
+  }
+  renderList('');
+
+  overlay.classList.add('show');
+}
+
 function renderSpendingStats(catId){
   const box = document.getElementById('spendingStats');
   if(!box) return;
+
+  try{ ensureSpendingListModal(); }catch(e){}
+
   const data = buildSpendingAggregates(catId);
   if(!data.length){
-    box.innerHTML = '<div>Пока нет расходов по этой выборке.</div>';
+    const emptyTxt = (window.i18n && window.i18n.t) ? (window.i18n.t('spending.empty') || 'Brak danych.') : 'Brak danych.';
+    box.innerHTML = `<div class="muted small">${emptyTxt}</div>`;
     return;
   }
-  const rows = data.slice(0,10).map(r=>{
-    const val = Math.round(r.sum);
-    return '<div><b>'+r.merchant+'</b>&nbsp; '+val+' PLN</div>';
+
+  const top = data.slice(0,3);
+  const total = data.reduce((s,r)=> s + (Number(r.sum)||0), 0);
+
+  const rows = top.map(r=>{
+    const amt = Number(r.sum)||0;
+    const sign = amt < 0 ? '−' : '+';
+    const val = Math.abs(amt);
+    return `<div style="display:flex;justify-content:space-between;gap:10px">
+      <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.merchant||'—')}</span>
+      <b>${sign}${Math.round(val)} PLN</b>
+    </div>`;
   }).join('');
-  box.innerHTML = rows;
+
+    const btnKey = 'spending.open_list';
+  let btnLabel = (window.i18n && window.i18n.t) ? (window.i18n.t(btnKey) || '') : '';
+  if(!btnLabel || btnLabel === btnKey) btnLabel = 'Otwórz listę';
+
+  box.innerHTML = `
+    <div class="muted small" style="margin-bottom:6px">Suma: <b>${(total<0?'−':'+')}${Math.round(Math.abs(total))} PLN</b></div>
+    <div style="display:flex;flex-direction:column;gap:6px">${rows}</div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn secondary small" id="spOpenListBtn">${btnLabel}</button>
+    </div>
+  `;
+
+  box.querySelector('#spOpenListBtn')?.addEventListener('click', ()=> openSpendingList(catId));
 }
 
 function renderSpendingPanel(){
+  try{ window._otdSpendingActiveCatId = null; }catch(e){}
   renderSpendingFilters('');
   renderSpendingStats(null);
+  try{ if(window._otdUpdateUncatBadge) window._otdUpdateUncatBadge(); }catch(e){}
 }
 
 function initSpendingUI(){
-  const addBtn = document.getElementById('addSpCatBtn');
-  const modal  = document.getElementById('addSpCatModal');
-  const save   = document.getElementById('spCatSave');
-  const cancel = document.getElementById('spCatCancel');
-  const nameIn = document.getElementById('spCatName');
-  const emojiWrap = document.getElementById('spCatEmojiList');
-  if(!addBtn || !modal || !save || !cancel || !nameIn || !emojiWrap) return;
+  try{ if(typeof ensureSpendingCategoryModals==='function') ensureSpendingCategoryModals(); }catch(e){}
+
+  const addBtn   = document.getElementById('addSpCatBtn');
+  const manageBtn= document.getElementById('manageSpCatsBtn');
+  const uncatBtn = document.getElementById('uncatBtn');
+
+  // Make "blue links" look like real controls (bigger hit area, consistent with chips)
+  try{
+    const styleBtn = (b, variant)=>{
+      if(!b) return;
+      b.classList.remove('linkBtn');
+      b.classList.add('btn');
+      b.classList.add((variant||'ghost'));
+      b.classList.add('small');
+      b.style.padding = '6px 10px';
+      b.style.borderRadius = '999px';
+      b.style.lineHeight = '1';
+    };
+    styleBtn(addBtn, 'ghost');
+    styleBtn(manageBtn, 'ghost');
+    // "Bez kategorii" deserves attention
+    styleBtn(uncatBtn, 'secondary');
+  }catch(e){}
+
+  const modal    = document.getElementById('addSpCatModal');
+  const save     = document.getElementById('spCatSave');
+  const cancel   = document.getElementById('spCatCancel');
+  const delBtn   = document.getElementById('spCatDelete');
+
+  const nameIn   = document.getElementById('spCatName');
+  const editIdIn = document.getElementById('spCatEditId');
+  const emojiWrap= document.getElementById('spCatEmojiList');
+  const emojiCustomIn = document.getElementById('spCatEmojiCustom');
+
+  const mgrModal = document.getElementById('spCatMgrModal');
+  const mgrList  = document.getElementById('spCatMgrList');
+  const mgrClose = document.getElementById('spCatMgrClose');
+  const mgrAdd   = document.getElementById('spCatMgrAdd');
+
+  const uncatModal = document.getElementById('uncatModal');
+  const uncatList  = document.getElementById('uncatList');
+  const uncatClose = document.getElementById('uncatClose');
+
+  // Run once to avoid duplicating listeners; delegation below keeps buttons working even after re-renders.
+  if(window._otdSpendingInitOnce){
+    try{ if(typeof window._otdUpdateUncatBadge==='function') window._otdUpdateUncatBadge(); }catch(e){}
+    return;
+  }
+  window._otdSpendingInitOnce = true;
+
+  // Allow manager/uncat to work even if add/edit modal is missing after merges
+  const canAddEdit = !!(addBtn && modal && save && cancel && nameIn && emojiWrap);
+  if(!canAddEdit){
+    console.warn('Spending UI: add/edit modal not found, actions will be limited.');
+  }
 
   let chosenEmoji = '📦';
 
+  function isDefaultCatId(id){
+    return (DEFAULT_SP_CATS || []).some(c=>String(c.id)===String(id));
+  }
+
+  function slugify(s){
+    return String(s||'')
+      .toLowerCase()
+      .replace(/[\s]+/g,'_')
+      .replace(/[^a-z0-9а-яё_]+/gi,'')
+      .replace(/^_+|_+$/g,'');
+  }
+
+  function openSpCatModal(mode, cat){
+    // mode: 'add' | 'edit'
+    if(!canAddEdit){
+      alert('Brak okna kategorii (addSpCatModal).');
+      return;
+    }
+    const c = cat || {};
+    const isEdit = mode==='edit' && c.id;
+
+    if(editIdIn) editIdIn.value = isEdit ? String(c.id) : '';
+    if(delBtn) delBtn.style.display = isEdit ? 'inline-flex' : 'none';
+
+    if(nameIn) nameIn.value = isEdit ? (c.label || '') : '';
+    if(emojiCustomIn) emojiCustomIn.value = '';
+
+    chosenEmoji = (c.emoji || '📦');
+    // highlight emoji button if exists
+    emojiWrap.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+    const btnMatch = Array.from(emojiWrap.querySelectorAll('button')).find(b=> (b.textContent||'').trim()===chosenEmoji);
+    if(btnMatch) btnMatch.classList.add('active');
+
+    modal.classList.add('show');
+  }
+
+  function closeSpCatModal(){
+    modal.classList.remove('show');
+  }
+
+  if(canAddEdit){
+  // Emoji selection
   emojiWrap.querySelectorAll('button').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       emojiWrap.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
-      chosenEmoji = btn.textContent.trim() || '📦';
+      chosenEmoji = (btn.textContent||'').trim() || '📦';
+      if(emojiCustomIn) emojiCustomIn.value = '';
     });
   });
 
-  function closeModal(){
-    modal.classList.remove('show');
-  }
-
+  // Add new category
   addBtn.addEventListener('click', ()=>{
-    nameIn.value = '';
-    chosenEmoji = '📦';
-    emojiWrap.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
-    modal.classList.add('show');
+    openSpCatModal('add', null);
   });
 
-  cancel.addEventListener('click', closeModal);
+  // Cancel
+  cancel.addEventListener('click', closeSpCatModal);
 
+  // Delete (remove override or custom)
+  if(delBtn){
+    delBtn.addEventListener('click', ()=>{
+      const id = (editIdIn && editIdIn.value) ? String(editIdIn.value) : '';
+      if(!id) return;
+      const extras = loadUserSpCats();
+      const idx = extras.findIndex(c=>String(c.id)===id);
+      if(idx>=0){
+        extras.splice(idx,1);
+        saveUserSpCats(extras);
+      }else{
+        // If it's default without override, nothing to delete
+      }
+      closeSpCatModal();
+      render(); pushState();
+    });
+  }
+
+  // Save add/edit
   save.addEventListener('click', ()=>{
     const label = (nameIn.value||'').trim();
     if(!label) return;
-    const id = ('user_'+label.toLowerCase().replace(/\s+/g,'_')).slice(0,20);
+
+    // pick emoji: custom overrides chosen
+    const customEmoji = (emojiCustomIn && emojiCustomIn.value) ? emojiCustomIn.value.trim() : '';
+    const emoji = customEmoji || chosenEmoji || '📦';
+
     const extras = loadUserSpCats();
-    const idx = extras.findIndex(c=>c.id===id);
-    const cat = {id, label, emoji:chosenEmoji};
+    let id = (editIdIn && editIdIn.value) ? String(editIdIn.value).trim() : '';
+
+    if(!id){
+      // create new id
+      const base = slugify(label).slice(0,16) || ('cat_'+Date.now());
+      id = ('user_'+base).slice(0,24);
+      // avoid collisions
+      const all = getAllSpCats().map(c=>String(c.id));
+      if(all.includes(id)){
+        id = (id + '_' + String(Date.now()).slice(-4)).slice(0,28);
+      }
+    }
+
+    const cat = {id, label, emoji};
+
+    const idx = extras.findIndex(c=>String(c.id)===String(id));
     if(idx>=0) extras[idx]=cat; else extras.push(cat);
     saveUserSpCats(extras);
-    closeModal();
-    renderSpendingFilters(id);
-    renderSpendingStats(id);
+
+    closeSpCatModal();
+    render(); pushState();
   });
+
+  } // end canAddEdit
+
+  /* === Category manager === */
+  function renderSpCatMgrList(){
+    if(!mgrList) return;
+    const cats = getAllSpCats();
+    const extras = loadUserSpCats();
+
+    mgrList.innerHTML = cats.map(c=>{
+      const id = String(c.id||'');
+      const hasOverride = extras.some(x=>String(x.id)===id);
+      const canDelete = hasOverride || (!isDefaultCatId(id)); // custom cat -> delete fully
+      const badge = isDefaultCatId(id) ? (hasOverride ? 'override' : 'default') : 'custom';
+
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px;border:1px solid rgba(255,255,255,.08);border-radius:12px">
+          <div style="min-width:28px;text-align:center;font-size:18px">${c.emoji||'📦'}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(c.label||id)}</div>
+            <div class="muted small">id: ${escapeHtml(id)} · ${badge}</div>
+          </div>
+          <button class="btn secondary" style="padding:6px 10px;font-size:12px" data-act="spcat-edit" data-id="${escapeHtml(id)}">✎</button>
+          <button class="btn secondary" style="padding:6px 10px;font-size:12px;${canDelete?'':'opacity:.35;pointer-events:none'};border-color:rgba(255,80,80,.55);color:rgba(255,140,140,.95)" data-act="spcat-del" data-id="${escapeHtml(id)}">🗑</button>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function openSpCatMgr(){
+    if(!mgrModal) return;
+    renderSpCatMgrList();
+    mgrModal.classList.add('show');
+  }
+  function closeSpCatMgr(){
+    if(!mgrModal) return;
+    mgrModal.classList.remove('show');
+  }
+
+  if(manageBtn){
+    manageBtn.addEventListener('click', openSpCatMgr);
+  }
+  if(mgrClose){
+    mgrClose.addEventListener('click', closeSpCatMgr);
+  }
+  if(mgrAdd){
+    mgrAdd.addEventListener('click', ()=>{
+      closeSpCatMgr();
+      openSpCatModal('add', null);
+    });
+  }
+
+  // Manager actions via delegation
+  if(!window._otdSpCatMgrDelegated){
+    window._otdSpCatMgrDelegated = true;
+    document.addEventListener('click', (e)=>{
+    const b = e.target.closest('button');
+    if(!b) return;
+    const act = b.getAttribute('data-act');
+    if(act==='spcat-edit'){
+      const id = b.getAttribute('data-id');
+      const cat = getCatById(id);
+      closeSpCatMgr();
+      openSpCatModal('edit', cat || {id, label:id, emoji:'📦'});
+    }
+    if(act==='spcat-del'){
+      const id = b.getAttribute('data-id');
+      if(!id) return;
+      const extras = loadUserSpCats();
+      const idx = extras.findIndex(c=>String(c.id)===String(id));
+      if(idx>=0){
+        extras.splice(idx,1);
+        saveUserSpCats(extras);
+      }else{
+        // if it's a custom cat not in extras (shouldn't happen) do nothing
+      }
+      renderSpCatMgrList();
+      render(); pushState();
+    }
+  }, {capture:false});
+  }
+
+  /* === Uncategorized list === */
+    function collectUncat(){
+    const items = [];
+
+    // Ensure IDs exist (otherwise kasa/tx may be skipped)
+    try{ if(typeof ensureTxIds==='function') ensureTxIds(); }catch(e){}
+    try{ if(typeof ensureKasaIds==='function') ensureKasaIds(); }catch(e){}
+
+function normUncatCat(v){
+      const s = String(v||'').trim();
+      if(!s) return '';
+      const low = s.toLowerCase();
+      if(s==='—' || s==='–' || s==='-' || low==='—' || low==='–' || low==='-') return '';
+      if(low==='bez kategorii' || low==='brak kategorii' || low==='brak' || low==='uncategorized' || low==='no category' || low==='none' || low==='без категории' || low==='без категорії') return '';
+      return s;
+    }
+
+        function explicitTxCat(r){
+      const raw = getVal(r,["Kategoria","Category","category"]) || r.category || r.cat || "";
+      return normUncatCat(raw);
+    }
+    function explicitBillCat(r){
+      const raw = getVal(r,["Kategoria","Category","category"]) || r.category || r.cat || "";
+      return normUncatCat(raw);
+    }
+    function explicitKasaCat(k){
+      const raw = (k && (k.category || k.cat || k.Kategoria || k["Kategoria"] || k["Категория"])) || "";
+      return normUncatCat(raw);
+    }
+
+    // TX: operations without explicit category (both income and expense)
+    (tx||[]).forEach(r=>{
+      const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+      if(!amt) return;
+      const cat = explicitTxCat(r);
+      if(cat) return;
+
+      const id = String(getVal(r,["ID transakcji","ID","id"])||r.id||"");
+      if(!id) return;
+
+      const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"])) || "";
+      const merchant = getMerchantFromTxRow(r) || "Wyciąg";
+      items.push({kind:'tx', id, date:d, merchant, amount:amt});
+    });
+
+    // KASA: operations without explicit category (both income and expense; exclude zamknięcie)
+    (kasa||[]).forEach(k=>{
+      const amt = getSignedKasaAmount(k);
+      if(!amt) return;
+      const cat = explicitKasaCat(k);
+      if(cat) return;
+
+      const id = String(k.id||"");
+      if(!id) return;
+
+      const d = String(k.date||"").slice(0,10);
+      const merchant = getMerchantFromKasaRow(k) || "Kasa";
+      items.push({kind:'kasa', id, date:d, merchant, amount:amt});
+    });
+
+    // BILLS: invoices without explicit category (treat as expenses)
+    (bills||[]).forEach(r=>{
+      const cat = explicitBillCat(r);
+      if(cat) return;
+
+      const id = String(getVal(r,["Numer faktury","Numer фактуры","Invoice number"])||"");
+      if(!id) return;
+
+      const d = toISO(getVal(r,["Termin płatności","Termin платności","Termin платності","Termin","Due date"])||"") || "";
+      const supplier = String(getVal(r,["Dostawca","Supplier"])||"Faktura");
+      const amtPos = asNum(getVal(r,["Kwota do zapłaty","Kwota","Amount","amount"])||0);
+      if(!amtPos) return;
+      items.push({kind:'bill', id, date:d, merchant:supplier, amount:-Math.abs(amtPos)});
+    });
+
+    // newest first by date
+    items.sort((a,b)=>{
+      const da = a.date || '';
+      const db = b.date || '';
+      if(da !== db) return db.localeCompare(da);
+      return (a.amount||0) - (b.amount||0);
+    });
+
+    return items;
+  }
+
+  window._otdCollectUncat = collectUncat;
+
+  function updateUncatBadge(){
+    const el = document.getElementById('uncatCount');
+    if(!el) return;
+    const n = collectUncat().length;
+    el.textContent = String(n);
+    el.style.display = n ? 'inline-flex' : 'none';
+  }
+
+  function renderUncatList(){
+    if(!uncatList) return;
+    const items = collectUncat();
+    if(!items.length){
+      uncatList.innerHTML = `<div class="muted small">${(window.t && t('uncat.none')) || 'Brak operacji bez kategorii.'}</div>`;
+      return;
+    }
+    uncatList.innerHTML = items.map(it=>{
+      const val = Math.abs(it.amount||0).toFixed(2);
+      const sign = (Number(it.amount||0) < 0) ? '−' : '+';
+      const title = escapeHtml(it.merchant||'');
+            const kindLbl = (it.kind==='kasa') ? 'Kasa' : (it.kind==='bill' ? 'Faktury' : 'Wyciąg');
+      return `
+        <div style="display:flex;gap:10px;align-items:center;padding:8px;border:1px solid rgba(255,255,255,.08);border-radius:12px">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title}</div>
+            <div class="muted small">${escapeHtml(it.date||'')} · ${kindLbl} · ${sign}${val} PLN</div>
+          </div>
+          <button class="btn" style="padding:6px 10px;font-size:12px" data-act="cat" data-kind="${escapeHtml(it.kind)}" data-id="${escapeHtml(it.id)}">${(window.t && t('uncat.choose')) || 'Wybierz'}</button>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function openUncat(){
+    if(!uncatModal) return;
+    renderUncatList();
+    uncatModal.classList.add('show');
+  }
+  function closeUncat(){
+    if(!uncatModal) return;
+    uncatModal.classList.remove('show');
+  }
+
+  if(uncatBtn){
+    uncatBtn.addEventListener('click', openUncat);
+  }
+  if(uncatClose){
+    uncatClose.addEventListener('click', closeUncat);
+  }
+
+  // expose helpers for fallback delegation (buttons stay clickable even if direct listeners are lost)
+  window._otdOpenSpCatMgr = openSpCatMgr;
+  window._otdOpenUncat = openUncat;
+  window._otdOpenSpCatAdd = ()=> openSpCatModal('add', null);
+
+  // refresh badge on init and after render()
+  try{ updateUncatBadge(); }catch(e){}
+  window._otdUpdateUncatBadge = updateUncatBadge;
+  window._otdRenderUncatList = renderUncatList;
 }
+
+(function bindSpendingToolbarDelegation(){
+  if(window._otdSpendingToolbarDelegated) return;
+  window._otdSpendingToolbarDelegated = true;
+
+  // Capture-phase delegation: action buttons work even if something re-rendered them.
+  document.addEventListener('click', (e)=>{
+    const btn = e.target && e.target.closest ? e.target.closest('#addSpCatBtn,#manageSpCatsBtn,#uncatBtn,#spOpenListBtn') : null;
+    if(!btn) return;
+
+    // Ensure UI init ran (safe if already inited)
+    try{ if(typeof initSpendingUI==='function') initSpendingUI(); }catch(err){}
+
+    if(btn.id==='manageSpCatsBtn' && typeof window._otdOpenSpCatMgr==='function'){
+      e.preventDefault(); e.stopPropagation();
+      window._otdOpenSpCatMgr();
+    }
+    if(btn.id==='uncatBtn' && typeof window._otdOpenUncat==='function'){
+      e.preventDefault(); e.stopPropagation();
+      window._otdOpenUncat();
+    }
+    if(btn.id==='addSpCatBtn' && typeof window._otdOpenSpCatAdd==='function'){
+      e.preventDefault(); e.stopPropagation();
+      window._otdOpenSpCatAdd();
+    }
+
+if(btn.id==='spOpenListBtn'){
+  e.preventDefault(); e.stopPropagation();
+  try{
+    const cid = (window._otdSpendingActiveCatId===undefined) ? null : window._otdSpendingActiveCatId;
+    if(typeof openSpendingList==='function') openSpendingList(cid);
+  }catch(err){}
+}
+
+  }, true);
+})();
 
 /* ==== STATE ==== */
 let tx    = [];
 let bills = [];
 let kasa  = [];
 let accMeta = {};
+let invoiceTemplates = [];
 
+
+/* ==== HARD FIX: Spending buttons must always work (Manage categories + Uncategorized) ==== */
+(function otdBindSpendingButtonsHard(){
+  if(window.__otdSpendingButtonsHardBound) return;
+  window.__otdSpendingButtonsHardBound = true;
+
+  // Safe helpers
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+  function asNum(v){ const n = Number(String(v||'').replace(',', '.')); return Number.isFinite(n)?n:0; }
+  function normCat(v){
+    const s = String(v||'').trim();
+    if(!s) return '';
+    const low = s.toLowerCase();
+    if(s==='—'||s==='–'||s==='-'||low==='—'||low==='–'||low==='-') return '';
+    if(low==='bez kategorii'||low==='brak kategorii'||low==='brak'||low==='uncategorized'||low==='no category'||low==='none'||low==='без категории'||low==='без категорії') return '';
+    return s;
+  }
+
+  // Ensure modal overlays are attached to <body> (iOS Safari + transformed parents can break position:fixed)
+  function ensureOnBody(el){
+    try{
+      if(!el) return;
+      if(el.classList && !el.classList.contains('modal-overlay')) el.classList.add('modal-overlay');
+      if(el.parentElement !== document.body) document.body.appendChild(el);
+    }catch(_){ }
+  }
+
+
+  // Ensure TX/KASA rows have stable ids so "bez kategorii" count matches reality and category picker can find the row.
+  function ensureRowId(obj, prefix, fallback){
+    if(!obj) return '';
+    let id = String(obj.id || obj.ID || obj["ID"] || obj["ID transakcji"] || obj["ID transakcji "] || '').trim();
+    if(id) { obj.id = id; return id; }
+    id = (prefix || 'row') + '_' + (fallback || Date.now() + '_' + Math.random().toString(16).slice(2));
+    obj.id = id;
+    return id;
+  }
+
+  function getTxMerchant(r){
+    try{
+      return (typeof getMerchantFromTxRow==='function') ? (getMerchantFromTxRow(r) || '') : (r["Odbiorca"] || r["Nadawca"] || r["Opis"] || r["Tytuł"] || r.merchant || r.opis || '');
+    }catch(_){ return r.merchant || ''; }
+  }
+  function getKasaMerchant(k){
+    try{ return (typeof getMerchantFromKasaRow==='function') ? (getMerchantFromKasaRow(k) || '') : (k.note || k.opis || k.title || 'Kasa'); }catch(_){ return k.note || 'Kasa'; }
+  }
+  function getTxDate(r){
+    try{
+      const d = (typeof toISO==='function') ? (toISO((r["Data księgowania"]||r.date||r["Дата"]||'') ) || '') : (r.date||'');
+      return String(d||'').slice(0,10);
+    }catch(_){ return String(r.date||'').slice(0,10); }
+  }
+
+  function collectUncatHard(){
+    const items = [];
+    // Prefer existing ensured IDs if available
+    try{ if(typeof ensureTxIds==='function') ensureTxIds(); }catch(_){}
+    try{ if(typeof ensureKasaIds==='function') ensureKasaIds(); }catch(_){}
+
+    // TX operations without explicit category (income + expense)
+    try{
+      (tx||[]).forEach((r, idx)=>{
+        // amount
+        const amt = asNum((typeof getVal==='function') ? (getVal(r,["Kwota","amount","Kwota_raw"])||0) : (r.Kwota||r.amount||0));
+        if(!amt) return;
+        const catRaw = (typeof getVal==='function') ? (getVal(r,["Kategoria","Category","category"])||'') : (r.category||r.cat||r.Kategoria||'');
+        if(normCat(catRaw)) return;
+
+        const d = getTxDate(r);
+        const m = getTxMerchant(r) || 'Wyciąg';
+        const fid = [d, Math.round(Math.abs(amt)*100), String(m).slice(0,24), idx].join('|');
+        const id = ensureRowId(r, 'tx', fid);
+
+        items.push({kind:'tx', id, date:d, merchant:m, amount:amt});
+      });
+    }catch(_){}
+
+    // KASA operations without explicit category (income + expense; exclude zamknięcie)
+    try{
+      (kasa||[]).forEach((k, idx)=>{
+        const amt = (typeof getSignedKasaAmount==='function') ? (getSignedKasaAmount(k) || 0) : asNum(k.amount||0);
+        if(!amt) return;
+        const catRaw = k && (k.category || k.cat || k.Kategoria || k["Kategoria"] || k["Категория"] || '');
+        if(normCat(catRaw)) return;
+
+        const d = String(k.date||'').slice(0,10);
+        const m = getKasaMerchant(k) || 'Kasa';
+        const fid = [d, Math.round(Math.abs(amt)*100), String(m).slice(0,24), idx].join('|');
+        const id = ensureRowId(k, 'kasa', fid);
+
+        items.push({kind:'kasa', id, date:d, merchant:m, amount:amt});
+      });
+    }catch(_){}
+
+    // BILLS as expenses without explicit category
+    try{
+      (bills||[]).forEach((r, idx)=>{
+        const catRaw = (typeof getVal==='function') ? (getVal(r,["Kategoria","Category","category"])||'') : (r.category||r.cat||r.Kategoria||'');
+        if(normCat(catRaw)) return;
+
+        const idRaw = (typeof getVal==='function') ? (getVal(r,["Numer faktury","Invoice number","Номер фактуры"])||'') : (r.id||r.number||'');
+        const id = String(idRaw||'').trim();
+        if(!id) return;
+
+        const d = (typeof toISO==='function') ? (toISO(getVal(r,["Termin płatności","Due date","Termin"])||'')||'') : (r.due||'');
+        const supplier = String((typeof getVal==='function') ? (getVal(r,["Dostawca","Supplier"])||'Faktura') : (r.supplier||'Faktura'));
+        const amtPos = asNum((typeof getVal==='function') ? (getVal(r,["Kwota do zapłaty","Kwota","Amount","amount"])||0) : (r.amount||0));
+        if(!amtPos) return;
+
+        items.push({kind:'bill', id, date:String(d||'').slice(0,10), merchant:supplier, amount:-Math.abs(amtPos)});
+      });
+    }catch(_){}
+
+    items.sort((a,b)=>{
+      const da = a.date || '';
+      const db = b.date || '';
+      if(da !== db) return db.localeCompare(da);
+      return (a.amount||0) - (b.amount||0);
+    });
+    return items;
+  }
+
+  function updateUncatBadgeHard(){
+    const el = document.getElementById('uncatCount');
+    if(!el) return;
+    const n = collectUncatHard().length;
+    el.textContent = String(n);
+    el.style.display = n ? 'inline-flex' : 'none';
+  }
+
+  function openUncatHard(){
+  try{ if(typeof ensureSpendingCategoryModals==='function') ensureSpendingCategoryModals(); }catch(_){ }
+    const modal = document.getElementById('uncatModal');
+    const list  = document.getElementById('uncatList');
+    ensureOnBody(modal);
+    if(!modal || !list){
+      alert('Brak okna: uncatModal/uncatList');
+      return;
+    }
+    const items = collectUncatHard();
+    if(!items.length){
+      const txt = (window.i18n && window.i18n.t) ? (window.i18n.t('uncat.none') || 'Brak operacji bez kategorii.') : 'Brak operacji bez kategorii.';
+      list.innerHTML = `<div class="muted small">${esc(txt)}</div>`;
+    }else{
+      list.innerHTML = items.map(it=>{
+        const val = Math.abs(it.amount||0).toFixed(2);
+        const sign = (Number(it.amount||0) < 0) ? '−' : '+';
+        const kindLbl = (it.kind==='kasa') ? 'Kasa' : (it.kind==='bill' ? 'Faktury' : 'Wyciąg');
+        const btnTxt = (window.i18n && window.i18n.t) ? (window.i18n.t('uncat.choose') || 'Wybierz') : 'Wybierz';
+        return `
+          <div style="display:flex;gap:10px;align-items:center;padding:8px;border:1px solid rgba(255,255,255,.08);border-radius:12px">
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.merchant||'—')}</div>
+              <div class="muted small">${esc(it.date||'')} · ${kindLbl} · ${sign}${val} PLN</div>
+            </div>
+            <button class="btn" style="padding:6px 10px;font-size:12px" data-act="uncat-pick" data-kind="${esc(it.kind)}" data-id="${esc(it.id)}">${esc(btnTxt)}</button>
+          </div>
+        `;
+      }).join('');
+    }
+    modal.classList.add('show');
+  }
+
+  function closeUncatHard(){
+    const modal = document.getElementById('uncatModal');
+    if(modal) modal.classList.remove('show');
+  }
+
+  function renderSpCatMgrListHard(){
+    const list = document.getElementById('spCatMgrList');
+    if(!list) return;
+    const cats = (typeof getAllSpCats==='function') ? getAllSpCats() : [];
+    const extras = (typeof loadUserSpCats==='function') ? loadUserSpCats() : [];
+    const isDefault = (id)=> (typeof DEFAULT_SP_CATS!=='undefined' && (DEFAULT_SP_CATS||[]).some(c=>String(c.id)===String(id)));
+
+    list.innerHTML = cats.map(c=>{
+      const id = String(c.id||'');
+      const hasOverride = extras.some(x=>String(x.id)===id);
+      const canDelete = hasOverride || (!isDefault(id));
+      const badge = isDefault(id) ? (hasOverride ? 'override' : 'default') : 'custom';
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px;border:1px solid rgba(255,255,255,.08);border-radius:12px">
+          <div style="min-width:28px;text-align:center;font-size:18px">${esc(c.emoji||'📦')}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.label||id)}</div>
+            <div class="muted small">id: ${esc(id)} · ${badge}</div>
+          </div>
+          <button class="btn secondary" style="padding:6px 10px;font-size:12px" data-act="spcat-edit-hard" data-id="${esc(id)}">✎</button>
+          <button class="btn secondary" style="padding:6px 10px;font-size:12px;${canDelete?'':'opacity:.35;pointer-events:none'};border-color:rgba(255,80,80,.55);color:rgba(255,140,140,.95)" data-act="spcat-del-hard" data-id="${esc(id)}">🗑</button>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function openSpCatMgrHard(){
+  try{ if(typeof ensureSpendingCategoryModals==='function') ensureSpendingCategoryModals(); }catch(_){ }
+    const modal = document.getElementById('spCatMgrModal');
+    ensureOnBody(modal);
+    if(!modal){
+      alert('Brak okna: spCatMgrModal');
+      return;
+    }
+    renderSpCatMgrListHard();
+    modal.classList.add('show');
+  }
+  function closeSpCatMgrHard(){
+    const modal = document.getElementById('spCatMgrModal');
+    if(modal) modal.classList.remove('show');
+  }
+
+  function openSpCatAddEditHard(mode, id){
+    const modal = document.getElementById('addSpCatModal');
+    ensureOnBody(modal);
+    const save = document.getElementById('spCatSave');
+    const cancel = document.getElementById('spCatCancel');
+    const delBtn = document.getElementById('spCatDelete');
+    const nameIn = document.getElementById('spCatName');
+    const editIdIn = document.getElementById('spCatEditId');
+    const emojiWrap = document.getElementById('spCatEmojiList');
+    const emojiCustomIn = document.getElementById('spCatEmojiCustom');
+
+    if(!modal || !save || !cancel || !nameIn || !editIdIn || !emojiWrap){
+      alert('Brak okna: addSpCatModal');
+      return;
+    }
+
+    // one-time emoji click binding
+    if(!window.__otdSpEmojiBound){
+      window.__otdSpEmojiBound = true;
+      emojiWrap.querySelectorAll('button').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          emojiWrap.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+          btn.classList.add('active');
+          window.__otdSpChosenEmoji = (btn.textContent||'').trim() || '📦';
+          if(emojiCustomIn) emojiCustomIn.value = '';
+        });
+      });
+    }
+
+    const cat = (typeof getCatById==='function' && id) ? getCatById(id) : null;
+    const isEdit = mode==='edit' && id;
+
+    editIdIn.value = isEdit ? String(id) : '';
+    if(delBtn) delBtn.style.display = isEdit ? 'inline-flex' : 'none';
+
+    nameIn.value = isEdit ? String((cat && cat.label) || id || '').trim() : '';
+    if(emojiCustomIn) emojiCustomIn.value = '';
+
+    window.__otdSpChosenEmoji = (cat && cat.emoji) ? cat.emoji : '📦';
+
+    // highlight emoji
+    emojiWrap.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+    const match = Array.from(emojiWrap.querySelectorAll('button')).find(b=> (b.textContent||'').trim()===window.__otdSpChosenEmoji);
+    if(match) match.classList.add('active');
+
+    // Save handler (overwrite to avoid stacking)
+    save.onclick = ()=>{
+      const label = (nameIn.value||'').trim();
+      if(!label) return;
+
+      const customEmoji = (emojiCustomIn && emojiCustomIn.value) ? emojiCustomIn.value.trim() : '';
+      const emoji = customEmoji || window.__otdSpChosenEmoji || '📦';
+
+      const extras = (typeof loadUserSpCats==='function') ? loadUserSpCats() : [];
+      let cid = editIdIn.value ? String(editIdIn.value).trim() : '';
+
+      function slugify(s){
+        return String(s||'').toLowerCase().replace(/[\s]+/g,'_').replace(/[^a-z0-9а-яё_]+/gi,'').replace(/^_+|_+$/g,'');
+      }
+
+      if(!cid){
+        const base = slugify(label).slice(0,16) || ('cat_'+Date.now());
+        cid = ('user_'+base).slice(0,24);
+        const all = (typeof getAllSpCats==='function' ? getAllSpCats() : []).map(c=>String(c.id));
+        if(all.includes(cid)) cid = (cid + '_' + String(Date.now()).slice(-4)).slice(0,28);
+      }
+
+      const obj = {id:cid, label, emoji};
+      const idx = extras.findIndex(c=>String(c.id)===String(cid));
+      if(idx>=0) extras[idx]=obj; else extras.push(obj);
+      try{ if(typeof saveUserSpCats==='function') saveUserSpCats(extras); }catch(_){}
+
+      modal.classList.remove('show');
+      // Refresh filters + stats if available
+      try{ if(typeof renderSpendingFilters==='function'){ renderSpendingFilters(window._otdSpendingActiveCatId || ''); } }catch(_){}
+      try{ if(typeof renderSpendingStats==='function'){ renderSpendingStats(window._otdSpendingActiveCatId || null); } }catch(_){}
+      try{ if(typeof render==='function') render(); }catch(_){}
+      try{ if(typeof pushState==='function') pushState(); }catch(_){}
+      try{ renderSpCatMgrListHard(); }catch(_){}
+    };
+
+    cancel.onclick = ()=> modal.classList.remove('show');
+
+    if(delBtn){
+      delBtn.onclick = ()=>{
+        const cid = editIdIn.value ? String(editIdIn.value).trim() : '';
+        if(!cid) return;
+        try{
+          const extras = (typeof loadUserSpCats==='function') ? loadUserSpCats() : [];
+          const idx = extras.findIndex(c=>String(c.id)===String(cid));
+          if(idx>=0){ extras.splice(idx,1); if(typeof saveUserSpCats==='function') saveUserSpCats(extras); }
+        }catch(_){}
+        modal.classList.remove('show');
+        try{ renderSpCatMgrListHard(); }catch(_){}
+        try{ if(typeof render==='function') render(); }catch(_){}
+        try{ if(typeof pushState==='function') pushState(); }catch(_){}
+      };
+    }
+
+    modal.classList.add('show');
+  }
+
+  // Hard bind buttons (onclick beats addEventListener chaos)
+  function bindNow(){
+    try{ if(typeof ensureSpendingCategoryModals==='function') ensureSpendingCategoryModals(); }catch(_){ }
+    const manage = document.getElementById('manageSpCatsBtn');
+    const uncat   = document.getElementById('uncatBtn');
+    const closeUn = document.getElementById('uncatClose');
+    const mgrClose= document.getElementById('spCatMgrClose');
+    const mgrAdd  = document.getElementById('spCatMgrAdd');
+
+    // Ensure overlays are direct children of <body> (Safari/iOS sometimes hides fixed overlays inside transformed parents)
+    try{ ['spCatMgrModal','uncatModal','addSpCatModal','spListModal','invoiceTplModal'].forEach(id=>{ const el=document.getElementById(id); if(el && el.parentElement!==document.body) document.body.appendChild(el); }); }catch(_){ }
+
+    if(manage) manage.onclick = (e)=>{ try{ e.preventDefault(); e.stopPropagation(); }catch(_){} openSpCatMgrHard(); };
+    if(uncat) uncat.onclick   = (e)=>{ try{ e.preventDefault(); e.stopPropagation(); }catch(_){} openUncatHard(); };
+
+    if(closeUn) closeUn.onclick = (e)=>{ try{ e.preventDefault(); }catch(_){} closeUncatHard(); };
+    if(mgrClose) mgrClose.onclick = (e)=>{ try{ e.preventDefault(); }catch(_){} closeSpCatMgrHard(); };
+    if(mgrAdd) mgrAdd.onclick = (e)=>{ try{ e.preventDefault(); }catch(_){} closeSpCatMgrHard(); openSpCatAddEditHard('add', ''); };
+
+    // Delegation inside lists (edit/delete + pick)
+    if(!window.__otdSpendingHardDelegated){
+      window.__otdSpendingHardDelegated = true;
+      document.addEventListener('click', (e)=>{
+        const b = e.target && e.target.closest ? e.target.closest('button') : null;
+        if(!b) return;
+        const act = b.getAttribute('data-act');
+        if(act==='uncat-pick'){
+          e.preventDefault();
+          const kind = b.getAttribute('data-kind');
+          const id   = b.getAttribute('data-id');
+          try{
+            if(typeof openCatModal==='function') openCatModal(kind, id);
+            // keep uncat modal open for batch assigning
+            updateUncatBadgeHard();
+            // refresh list after assignment (category may no longer be empty)
+            setTimeout(()=>{ try{ openUncatHard(); }catch(_){} }, 200);
+          }catch(_){}
+        }
+        if(act==='spcat-edit-hard'){
+          e.preventDefault();
+          const id = b.getAttribute('data-id');
+          closeSpCatMgrHard();
+          openSpCatAddEditHard('edit', id);
+        }
+        if(act==='spcat-del-hard'){
+          e.preventDefault();
+          const id = b.getAttribute('data-id');
+          try{
+            const extras = (typeof loadUserSpCats==='function') ? loadUserSpCats() : [];
+            const idx = extras.findIndex(c=>String(c.id)===String(id));
+            if(idx>=0){ extras.splice(idx,1); if(typeof saveUserSpCats==='function') saveUserSpCats(extras); }
+          }catch(_){}
+          renderSpCatMgrListHard();
+          try{ if(typeof render==='function') render(); }catch(_){}
+          try{ if(typeof pushState==='function') pushState(); }catch(_){}
+        }
+      }, true);
+    }
+
+    // Override badge updater so count is correct everywhere
+    try{ window._otdUpdateUncatBadge = updateUncatBadgeHard; }catch(_){}
+    try{ updateUncatBadgeHard(); }catch(_){}
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', bindNow);
+  else bindNow();
+
+})();
 const stateKeys = [
   'tx_manual_import',
   'bills_manual_import',
@@ -661,16 +2769,13 @@ const stateKeys = [
   'rateUSD',
   'blacklist',
   'autoCash',
-  SUB_KEY,
-  SUB_FROM,
-  SUB_TO,
-  DEMO_START,
-  DEMO_USED,
+  // 👇 подписку и демо больше НЕ пушим в Firebase
   'txUrl',
   'billUrl',
   'otd_lang',
   'speechLang'
 ];
+
 
 function ensureTxIds(){
   if(!Array.isArray(tx)) tx = [];
@@ -693,6 +2798,22 @@ function ensureTxIds(){
     }
   });
 }
+function ensureKasaIds(){
+  if(!Array.isArray(kasa)) kasa = [];
+  kasa.forEach((k, idx) => {
+    if(!k || k.id) return;
+
+    // если вдруг где-то уже есть поле ID
+    let id = k.ID || k.Id || k["ID"] || k["id"];
+    if(!id){
+      const baseDate = k.date || today();
+      id = `kasa-${baseDate}-${idx}-${Math.random().toString(36).slice(2,8)}`;
+    }
+
+    k.id = String(id);
+  });
+}
+
 
   
 /* ==== CLOUD SYNC (Firebase, общий стейт для всех устройств) ==== */
@@ -716,6 +2837,10 @@ function buildCloudState(){
 
 async function pushCloudState(){
   if (!window.FirebaseSync) return;           // /sync-cloud.js ещё не загрузился
+  if (!CLOUD_READY) {
+    console.log('[cloud] skip push: remote not ready');
+    return;
+  }
   const email = getCloudEmail();
   if (!email) return;                         // нет email → не знаем куда писать
 
@@ -727,31 +2852,45 @@ async function pushCloudState(){
   }
 }
 
+
+
 function applyCloudState(remote){
   if (!remote || typeof remote !== 'object') return;
 
   try{
     if (Array.isArray(remote.tx)){
       tx = remote.tx;
-      localStorage.setItem('tx_manual_import', JSON.stringify(tx));
+      _otdSetJSON('tx_manual_import', tx);
     }
     if (Array.isArray(remote.bills)){
       bills = remote.bills;
-      localStorage.setItem('bills_manual_import', JSON.stringify(bills));
+      _otdSetJSON('bills_manual_import', bills);
     }
     if (Array.isArray(remote.kasa)){
       kasa = remote.kasa;
-      localStorage.setItem('kasa', JSON.stringify(kasa));
+      _otdSetJSON('kasa', kasa);
     }
     if (remote.accMeta && typeof remote.accMeta === 'object'){
       accMeta = remote.accMeta;
-      localStorage.setItem('accMeta', JSON.stringify(accMeta));
+      _otdSetJSON('accMeta', accMeta);
+  _otdSetJSON('invoice_templates', invoiceTemplates);
     }
-    if (remote.settings && typeof remote.settings === 'object'){
-      Object.entries(remote.settings).forEach(([k,v])=>{
-        if (typeof v === 'string') localStorage.setItem(k, v);
-      });
-    }
+if (remote.settings && typeof remote.settings === 'object'){
+  const protectedKeys = new Set([
+    SUB_KEY,
+    SUB_FROM,
+    SUB_TO,
+    DEMO_START,
+    DEMO_USED
+  ]);
+
+  Object.entries(remote.settings).forEach(([k, v])=>{
+    // 👇 Никогда не трогаем подписку и демо
+    if (protectedKeys.has(k)) return;
+    if (typeof v === 'string') localStorage.setItem(k, v);
+  });
+}
+
 
     // пересчитать и перерисовать UI
     inferAccounts();
@@ -777,9 +2916,10 @@ function startCloudSync(){
 
     console.log('[cloud] start for', email);
     try {
-      window.FirebaseSync.subscribeUserState(email, applyCloudState);
-      // сразу же заливаем локальный стейт в облако
-      pushCloudState();
+      window.FirebaseSync.subscribeUserState(email, (remote) => {
+        applyCloudState(remote);   // тянем из облака в локалку
+        CLOUD_READY = true;        // только теперь разрешаем pushCloudState()
+      });
     } catch (e) {
       console.warn('[cloud] subscribe error', e);
     }
@@ -787,6 +2927,7 @@ function startCloudSync(){
 
   tryInit();
 }
+
 
 
 /* ==== REMOTE SYNC (optional) ==== */
@@ -806,22 +2947,22 @@ async function pullState(){
 
     // Выписки (tx)
     if (Array.isArray(st.transactions) && st.transactions.length) {
-      localStorage.setItem('tx_manual_import', JSON.stringify(st.transactions));
+      _otdSetJSON('tx_manual_import', st.transactions);
     }
 
     // Фактуры
     if (Array.isArray(st.bills) && st.bills.length) {
-      localStorage.setItem('bills_manual_import', JSON.stringify(st.bills));
+      _otdSetJSON('bills_manual_import', st.bills);
     }
 
     // Касса
     if (Array.isArray(st.cash) && st.cash.length) {
-      localStorage.setItem('kasa', JSON.stringify(st.cash));
+      _otdSetJSON('kasa', st.cash);
     }
 
     // Метаданные аккаунтов
     if (st.meta && typeof st.meta === 'object') {
-      localStorage.setItem('accMeta', JSON.stringify(st.meta));
+      _otdSetJSON('accMeta', st.meta);
     }
 
     loadLocal();
@@ -968,18 +3109,34 @@ async function recognizeImage(file){
   return text.replace(/\u00A0/g,' ').replace(/\r/g,'').replace(/\t/g,' ').replace(/ +/g,' ').trim();
 }
 async function ocrBankFiles(files){
-  for(const f of files){
+  for (const f of files){
     try{
       thumb($id('txLastThumb'), f);
       const text = await recognizeImage(f);
       const rows = parseBankOCR(text);
-      if(rows.length){
+      if (rows.length){
         tx = tx.concat(rows);
       }
-    }catch(e){ console.warn('OCR bank error', e); }
+    }catch(e){
+      console.warn('OCR bank error', e);
+    }
   }
-  ensureTxIds();
-  inferAccounts();
+
+  // даём транзакциям нормальные ID
+  if (typeof ensureTxIds === "function") {
+    ensureTxIds();
+  }
+
+  // пересчитываем счета по транзакциям
+  if (typeof inferAccounts === "function") {
+    inferAccounts();
+  }
+
+  // чистим мусорные авто-счета вида tx-2025-...
+  if (typeof normalizeAutoAccountsAfterImport === "function") {
+    normalizeAutoAccountsAfterImport();
+  }
+
   render();
   saveLocal();
   pushState();
@@ -1062,56 +3219,153 @@ function parseInvoiceOCR(text){
 }
 
 /* ==== PERSIST LOCAL ==== */
+/* ==== P0 RELIABILITY: namespaced localStorage + safe JSON backup ==== */
+function _otdSafeEmailKey(email){
+  return String(email||'').trim().toLowerCase().replace(/[^a-z0-9@.]/g,'_').slice(0,120);
+}
+function _otdWsIdStorageKey(){
+  const email = localStorage.getItem(USER_KEY) || '';
+  const safe = _otdSafeEmailKey(email);
+  return safe ? ('otd_ws_id::' + safe) : 'otd_ws_id';
+}
+function _otdGetWsId(){
+  try { return localStorage.getItem(_otdWsIdStorageKey()) || ''; } catch(e){ return ''; }
+}
+function _otdSetWsId(id){
+  try { localStorage.setItem(_otdWsIdStorageKey(), String(id||'')); } catch(e){}
+}
+function _otdIsWorkspaceScopedKey(baseKey){
+  // Workspace-scoped means: should be separated between accounts/clients.
+  // Keep this list small and safe; add more when you’re ready.
+  const k = String(baseKey || '');
+  return k === 'kasa'
+    || k === 'tx_manual_import'
+    || k === 'bills_manual_import'
+    || k === 'accMeta'
+    || k === 'invoice_templates'
+    || k === 'inventory_templates';
+}
+function _otdDataKey(baseKey){
+  // data keys must be per-user to avoid cross-account mixing;
+  // and (for workspace-scoped keys) per-account/client to avoid cross-client mixing.
+  const email = localStorage.getItem(USER_KEY) || '';
+  const safe = _otdSafeEmailKey(email);
+  if(!safe) return baseKey; // guest falls back to legacy key
+
+  if (_otdIsWorkspaceScopedKey(baseKey)) {
+    const wsId = _otdGetWsId() || 'ws_default';
+    return baseKey + '::' + safe + '::' + wsId;
+  }
+
+  return baseKey + '::' + safe;
+}
+function _otdGetJSON(baseKey, defVal){
+  const key = _otdDataKey(baseKey);
+  let raw = localStorage.getItem(key);
+
+  // migrate legacy -> namespaced on first run (and legacy per-user -> per-workspace when needed)
+  if((raw === null || raw === undefined || raw === "") && key !== baseKey){
+    // 1) if this is workspace-scoped key, first try legacy per-user key (without wsId)
+    const email = localStorage.getItem(USER_KEY) || '';
+    const safe = _otdSafeEmailKey(email);
+    if (safe && _otdIsWorkspaceScopedKey(baseKey)) {
+      const legacyUserKey = baseKey + '::' + safe; // previous schema: per-user only
+      const legacyUserVal = localStorage.getItem(legacyUserKey);
+      if (legacyUserVal) {
+        try { localStorage.setItem(key, legacyUserVal); } catch(_){}
+        raw = legacyUserVal;
+      }
+    }
+
+    // 2) fallback: super-legacy global key (guest schema)
+    if((raw === null || raw === undefined || raw === "") ){
+      const legacy = localStorage.getItem(baseKey);
+      if(legacy){
+        try{ localStorage.setItem(key, legacy); }catch(_){}
+        raw = legacy;
+      }
+    }
+  }
+
+  try{
+    return JSON.parse(raw || (Array.isArray(defVal)?'[]':'{}'));
+  }catch(e){
+    // try backup
+    const bak = localStorage.getItem(key + '__bak');
+    try{
+      const parsed = JSON.parse(bak || (Array.isArray(defVal)?'[]':'{}'));
+      try{ localStorage.setItem(key, bak); }catch(_){}
+      return parsed;
+    }catch(_){
+      return defVal;
+    }
+  }
+}
+function _otdSetJSON(baseKey, value){
+  const key = _otdDataKey(baseKey);
+  try{
+    const prev = localStorage.getItem(key);
+    if(prev !== null && prev !== undefined){
+      localStorage.setItem(key + '__bak', prev);
+    }
+    localStorage.setItem(key, JSON.stringify(value));
+  }catch(e){
+    console.warn('[otd] failed to save', baseKey, e);
+  }
+}
+function _otdSetSchemaV(v){
+  try{ localStorage.setItem(_otdDataKey('otd_schema_v'), String(v||'')); }catch(_){}
+}
+function _otdGetSchemaV(){
+  const v = localStorage.getItem(_otdDataKey('otd_schema_v'));
+  const n = parseInt(String(v||'0'), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function loadLocal(){
-  try{ kasa = JSON.parse(localStorage.getItem('kasa')||'[]'); }catch(e){kasa=[]}
-  try{ tx = JSON.parse(localStorage.getItem('tx_manual_import')||'[]'); }catch(e){tx=[]}
-  try{ bills = JSON.parse(localStorage.getItem('bills_manual_import')||'[]'); }catch(e){bills=[]}
-  try{ accMeta = JSON.parse(localStorage.getItem('accMeta')||'{}'); }catch(e){accMeta={}}
+  // P0: read from namespaced keys (per user), with legacy migration + backup restore
+  kasa = _otdGetJSON('kasa', []);
+  tx = _otdGetJSON('tx_manual_import', []);
+  bills = _otdGetJSON('bills_manual_import', []);
+  accMeta = _otdGetJSON('accMeta', {});
+  invoiceTemplates = _otdGetJSON('invoice_templates', []);
+
+  // schema marker for future migrations
+  if(_otdGetSchemaV() < 2) _otdSetSchemaV(2);
+
   ensureTxIds();
+  ensureKasaIds();
 }
 
 function saveLocal(){
-  try{ localStorage.setItem('kasa', JSON.stringify(kasa)); }catch(e){}
-  try{ localStorage.setItem('tx_manual_import', JSON.stringify(tx)); }catch(e){}
-  try{ localStorage.setItem('bills_manual_import', JSON.stringify(bills)); }catch(e){}
-  try{ localStorage.setItem('accMeta', JSON.stringify(accMeta)); }catch(e){}
+  // P0: atomic-ish save with backups
+  _otdSetJSON('kasa', kasa);
+  _otdSetJSON('tx_manual_import', tx);
+  _otdSetJSON('bills_manual_import', bills);
+  _otdSetJSON('accMeta', accMeta);
 
   // NEW: обновляем облако
   pushCloudState();
 }
 
 
-/* ==== ACCOUNTS ==== */
-function inferAccounts(){
-  const map={};
-  tx.forEach(r=>{
-    const id=getVal(r,["ID konta","IBAN","account","ID"])||"UNKNOWN";
-    const cur=(getVal(r,["Waluta","currency"])||"PLN").toUpperCase();
-    if(!map[id]) map[id]={id,name:String(id).slice(0,12),currency:cur,include:true,type:"Biznes",start:0};
-  });
-  try{ const saved=JSON.parse(localStorage.getItem('accMeta')||'{}'); Object.keys(map).forEach(id=>{ if(saved[id]) map[id]=Object.assign(map[id], saved[id]); }); }catch(e){}
-  accMeta=map; renderAccounts();
-}
-
-/* ==== GATE: DEMO / SUB ==== */
-function isSubActive(){
-  const a = localStorage.getItem(SUB_KEY) === '1';
-  if (!a) return false;
-  const to = localStorage.getItem(SUB_TO) || '';
-  if (!to) return a;
-  return new Date(to) >= new Date();
-}
-
 function demoLeftMs(){
-  // Проверяем локальное состояние
+  // Prefer explicit demo-until (used by access page + server sync)
+  const until = localStorage.getItem('otd_demo_until');
+  if(until){
+    const end = new Date(until).getTime();
+    const left = end - Date.now();
+    if(left > 0) return left;
+  }
+
+  // Fallback: DEMO_START + 24h (legacy)
   const t = localStorage.getItem(DEMO_START);
   if (t) {
     const start = new Date(t).getTime();
     const left  = (start + 24*3600*1000) - Date.now();
     if (left > 0) return left;
   }
-  // Если локальное демо истекло, проверяем серверное состояние
-  // (будет обновлено через syncUserStatus)
+
   return 0;
 }
 
@@ -1163,24 +3417,260 @@ function updateSubUI(){
   const el = $id('subStatus');
   if (!el) return;
 
+  const role = localStorage.getItem(ROLE_KEY) || 'freelance_business';
+  const status = localStorage.getItem(STATUS_KEY) || '';
   const demoUsed = localStorage.getItem(DEMO_USED) === '1';
+  const hasSub = isSubActive();
+
   let s = '—';
 
-  if (isSubActive()){
-    s = `✅ Sub aktywna: ${localStorage.getItem(SUB_FROM)||'—'} → ${localStorage.getItem(SUB_TO)||'—'}`;
-  } else if (isDemoActive()){
-    const left = demoLeftMs();
-    const h = Math.floor(left/3600000);
-    const m = Math.floor((left%3600000)/60000);
-    s = `🧪 Demo aktywne: ~${h}h ${m}m`;
-  } else if (demoUsed) {
-    // демо уже было, больше не даём
-    s = '⛔ Demo zakończone. Dostęp tylko z subskrypcją.';
+  if (role === 'accountant') {
+    if (hasSub || status === 'active' || status === 'discount_active') {
+      s = `✅ PRO aktywny: ${localStorage.getItem(SUB_FROM)||'—'} → ${localStorage.getItem(SUB_TO)||'—'}`;
+    } else if (isDemoActive()) {
+      const left = demoLeftMs();
+      const h = Math.floor(left/3600000);
+      const m = Math.floor((left%3600000)/60000);
+      if (status === 'acct_pro_trial') {
+        s = `🧪 PRO trial aktywny: ~${h}h ${m}m (klientów bez limitu)`;
+      } else {
+        s = `🧪 Trial aktywny: ~${h}h ${m}m (do 3 klientów)`;
+      }
+    } else if (demoUsed) {
+      s = '⛔ Trial zakończone. Dostęp tylko z PRO.';
+    } else {
+      s = '⛔ Brak dostępu: zaloguj się, aby uruchomić trial.';
+    }
   } else {
-    s = '⛔ Brak dostępu: włącz demo (24h) lub opłać.';
+    if (hasSub){
+      s = `✅ Sub aktywna: ${localStorage.getItem(SUB_FROM)||'—'} → ${localStorage.getItem(SUB_TO)||'—'}`;
+    } else if (isDemoActive()){
+      const left = demoLeftMs();
+      const h = Math.floor(left/3600000);
+      const m = Math.floor((left%3600000)/60000);
+      s = `🧪 Demo aktywne: ~${h}h ${m}m`;
+    } else if (demoUsed) {
+      s = '⛔ Demo zakończone. Dostęp tylko z subskrypcją.';
+    } else {
+      s = '⛔ Brak dostępu: włącz demo (24h) lub opłać.';
+    }
   }
 
   el.textContent = s;
+}
+
+
+
+
+/* ==== WORKSPACES (accounts / clients) ==== */
+function _otdIsAccountant(){
+  return (localStorage.getItem(ROLE_KEY) || '') === 'accountant';
+}
+function _otdStatus(){
+  return localStorage.getItem(STATUS_KEY) || '';
+}
+function _otdIsAccountantPro(){
+  const st = _otdStatus();
+  return isSubActive() || st === 'acct_pro_trial' || st === 'active' || st === 'discount_active';
+}
+function _otdGetWorkspaces(){
+  return _otdGetJSON('otd_workspaces', []);
+}
+function _otdSetWorkspaces(list){
+  _otdSetJSON('otd_workspaces', Array.isArray(list) ? list : []);
+}
+function _otdEnsureWorkspaces(){
+  const role = localStorage.getItem(ROLE_KEY) || 'freelance_business';
+  let list = _otdGetWorkspaces();
+  if (!Array.isArray(list) || list.length === 0) {
+    if (role === 'accountant') {
+      list = [{ id: 'c1', name: 'Клиент 1', type: 'client' }];
+    } else {
+      list = [
+        { id: 'personal', name: 'Личный бизнес', type: 'freelance_business' },
+        { id: 'business', name: 'OneTapDay.ai / Бизнес', type: 'freelance_business' }
+      ];
+    }
+    _otdSetWorkspaces(list);
+  }
+
+  let cur = _otdGetWsId();
+  if (!cur || !list.find(w => w && w.id === cur)) {
+    cur = (list[0] && list[0].id) ? list[0].id : 'personal';
+    _otdSetWsId(cur);
+  }
+
+  return { list, current: cur, role };
+}
+
+function renderWorkspaceControls(){
+  const card = $id('workspaceCard');
+  const sel = $id('workspaceSelect');
+  const addBtn = $id('workspaceAdd');
+  const rmBtn = $id('workspaceRemove');
+  const title = $id('workspaceTitle');
+  const desc = $id('workspaceDesc');
+  const hint = $id('workspaceLimitHint');
+
+  if (!card || !sel || !title) return;
+
+  const { list, current, role } = _otdEnsureWorkspaces();
+
+  // Fill select
+  sel.innerHTML = '';
+  (list || []).forEach(w => {
+    if (!w || !w.id) return;
+    const opt = document.createElement('option');
+    opt.value = w.id;
+    opt.textContent = w.name || w.id;
+    if (w.id === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+
+  if (role === 'accountant') {
+    title.textContent = 'Клиенты';
+    if (desc) desc.textContent = 'Каждый клиент = отдельный набор данных. В Trial можно вести до 3 клиентов.';
+    if (addBtn) { addBtn.style.display = ''; addBtn.textContent = '+ Клиент'; }
+    if (rmBtn) { rmBtn.style.display = ''; rmBtn.textContent = 'Удалить'; rmBtn.disabled = list.length <= 1; }
+    if (hint) {
+      hint.textContent = _otdIsAccountantPro()
+        ? 'PRO: клиентов без лимита.'
+        : `Trial: ${list.length}/3 клиентов.`;
+    }
+  } else {
+    title.textContent = 'Аккаунт';
+    if (desc) desc.textContent = 'Два аккаунта: личный и бизнес. Данные не смешиваются.';
+    if (addBtn) addBtn.style.display = 'none';
+    if (rmBtn) rmBtn.style.display = 'none';
+    if (hint) hint.textContent = '';
+  }
+}
+
+function _otdClearWorkspaceData(wsId){
+  const email = localStorage.getItem(USER_KEY) || '';
+  const safe = _otdSafeEmailKey(email);
+  if (!safe || !wsId) return;
+
+  const suffix = '::' + safe + '::' + wsId;
+  const prefixes = [
+    'kasa::',
+    'tx_manual_import::',
+    'bills_manual_import::',
+    'accMeta::',
+    'invoice_templates::',
+    'inventory_templates::'
+  ];
+
+  const toDelete = [];
+  for (let i=0; i<localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k) continue;
+    if (!k.endsWith(suffix)) continue;
+    if (prefixes.some(p => k.startsWith(p))) toDelete.push(k);
+  }
+  toDelete.forEach(k => { try { localStorage.removeItem(k); } catch(e) {} });
+}
+
+async function _otdStartAccountantProTrial(desiredClients){
+  // PRO trial only when attempting to exceed 3 clients.
+  if (!_otdIsAccountant()) return { ok:true, started:false };
+  if (_otdIsAccountantPro()) return { ok:true, started:false };
+  if (desiredClients <= 3) return { ok:true, started:false };
+
+  try {
+    const r = await fetch('/accountant/start-pro-trial', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ clientsCount: desiredClients })
+    });
+    const data = await r.json().catch(()=>null);
+
+    if (!r.ok || !data || !data.success) {
+      const err = (data && (data.error || data.message)) || ('HTTP ' + r.status);
+      return { ok:false, error: err };
+    }
+
+    const u = data.user || {};
+    if (u.role) localStorage.setItem(ROLE_KEY, u.role);
+    if (u.status) localStorage.setItem(STATUS_KEY, u.status);
+
+    // store trial end in demo keys to reuse the existing gate
+    if (u.endAt) {
+      localStorage.setItem(DEMO_START, u.startAt || new Date().toISOString());
+      localStorage.setItem('otd_demo_until', u.endAt);
+      localStorage.setItem(DEMO_USED, '1');
+    }
+
+    gateAccess();
+    updateSubUI();
+    return { ok:true, started:true };
+  } catch (e) {
+    return { ok:false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+async function _otdAddClientWorkspace(){
+  const { list } = _otdEnsureWorkspaces();
+  const desired = (list || []).length + 1;
+
+  if (_otdIsAccountant() && desired > 3 && !_otdIsAccountantPro()) {
+    const ok = confirm('Trial позволяет вести до 3 клиентов. Чтобы добавить ещё, включи PRO trial на 7 дней (один раз). Продолжить?');
+    if (!ok) return;
+
+    const started = await _otdStartAccountantProTrial(desired);
+    if (!started.ok) {
+      alert('Не удалось включить PRO trial: ' + (started.error || 'unknown'));
+      return;
+    }
+  }
+
+  const n = (list || []).length + 1;
+  let id = 'c' + n;
+  while ((list || []).find(w => w && w.id === id)) {
+    id = 'c' + Math.floor(Math.random() * 1000000);
+  }
+
+  list.push({ id, name: 'Клиент ' + n, type: 'client' });
+  _otdSetWorkspaces(list);
+  _otdSetWsId(id);
+
+  // reload data for the new workspace
+  loadLocal();
+  render();
+  renderWorkspaceControls();
+}
+
+function _otdRemoveCurrentWorkspace(){
+  const { list, current, role } = _otdEnsureWorkspaces();
+  if (role !== 'accountant') return;
+  if (!current) return;
+  if ((list || []).length <= 1) return alert('Нельзя удалить последнего клиента.');
+
+  const curObj = (list || []).find(w => w && w.id === current);
+  const name = (curObj && curObj.name) ? curObj.name : current;
+
+  const ok = confirm('Удалить клиента "' + name + '"? Данные этого клиента будут стерты локально.');
+  if (!ok) return;
+
+  const nextList = (list || []).filter(w => w && w.id !== current);
+  _otdClearWorkspaceData(current);
+
+  _otdSetWorkspaces(nextList);
+  const nextId = (nextList[0] && nextList[0].id) ? nextList[0].id : '';
+  _otdSetWsId(nextId);
+
+  loadLocal();
+  render();
+  renderWorkspaceControls();
+}
+
+function _otdSwitchWorkspace(wsId){
+  if (!wsId) return;
+  _otdSetWsId(wsId);
+  loadLocal();
+  render();
+  renderWorkspaceControls();
 }
 
 /* ==== AUTOSYNC ==== */
@@ -1237,9 +3727,9 @@ function bookRows(){
   const rows=[];
   (tx||[]).forEach(r=>{
     rows.push({
-      date: toISO(getVal(r,["Data księgowania","date","Дата"]))||today(),
+      date: toISO(getVal(r,["Data księgowania","Data","date","Дата"]))||today(),
       source: 'bank',
-      account: getVal(r,["ID konta","IBAN","account"])||'UNKNOWN',
+      account: getVal(r,["ID konta","IBAN","account"]) || r._acc || 'UNKNOWN',
       counterparty: getVal(r,["Kontrahent","Counterparty"])||'',
       desc: getVal(r,["Tytuł/Opis","Opis","title"])||'',
       amount: asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"]))||0,
@@ -1271,6 +3761,55 @@ function bookRows(){
   });
   return rows.sort((a,b)=> (a.date<b.date?-1: a.date>b.date?1:0));
 }
+function _otdParsePeriodInput(raw){
+  const s = String(raw||'').trim();
+  if(!s) return null;
+
+  // month: YYYY-MM
+  if(/^\d{4}-\d{2}$/.test(s)){
+    const [y,m] = s.split('-').map(n=>parseInt(n,10));
+    if(!y || !m) return null;
+    const from = new Date(Date.UTC(y, m-1, 1));
+    const to   = new Date(Date.UTC(y, m, 1)); // exclusive
+    return { from: from.toISOString().slice(0,10), to: to.toISOString().slice(0,10), label: s };
+  }
+
+  // range: YYYY-MM-DD..YYYY-MM-DD
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})\s*\.\.\s*(\d{4}-\d{2}-\d{2})$/);
+  if(m){
+    const a = new Date(m[1]+'T00:00:00Z');
+    const b = new Date(m[2]+'T00:00:00Z');
+    if(!isFinite(a.getTime()) || !isFinite(b.getTime())) return null;
+    // inclusive end -> exclusive next day
+    const to = new Date(b.getTime() + 24*3600*1000);
+    return { from: m[1], to: to.toISOString().slice(0,10), label: m[1] + '..' + m[2] };
+  }
+
+  return null;
+}
+function _otdAskExportPeriod(){
+  const now = new Date();
+  const y = now.getFullYear();
+  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const def = `${y}-${mm}`;
+  const raw = prompt(
+    "Export period:\n- month: YYYY-MM\n- range: YYYY-MM-DD..YYYY-MM-DD\n\nExample: 2025-12 or 2025-12-01..2025-12-31",
+    def
+  );
+  if(raw === null) return null;
+  const p = _otdParsePeriodInput(raw);
+  if(!p){
+    alert("Invalid period. Use YYYY-MM or YYYY-MM-DD..YYYY-MM-DD");
+    return null;
+  }
+  return p;
+}
+function _otdInPeriod(dateISO, period){
+  const d = String(dateISO||'').slice(0,10);
+  if(!d) return false;
+  return (d >= period.from && d < period.to);
+}
+
 function renderBook(){
   const tb=document.querySelector('#bookTable tbody'); if(!tb) return; // таблицы нет — тихий выход
   const rows=bookRows();
@@ -1281,20 +3820,27 @@ function renderBook(){
   });
 }
 function exportBookCSV(){
-  const rows=bookRows();
+  const period = _otdAskExportPeriod();
+  if(!period) return;
+  const rows=bookRows().filter(r=>_otdInPeriod(r.date, period));
+  if(!rows.length){ alert('No data in this period.'); return; }
   const head=['date','source','account','counterparty','description','amount','currency','doc_type','doc_no','doc_date','due_date','status'];
-  const csv=[head.join(',')].concat(rows.map(r=>[
+  const rowsP = rows.filter(r=>_otdInPeriod(r.date, period));
+  if(!rowsP.length){ alert('No data in this period.'); return; }
+  const csv=[head.join(',')].concat(rowsP.map(r=>[
     r.date,r.source,r.account,(r.counterparty||'').replace(/,/g,' '),(r.desc||'').replace(/,/g,' '),
     (r.amount||0).toFixed(2),r.currency,r.type||'',r.no||'',r.doc_date||'',r.due||'',(r.status||'').replace(/,/g,' ')
   ].join(','))).join('\n');
-  const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='otd_book.csv'; a.click();
+  const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`otd_book_${period.label}.csv`; a.click();
 }
 
 
 function exportTxCSV(){
+  const period = _otdAskExportPeriod();
+  if(!period) return;
   const head=['date','account','counterparty','description','amount','currency','status'];
   const rows = (tx||[]).map(r=>({
-    date: toISO(getVal(r,["Data księgowania","date","Дата"]))||today(),
+    date: toISO(getVal(r,["Data księgowania","Data","date","Дата"]))||today(),
     account: getVal(r,["ID konta","IBAN","account"])||'UNKNOWN',
     counterparty: getVal(r,["Kontrahent","Counterparty"])||'',
     desc: getVal(r,["Tytuł/Opis","Opis","title"])||'',
@@ -1302,7 +3848,9 @@ function exportTxCSV(){
     currency: (getVal(r,["Waluta","currency"])||'PLN').toUpperCase(),
     status: getVal(r,["Status transakcji","status"])||''
   }));
-  const csv=[head.join(',')].concat(rows.map(r=>[
+  const rowsP = rows.filter(r=>_otdInPeriod(r.date, period));
+  if(!rowsP.length){ alert('No data in this period.'); return; }
+  const csv=[head.join(',')].concat(rowsP.map(r=>[
     r.date,
     r.account,
     (r.counterparty||'').replace(/,/g,' '),
@@ -1312,10 +3860,12 @@ function exportTxCSV(){
     (r.status||'').replace(/,/g,' ')
   ].join(','))).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='otd_statement.csv'; a.click();
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`otd_statement_${period.label}.csv`; a.click();
 }
 
 function exportBillsCSV(){
+  const period = _otdAskExportPeriod();
+  if(!period) return;
   const head=['due_date','invoice_no','supplier','amount','currency','status'];
   const rows = (bills||[]).map(b=>({
     due: toISO(getVal(b,["Termin płatności","Termin"]))||'',
@@ -1325,7 +3875,9 @@ function exportBillsCSV(){
     currency: (getVal(b,["Waluta","currency"])||'PLN').toUpperCase(),
     status: getVal(b,["Status faktury","Status"])||''
   }));
-  const csv=[head.join(',')].concat(rows.map(r=>[
+  const rowsP = rows.filter(r=>_otdInPeriod(r.date, period));
+  if(!rowsP.length){ alert('No data in this period.'); return; }
+  const csv=[head.join(',')].concat(rowsP.map(r=>[
     r.due,
     r.no,
     (r.supplier||'').replace(/,/g,' '),
@@ -1334,10 +3886,12 @@ function exportBillsCSV(){
     (r.status||'').replace(/,/g,' ')
   ].join(','))).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='otd_invoices.csv'; a.click();
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`otd_invoices_${period.label}.csv`; a.click();
 }
 
 function exportCashCSV(){
+  const period = _otdAskExportPeriod();
+  if(!period) return;
   const head=['date','type','amount','source','comment'];
   const rows = (kasa||[]).map(k=>({
     date: k.date||today(),
@@ -1346,7 +3900,9 @@ function exportCashCSV(){
     source: k.source||'manual',
     comment: k.comment||''
   }));
-  const csv=[head.join(',')].concat(rows.map(r=>[
+  const rowsP = rows.filter(r=>_otdInPeriod(r.date, period));
+  if(!rowsP.length){ alert('No data in this period.'); return; }
+  const csv=[head.join(',')].concat(rowsP.map(r=>[
     r.date,
     r.type,
     (r.amount||0).toFixed(2),
@@ -1354,7 +3910,7 @@ function exportCashCSV(){
     (r.comment||'').replace(/,/g,' ')
   ].join(','))).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='otd_cash.csv'; a.click();
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`otd_cash_${period.label}.csv`; a.click();
 }
 
 
@@ -1364,11 +3920,20 @@ function renderKasa(){
   const listKasa=(kasa||[]).slice().reverse();
   listKasa.forEach((k,i)=>{
     const tr=document.createElement('tr');
-    tr.innerHTML = `<td>${listKasa.length - i}</td><td>${k.date}</td><td>${k.type}</td><td>${k.amount.toFixed(2)}</td><td>${k.source||""}</td><td>${k.comment||""}</td>
-                    <td class="actions">
-                      <button data-act="edit" data-kind="kasa" data-id="${k.id}">✎</button>
-                      <button data-act="del" data-kind="kasa" data-id="${k.id}">🗑</button>
-                    </td>`;
+    const catId = k.category || "";
+    tr.innerHTML = `<td>${listKasa.length - i}</td>
+      <td>${k.date||today()}</td>
+      <td>${k.type||""}</td>
+      <td>${Number(k.amount||0).toFixed(2)}</td>
+      <td>${k.source||""}</td>
+      <td>
+        <button data-act="cat" data-kind="kasa" data-id="${k.id}" class="btn ghost" style="padding:4px 8px;font-size:12px">${formatCatLabel(catId)}</button>
+      </td>
+      <td>${k.comment||""}</td>
+      <td class="actions">
+        <button data-act="edit" data-kind="kasa" data-id="${k.id}">✎</button>
+        <button data-act="del" data-kind="kasa" data-id="${k.id}">🗑</button>
+      </td>`;
     tb.appendChild(tr);
   });
 }
@@ -1386,6 +3951,8 @@ function renderAccounts(){
             <option ${a.currency==="PLN"?"selected":""}>PLN</option>
             <option ${a.currency==="EUR"?"selected":""}>EUR</option>
             <option ${a.currency==="USD"?"selected":""}>USD</option>
+            <option ${a.currency==="UAH"?"selected":""}>UAH</option>
+
           </select></td>
       <td>${bal.toFixed(2)}</td>
       <td><input type="number" step="0.01" value="${a.start||0}" class="acc-start" data-id="${a.id}"/></td>
@@ -1405,7 +3972,7 @@ function openCloseDayModal(){
     // Today summary (recalculated)
     let inSum = 0, outSum = 0;
     (tx||[]).forEach(r=>{
-      const d = toISO(getVal(r,["Data księgowania","date","Дата"]));
+      const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"]));
       if(!d || d!==t) return;
       const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
       if(amt>0) inSum+=amt; else outSum+=amt;
@@ -1413,8 +3980,16 @@ function openCloseDayModal(){
     (kasa||[]).forEach(k=>{
       const d = String(k.date||"").slice(0,10);
       if(!d || d!==t) return;
-      const amt = Number(k.amount||0);
-      if(amt>0) inSum+=amt; else outSum+=amt;
+      const typ = String(k.type||"").toLowerCase();
+      const raw = Number(k.amount||0);
+      const amt = Math.abs(raw||0);
+      if(!amt) return;
+      // 'zamknięcie' sets absolute cash balance, it's not a movement
+      if(typ==="zamknięcie" || typ==="zamkniecie" || typ==="close") return;
+      if(typ==="przyjęcie" || typ==="przyjecie" || typ==="in" || typ==="income") { inSum += amt; return; }
+      if(typ==="wydanie" || typ==="out" || typ==="expense") { outSum -= amt; return; }
+      // fallback: treat negative as outflow
+      if(raw>0) inSum += raw; else outSum += raw;
     });
     const net = inSum+outSum;
 
@@ -1559,7 +4134,7 @@ function render(){
     const t = today();
     let inSum = 0, outSum = 0;
     (tx||[]).forEach(r=>{
-      const d = toISO(getVal(r,["Data księgowania","date","Дата"]));
+      const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"]));
       if(!d || d!==t) return;
       const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
       if(amt>0) inSum+=amt; else outSum+=amt;
@@ -1567,8 +4142,16 @@ function render(){
     (kasa||[]).forEach(k=>{
       const d = String(k.date||"").slice(0,10);
       if(!d || d!==t) return;
-      const amt = Number(k.amount||0);
-      if(amt>0) inSum+=amt; else outSum+=amt;
+      const typ = String(k.type||"").toLowerCase();
+      const raw = Number(k.amount||0);
+      const amt = Math.abs(raw||0);
+      if(!amt) return;
+      // 'zamknięcie' sets absolute cash balance, it's not a movement
+      if(typ==="zamknięcie" || typ==="zamkniecie" || typ==="close") return;
+      if(typ==="przyjęcie" || typ==="przyjecie" || typ==="in" || typ==="income") { inSum += amt; return; }
+      if(typ==="wydanie" || typ==="out" || typ==="expense") { outSum -= amt; return; }
+      // fallback: treat negative as outflow
+      if(raw>0) inSum += raw; else outSum += raw;
     });
     const net = inSum+outSum;
     if($id('todayIn'))  $id('todayIn').textContent  = inSum ? inSum.toFixed(2)+' PLN' : '—';
@@ -1598,8 +4181,8 @@ function render(){
       if(diff<=30) sum30 += amt;
       if(diff<=30) upcoming.push({di, amt, who});
     });
-    if($id('oblig7'))  $id('oblig7').textContent  = sum7 ? sum7.toFixed(2)+' PLN' : '0 PLN';
-    if($id('oblig30')) $id('oblig30').textContent = sum30 ? sum30.toFixed(2)+' PLN' : '0 PLN';
+    if($id('oblig7'))  $id('oblig7').textContent  = sum7 ? sum7.toFixed(2)+' PLN' : '—';
+    if($id('oblig30')) $id('oblig30').textContent = sum30 ? sum30.toFixed(2)+' PLN' : '—';
 
     const availVal = typeof avail==='number' ? avail : availableTotal();
 
@@ -1638,6 +4221,11 @@ function render(){
       }
     }
 
+    // Hide safety pill when there are no upcoming obligations
+    if(daysEl){
+      try{ daysEl.style.display = (sum7===0 && sum30===0) ? 'none' : ''; }catch(e){}
+    }
+
     // Next payments (3 nearest within 30 days)
     const nextEl = $id('nextPayments');
     if(nextEl){
@@ -1668,7 +4256,7 @@ function render(){
       return d>=from && d<=tt;
     };
     (tx||[]).forEach(r=>{
-      const d = toISO(getVal(r,["Data księgowania","date","Дата"]));
+      const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"]));
       if(!inRange(d)) return;
       const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
       if(amt>0) in7+=amt; else out7+=amt;
@@ -1676,8 +4264,16 @@ function render(){
     (kasa||[]).forEach(k=>{
       const d = String(k.date||"").slice(0,10);
       if(!inRange(d)) return;
-      const amt = Number(k.amount||0);
-      if(amt>0) in7+=amt; else out7+=amt;
+      const typ = String(k.type||"").toLowerCase();
+      const raw = Number(k.amount||0);
+      const amt = Math.abs(raw||0);
+      if(!amt) return;
+      // 'zamknięcie' sets absolute cash balance, it's not a movement
+      if(typ==="zamknięcie" || typ==="zamkniecie" || typ==="close") return;
+      if(typ==="przyjęcie" || typ==="przyjecie" || typ==="in" || typ==="income") { in7 += amt; return; }
+      if(typ==="wydanie" || typ==="out" || typ==="expense") { out7 -= amt; return; }
+      // fallback: treat negative as outflow
+      if(raw>0) in7 += raw; else out7 += raw;
     });
     const net7 = in7+out7;
     const el = $id('last7Text');
@@ -1697,11 +4293,15 @@ function render(){
     listTx.forEach(r=>{
       const id=getVal(r,["ID transakcji","ID","id"])||("noid-"+Math.random());
       const curStr = getVal(r,["Waluta","currency"])||''; const cur = detectCurrency(curStr);
+      const catId = getVal(r,["Kategoria","Category","category"]) || "";
       const tr=document.createElement('tr');
-      tr.innerHTML = `<td>${toISO(getVal(r,["Data księgowania","date","Дата"]))}</td>
+      tr.innerHTML = `<td>${toISO(getVal(r,["Data księgowania","Data","date","Дата"]))}</td>
         <td>${getVal(r,["ID konta","IBAN","account"])||"—"}</td>
         <td>${getVal(r,["Kontrahent","Counterparty"])||""}</td>
         <td>${getVal(r,["Tytuł/Opis","Opis","title"])||""}</td>
+        <td>
+          <button data-act="cat" data-kind="tx" data-id="${id}" class="btn ghost" style="padding:4px 8px;font-size:12px">${formatCatLabel(catId)}</button>
+        </td>
         <td>${fmtAmountRaw(getVal(r,["Kwota","Kwота","amount","Kwota_raw"]))}</td>
         <td>${cur}</td>
         <td>${getVal(r,["Status transakcji","status"])||""}</td>
@@ -1724,17 +4324,22 @@ function render(){
       const score=getVal(r,["AI score"])||"";
       const id=getVal(r,["Numer faktury","Numer фактуры","Invoice number"])||("noinv-"+Math.random());
       const cur = detectCurrency(getVal(r,["Waluta","currency"])||'');
+      const catId = getVal(r,["Kategoria","Category","category"]) || "";
       const tr=document.createElement('tr');
       tr.innerHTML = `<td>${toISO(getVal(r,["Termin płatności","Termin","Termin платності"])||"")}</td>
         <td>${getVal(r,["Numer faktury","Numer фактуры","Invoice number"])||""}</td>
         <td>${getVal(r,["Dostawca","Supplier"])||""}</td>
         <td>${getVal(r,["Kwota do zapłaty","Kwota","Kwota"])||""}</td>
         <td>${cur}</td>
+        <td>
+          <button data-act="cat" data-kind="bill" data-id="${id}" class="btn ghost" style="padding:4px 8px;font-size:12px">${formatCatLabel(catId)}</button>
+        </td>
         <td><span class="badge ${cls}">${getVal(r,["Status faktury","Status фактуры","Status"])||""}</span></td>
         <td>${cand?('<span class="badge cand">'+cand+'</span>'):'—'}</td>
         <td>${score?('<span class="badge ai">'+score+'</span>'):'—'}</td>
         <td class="actions">
           ${cand?('<button class="btn secondary btn-accept" data-invid="'+id+'">OK</button>'):''}
+          <button data-act="pay" data-kind="bill" data-id="${id}">✓</button>
           <button data-act="edit" data-kind="bill" data-id="${id}">✎</button>
           <button data-act="del" data-kind="bill" data-id="${id}">🗑</button>
         </td>`;
@@ -1745,6 +4350,7 @@ function render(){
 
   try{ renderTrendChart(); }catch(e){ console.warn('trend', e); }
   try{ renderSpendingPanel(); }catch(e){ console.warn('spend', e); }
+  try{ fillQuickCashCat(); }catch(e){ console.warn('quick cat', e); }
   renderMinPay(); renderForecast(); renderAccounts(); renderKasa(); renderBook(); updateSubUI(); gateAccess();
 }
 
@@ -1839,10 +4445,11 @@ function acceptOne(id){
 }
 
 /* ==== KASA CRUD ==== */
-function loadKasa(){ try{kasa=JSON.parse(localStorage.getItem('kasa')||'[]');}catch(e){kasa=[]} }
-function addKasa(type,amount,comment,source){
+function loadKasa(){ kasa = _otdGetJSON('kasa', []); }
+function addKasa(type,amount,comment,source,category){
   if(amount==null||isNaN(amount)) return alert("Сумма некорректна");
-  kasa.push({id:Date.now(),date:today(),type,amount:Number(amount),comment:comment||"",source:source||"ручной"});
+  const cat = category || ($id('quickCashCat')?.value || "");
+  kasa.push({id:Date.now(),date:today(),type,amount:Number(amount),comment:comment||"",source:source||"ручной",category:cat});
   saveLocal(); render(); pushState();
 }
 function editRow(kind,id){
@@ -1851,23 +4458,53 @@ function editRow(kind,id){
     const k=kasa[idx];
     const n=prompt("Сумма:", k.amount); if(n===null) return;
     const c=prompt("Комментарий:", k.comment||""); if(c===null) return;
-    kasa[idx].amount=asNum(n); kasa[idx].comment=c; saveLocal(); render(); pushState(); return;
+    kasa[idx].amount=asNum(n); kasa[idx].comment=c;
+    saveLocal(); render(); pushState(); return;
   }
   if(kind==='tx'){
     const idx=tx.findIndex(x=> (getVal(x,["ID transakcji","ID","id"])||"")===String(id)); if(idx<0) return;
     const r=tx[idx];
-    const d=prompt("Дата (YYYY-MM-DD):", toISO(getVal(r,["Data księgowania"])||today())); if(d===null) return;
+    const d=prompt("Дата (YYYY-MM-DD):", toISO(getVal(r,["Data księgowania","date"])||today())); if(d===null) return;
     const a=prompt("Сумма:", getVal(r,["Kwota","Kwota_raw","amount"])||""); if(a===null) return;
-    r["Data księgowania"]=toISO(d)||today(); r["Kwota"]=asNum(a).toFixed(2); r["Waluta"]= detectCurrency(getVal(r,["Waluta"])||''); saveLocal(); render(); pushState(); return;
+    const cp=prompt("Контрагент:", getVal(r,["Kontrahent","Counterparty"])||""); if(cp===null) return;
+    const desc=prompt("Описание:", getVal(r,["Tytuł/Opis","Opis","title"])||""); if(desc===null) return;
+
+    r["Data księgowania"]=toISO(d)||today();
+    r["Kwota"]=asNum(a).toFixed(2);
+    r["Waluta"]= detectCurrency(getVal(r,["Waluta"])||'');
+    r["Kontrahent"]=cp;
+    r["Tytuł/Opis"]=desc;
+
+    saveLocal(); render(); pushState(); return;
   }
   if(kind==='bill'){
     const idx=bills.findIndex(x=> (getVal(x,["Numer faktury","Numer фактуры","Invoice number"])||"")===String(id)); if(idx<0) return;
     const r=bills[idx];
     const due=prompt("Срок (YYYY-MM-DD):", toISO(getVal(r,["Termin płatności","Termin"])||today())); if(due===null) return;
     const amt=prompt("Сумма к оплате:", getVal(r,["Kwota do zapłaty","Kwota"])||""); if(amt===null) return;
-    r["Termin płatności"]=toISO(due)||today(); r["Kwota do zapłaty"]=asNum(amt).toFixed(2); r["Waluta"]= detectCurrency(getVal(r,["Waluta"])||''); saveLocal(); render(); pushState(); return;
+    const sup=prompt("Поставщик/контрагент:", getVal(r,["Dostawca","Supplier"])||""); if(sup===null) return;
+
+    r["Termin płatności"]=toISO(due)||today();
+    r["Kwota do zapłaty"]=asNum(amt).toFixed(2);
+    r["Waluta"]= detectCurrency(getVal(r,["Waluta"])||'');
+    r["Dostawca"]=sup;
+
+    saveLocal(); render(); pushState(); return;
   }
 }
+function markBillPaid(id){
+  const idx=bills.findIndex(x=> (getVal(x,["Numer faktury","Numer фактуры","Invoice number"])||"")===String(id));
+  if(idx<0) return;
+  const r=bills[idx];
+  const ok = confirm("Отметить эту фактуру как оплачено вручную?");
+  if(!ok) return;
+
+  r["Status faktury"] = "opłacone";
+  r["Payment ID"] = "manual-" + Date.now();
+
+  saveLocal(); render(); pushState();
+}
+
 function delRow(kind,id){
   if(kind==='kasa'){ kasa = kasa.filter(x=> String(x.id)!==String(id)); saveLocal(); render(); pushState(); return; }
   if(kind==='tx'){ tx = tx.filter(x=> (getVal(x,["ID transakcji","ID","id"])||"")!==String(id)); saveLocal(); render(); pushState(); return; }
@@ -1879,8 +4516,11 @@ document.addEventListener('click',(e)=>{
   const btn=e.target.closest('button'); if(!btn) return;
   const act=btn.getAttribute('data-act'); if(!act) return;
   const kind=btn.getAttribute('data-kind'), id=btn.getAttribute('data-id');
+
   if(act==='edit') editRow(kind,id);
   if(act==='del') delRow(kind,id);
+  if(act==='cat') openCatModal(kind,id);
+  if(act==='pay' && kind==='bill') markBillPaid(id);
 });
 
 function thumb(el,file){ const img=el; if(!img) return; img.src=URL.createObjectURL(file); img.style.display='inline-block'; }
@@ -1896,6 +4536,7 @@ async function ocrBankFiles(files){
   }
   inferAccounts(); render(); saveLocal(); pushState();
 }
+
 async function ocrInvoiceFiles(files){
   for(const f of files){
     try{
@@ -1996,39 +4637,122 @@ async function syncUserStatus(){
     const user = data && data.user;
     if (!user) return;
 
-    // Сохраняем флаг админа локально
+    // Role + status (server source of truth)
+    if (user.role) localStorage.setItem(ROLE_KEY, user.role);
+    if (user.status) localStorage.setItem(STATUS_KEY, user.status);
+
+    // Admin flag
     if (user.isAdmin) {
       localStorage.setItem('otd_isAdmin', '1');
     } else {
       localStorage.removeItem('otd_isAdmin');
     }
 
-    // Обновляем локальное состояние демо из серверного ответа
-    if (user.status === 'active' && user.endAt && user.startAt) {
-      const endAt = new Date(user.endAt).getTime();
-      const now = Date.now();
-      if (endAt > now) {
-        // Демо активно
-        localStorage.setItem(DEMO_START, user.startAt);
-        localStorage.setItem(DEMO_USED, user.demoUsed ? '1' : '0');
-      } else {
-        // Демо истекло
+    const role = (user.role || localStorage.getItem(ROLE_KEY) || 'freelance_business');
+    const status = (user.status || '');
+
+    // Reset helper that keeps localStorage consistent
+    const clearAccess = () => {
+      localStorage.removeItem(DEMO_START);
+      localStorage.removeItem('otd_demo_until');
+      localStorage.removeItem(SUB_KEY);
+      localStorage.removeItem(SUB_FROM);
+      localStorage.removeItem(SUB_TO);
+    };
+
+    if (role === 'accountant') {
+      // ACCOUNTANT:
+      // - acct_trial / acct_pro_trial => timeboxed trial access (stored in demo keys to reuse gate)
+      // - active / discount_active => paid PRO (stored in SUB keys)
+      if ((status === 'acct_trial' || status === 'acct_pro_trial') && user.endAt) {
+        const end = new Date(user.endAt).getTime();
+        if (end > Date.now()) {
+          localStorage.setItem(DEMO_START, user.startAt || new Date().toISOString());
+          localStorage.setItem('otd_demo_until', user.endAt);
+          localStorage.setItem(DEMO_USED, '1');
+          // disable SUB markers while in trial
+          localStorage.removeItem(SUB_KEY);
+          localStorage.removeItem(SUB_FROM);
+          localStorage.removeItem(SUB_TO);
+        } else {
+          // trial ended
+          clearAccess();
+          localStorage.setItem(DEMO_USED, '1');
+        }
+      } else if (status === 'active' || status === 'discount_active') {
+        // paid PRO
+        localStorage.setItem(SUB_KEY,  '1');
+        localStorage.setItem(SUB_FROM, user.startAt || '');
+        localStorage.setItem(SUB_TO,   user.endAt   || '');
         localStorage.setItem(DEMO_USED, '1');
         localStorage.removeItem(DEMO_START);
+        localStorage.removeItem('otd_demo_until');
+      } else if (status === 'ended') {
+        clearAccess();
+        localStorage.setItem(DEMO_USED, '1');
+      } else {
+        // none / unknown
+        clearAccess();
       }
-    } else if (user.demoUsed) {
-      // Демо использовано
-      localStorage.setItem(DEMO_USED, '1');
-      localStorage.removeItem(DEMO_START);
+    } else {
+      // FREELANCE/BUSINESS: keep legacy heuristic (demo ~= 24h, else subscription)
+      const dayMs = 24 * 3600 * 1000;
+
+      if (status === 'active' && user.endAt && user.startAt) {
+        const start = new Date(user.startAt).getTime();
+        const end   = new Date(user.endAt).getTime();
+        const now   = Date.now();
+        const span  = end - start;
+
+        if (span <= dayMs + 5 * 60 * 1000) {
+          // ~24h => demo
+          if (end > now) {
+            localStorage.setItem(DEMO_START, user.startAt);
+            localStorage.setItem('otd_demo_until', user.endAt);
+            localStorage.setItem(DEMO_USED, user.demoUsed ? '1' : '0');
+          } else {
+            localStorage.setItem(DEMO_USED, '1');
+            localStorage.removeItem(DEMO_START);
+            localStorage.removeItem('otd_demo_until');
+          }
+          // subscription off
+          localStorage.removeItem(SUB_KEY);
+          localStorage.removeItem(SUB_FROM);
+          localStorage.removeItem(SUB_TO);
+        } else {
+          // subscription
+          localStorage.setItem(SUB_KEY,  '1');
+          localStorage.setItem(SUB_FROM, user.startAt || '');
+          localStorage.setItem(SUB_TO,   user.endAt   || '');
+          localStorage.setItem(DEMO_USED, '1');
+          localStorage.removeItem(DEMO_START);
+          localStorage.removeItem('otd_demo_until');
+        }
+      } else if (user.demoUsed) {
+        localStorage.setItem(DEMO_USED, '1');
+        localStorage.removeItem(DEMO_START);
+        localStorage.removeItem('otd_demo_until');
+        localStorage.removeItem(SUB_KEY);
+        localStorage.removeItem(SUB_FROM);
+        localStorage.removeItem(SUB_TO);
+      } else {
+        localStorage.removeItem(DEMO_START);
+        localStorage.removeItem('otd_demo_until');
+        localStorage.removeItem(SUB_KEY);
+        localStorage.removeItem(SUB_FROM);
+        localStorage.removeItem(SUB_TO);
+      }
     }
-    
-    // Обновляем UI
+
     gateAccess();
     updateSubUI();
-  } catch(e) {
+    if (typeof renderWorkspaceControls === 'function') renderWorkspaceControls();
+  } catch (e) {
     console.warn('syncUserStatus error', e);
   }
 }
+
+
 
 document.addEventListener('DOMContentLoaded', async ()=>{
   // Синхронизируем статус пользователя с сервером (для автоматически активированного демо)
@@ -2088,7 +4812,50 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     console.warn('layout fix failed', e);
   }
 
+  // --- Workspaces (accounts / clients) ---
+  try {
+    if (typeof renderWorkspaceControls === 'function') renderWorkspaceControls();
+    const wsSel = $id('workspaceSelect');
+    const wsAdd = $id('workspaceAdd');
+    const wsRm  = $id('workspaceRemove');
 
+    if (wsSel && !wsSel.__otd_bound) {
+      wsSel.__otd_bound = true;
+      wsSel.addEventListener('change', () => _otdSwitchWorkspace(wsSel.value));
+    }
+    if (wsAdd && !wsAdd.__otd_bound) {
+      wsAdd.__otd_bound = true;
+      wsAdd.addEventListener('click', () => _otdAddClientWorkspace());
+    }
+    if (wsRm && !wsRm.__otd_bound) {
+      wsRm.__otd_bound = true;
+      wsRm.addEventListener('click', () => _otdRemoveCurrentWorkspace());
+    }
+  } catch (e) {
+    console.warn('workspace init failed', e);
+  }
+
+  // --- Init local state early (so money/categories show without pressing ritual buttons) ---
+  try{
+    if(typeof loadLocal === 'function') loadLocal();
+    if(typeof ensureTxIds === 'function') ensureTxIds();
+    if(typeof ensureKasaIds === 'function') ensureKasaIds();
+    if(typeof inferAccounts === 'function') inferAccounts();
+    if(typeof render === 'function') render();
+    try{ if(typeof renderSpendingPanel==='function') renderSpendingPanel(); }catch(_){}
+    try{ if(typeof initSpendingUI==='function') initSpendingUI(); }catch(_){}
+  }catch(e){
+    console.warn('init local render failed', e);
+  }
+
+  // Auto-sync on open if URLs are set (removes the need to mash "Zrób dzień..." every time)
+  setTimeout(()=>{
+    try{
+      const u1 = localStorage.getItem('txUrl') || document.getElementById('txUrl')?.value || '';
+      const u2 = localStorage.getItem('billUrl') || document.getElementById('billUrl')?.value || '';
+      if((u1||u2) && typeof fetchSources==='function') fetchSources();
+    }catch(e){}
+  }, 450);
 
   // Home screen and premium tiles
   try{
@@ -2110,89 +4877,409 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     byId('docBillImgBtn')?.addEventListener('click', ()=> byId('billImage')?.click());
     byId('docCashImgBtn')?.addEventListener('click', ()=> byId('cashImage')?.click());
 
+    // Docs: accountant tools (no share links)
+    byId('docExportTxBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportTxCSV(); }catch(err){ console.warn(err); } });
+    byId('docExportBillsBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportBillsCSV(); }catch(err){ console.warn(err); } });
+    byId('docExportBookBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportBookCSV(); }catch(err){ console.warn(err); } });
+    byId('docExportCashBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportCashCSV(); }catch(err){ console.warn(err); } });
+    byId('openInvoiceTplBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); openInvoiceTplModal(); });
+
+    byId('openInventoryTplBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); openInventoryTplModal(); });
+
+  // Accountant tools modal (single button in Documents)
+  const acctModal = byId('accountantToolsModal');
+  const acctPanelExports = byId('acctPanelExports');
+  const acctPanelTemplates = byId('acctPanelTemplates');
+  const acctTabExports = byId('acctTabExports');
+  const acctTabTemplates = byId('acctTabTemplates');
+
+  function acctSwitch(mode){
+    const isExports = (mode === 'exports');
+    if(acctPanelExports) acctPanelExports.style.display = isExports ? 'flex' : 'none';
+    if(acctPanelTemplates) acctPanelTemplates.style.display = isExports ? 'none' : 'flex';
+    if(acctTabExports) acctTabExports.className = isExports ? 'btn' : 'btn secondary';
+    if(acctTabTemplates) acctTabTemplates.className = isExports ? 'btn secondary' : 'btn';
+  }
+  function acctOpen(){
+    if(!acctModal) return;
+    acctModal.classList.add('show');
+    acctSwitch('exports');
+  }
+  function acctClose(){
+    acctModal?.classList.remove('show');
+  }
+
+  byId('openAccountantToolsBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); acctOpen(); });
+  byId('accountantToolsClose')?.addEventListener('click', (e)=>{ e.preventDefault(); acctClose(); });
+  acctModal?.addEventListener('click', (e)=>{ if(e.target === acctModal) acctClose(); });
+
+  acctTabExports?.addEventListener('click', (e)=>{ e.preventDefault(); acctSwitch('exports'); });
+  acctTabTemplates?.addEventListener('click', (e)=>{ e.preventDefault(); acctSwitch('templates'); });
+
+  // Template helpers
+  byId('invoiceTplNew')?.addEventListener('click', (e)=>{ e.preventDefault(); _otdTplClearForm(); toast('Nowy szablon'); });
+  byId('inventoryTplNew')?.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplClearForm(); toast('Nowy szablon'); });
+  byId('invoiceVoiceBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); invoiceVoiceDictate(); });
+
+    // Invoice template modal actions
+    byId('invoiceTplClose')?.addEventListener('click', (e)=>{ e.preventDefault(); closeInvoiceTplModal(); });
+    byId('invoiceTplSave')?.addEventListener('click', (e)=>{ e.preventDefault(); invoiceTplSaveFromForm(); });
+    byId('invoiceTplDownloadHTML')?.addEventListener('click', (e)=>{ e.preventDefault(); invoiceTplDownloadHTML(); });
+    byId('invoiceTplDownloadCSV')?.addEventListener('click', (e)=>{ e.preventDefault(); invoiceTplDownloadCSV(); });
+
+
+    // Inventory template modal actions
+    byId('inventoryTplClose')?.addEventListener('click', (e)=>{ e.preventDefault(); closeInventoryTplModal(); });
+    byId('inventoryTplSave')?.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplSaveFromForm(); });
+    byId('inventoryTplDownloadCSV')?.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplDownloadCSV(); });
+    byId('inventoryTplDownloadXLSX')?.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplDownloadXLSX(); });
     // Reports buttons reuse existing export actions (если они есть)
     byId('reportsTx')?.addEventListener('click', ()=> byId('exportTxCSV')?.click());
     byId('reportsBills')?.addEventListener('click', ()=> byId('exportBillsCSV')?.click());
     byId('reportsBook')?.addEventListener('click', ()=> byId('exportBook')?.click());
 
-    // AI profile load/save (локально)
-    try{
-      const savedProfileRaw = localStorage.getItem('otd_ai_profile');
-      if(savedProfileRaw){
-        const pr = JSON.parse(savedProfileRaw);
-        if(byId('aiProfileType') && pr.type) byId('aiProfileType').value = pr.type;
-        if(byId('aiProfileNiche') && pr.niche) byId('aiProfileNiche').value = pr.niche;
-        if(byId('aiProfileGoal') && pr.goal) byId('aiProfileGoal').value = pr.goal;
-        if(byId('aiProfileSaved')) byId('aiProfileSaved').style.display='block';
-      }
-    }catch(e){}
+    // AI profile + chat UI (локально, без облачной магии)
+const AI_PROFILE_KEY = 'otd_ai_profile';
+const AI_CHATS_META_KEY = 'otd_ai_chats_meta_v1';
+const AI_CHAT_ACTIVE_KEY = 'otd_ai_chat_active_v1';
+const AI_CHAT_PREFIX = 'otd_ai_chat_msgs_';
+const LEGACY_AI_CHAT_KEY = 'otd_ai_chat_v1';
 
-    byId('aiProfileSave')?.addEventListener('click', ()=>{
-      const profile = {
-        type: byId('aiProfileType')?.value || 'solo',
-        niche: byId('aiProfileNiche')?.value || '',
-        goal: byId('aiProfileGoal')?.value || 'survive'
-      };
-      try{
-        localStorage.setItem('otd_ai_profile', JSON.stringify(profile));
-      }catch(e){}
-      if(byId('aiProfileSaved')) byId('aiProfileSaved').style.display='block';
-    });
-    // Быстрые вопросы для AI-бухгалтера
-   const quickPairs = [
-  ['aiQRent','ai.q_rent'],
+const escHtml = (s)=>String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const loadJSON = (k, fallback)=>{
+  try{ const raw = localStorage.getItem(k); return raw ? JSON.parse(raw) : fallback; }catch(e){ return fallback; }
+};
+const saveJSON = (k, v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+
+const tSafe = (key, fallback)=>{
+  try{
+    if(window.i18n && typeof window.i18n.t==='function'){
+      const v = window.i18n.t(key);
+      if(!v) return fallback;
+      const s = String(v).trim();
+      if(!s) return fallback;
+      // If i18n returns the key itself, treat as missing
+      if(s === key) return fallback;
+      return s;
+    }
+  }catch(e){}
+  return fallback;
+};
+
+
+const getProfile = ()=>{
+  const p = loadJSON(AI_PROFILE_KEY, null);
+  return p && typeof p === 'object' ? p : { type:'solo', niche:'', goal:'survive', incomeTarget:0 };
+};
+
+const applyProfileToUI = ()=>{
+  const p = getProfile();
+  if(byId('aiProfileType')) byId('aiProfileType').value = p.type || 'solo';
+  if(byId('aiProfileNiche')) byId('aiProfileNiche').value = p.niche || '';
+  if(byId('aiProfileGoal')) byId('aiProfileGoal').value = p.goal || 'survive';
+  if(byId('aiProfileIncomeTarget')) byId('aiProfileIncomeTarget').value = p.incomeTarget || '';
+  if(byId('aiProfileSaved')) byId('aiProfileSaved').style.display = 'block';
+};
+
+const openAiSettings = ()=>{
+  const ov = byId('aiSettingsOverlay');
+  if(!ov) return;
+  ov.classList.add('show');
+  applyProfileToUI();
+};
+const closeAiSettings = ()=>{
+  const ov = byId('aiSettingsOverlay');
+  if(!ov) return;
+  ov.classList.remove('show');
+};
+
+// Wire settings modal
+byId('aiSettingsBtn')?.addEventListener('click', openAiSettings);
+byId('aiSettingsClose')?.addEventListener('click', closeAiSettings);
+byId('aiSettingsOverlay')?.addEventListener('click', (e)=>{
+  if(e.target === byId('aiSettingsOverlay')) closeAiSettings();
+});
+
+// Load saved profile into UI (when elements exist)
+try{ applyProfileToUI(); }catch(e){}
+
+byId('aiProfileSave')?.addEventListener('click', ()=>{
+  const profile = {
+    type: byId('aiProfileType')?.value || 'solo',
+    niche: byId('aiProfileNiche')?.value || '',
+    goal: byId('aiProfileGoal')?.value || 'survive',
+    incomeTarget: Number(byId('aiProfileIncomeTarget')?.value || 0) || 0
+  };
+  saveJSON(AI_PROFILE_KEY, profile);
+  if(byId('aiProfileSaved')) byId('aiProfileSaved').style.display='block';
+  closeAiSettings();
+});
+
+// Chat history (local, multi-chat)
+const getChatsMeta = ()=>{
+  let m = loadJSON(AI_CHATS_META_KEY, null);
+  if(!Array.isArray(m)) m = [];
+  return m;
+};
+const saveChatsMeta = (arr)=> saveJSON(AI_CHATS_META_KEY, arr);
+const getActiveChatId = ()=> localStorage.getItem(AI_CHAT_ACTIVE_KEY) || '';
+const setActiveChatId = (id)=>{ try{ localStorage.setItem(AI_CHAT_ACTIVE_KEY, id); }catch(e){} };
+const chatKey = (id)=> AI_CHAT_PREFIX + id;
+const loadChat = (id)=> loadJSON(chatKey(id), []);
+const saveChat = (id, arr)=> saveJSON(chatKey(id), arr);
+
+const makeChatId = ()=> 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+const touchChatMeta = (id)=>{
+  const meta = getChatsMeta();
+  const i = meta.findIndex(x=>x && x.id===id);
+  if(i>=0){ meta[i].updatedAt = Date.now(); saveChatsMeta(meta); }
+};
+const ensureDefaultChat = ()=>{
+  // migrate legacy single-chat storage if it exists
+  const legacy = loadJSON(LEGACY_AI_CHAT_KEY, null);
+  let meta = getChatsMeta();
+  if(Array.isArray(legacy) && legacy.length && meta.length===0){
+    const id = makeChatId();
+    meta = [{ id, title:'Чат', createdAt:Date.now(), updatedAt:Date.now() }];
+    saveChatsMeta(meta);
+    saveChat(id, legacy);
+    try{ localStorage.removeItem(LEGACY_AI_CHAT_KEY); }catch(e){}
+    setActiveChatId(id);
+  }
+  meta = getChatsMeta();
+  if(meta.length===0){
+    const id = makeChatId();
+    meta = [{ id, title:'Чат', createdAt:Date.now(), updatedAt:Date.now() }];
+    saveChatsMeta(meta);
+    setActiveChatId(id);
+  }
+  if(!getActiveChatId() && meta[0]?.id) setActiveChatId(meta[0].id);
+};
+
+const formatShortDate = (ts)=>{
+  try{ const d=new Date(ts||Date.now()); return d.toISOString().slice(0,10); }catch(e){ return ''; }
+};
+
+const renderChatList = ()=>{
+  const host = byId('aiChatList');
+  if(!host) return;
+  const meta = getChatsMeta().slice().sort((a,b)=>(b?.updatedAt||0)-(a?.updatedAt||0));
+  const active = getActiveChatId();
+  host.innerHTML = meta.map(m=>{
+    const isA = m.id===active;
+    const name = escHtml(m.title || 'Chat');
+    const dt = escHtml(formatShortDate(m.updatedAt||m.createdAt));
+    return `<div class="aiChatItem ${isA?'active':''}" data-id="${escHtml(m.id)}">
+      <div style="min-width:0;flex:1">
+        <div class="name">${name}</div>
+        <div class="meta">${dt}</div>
+      </div>
+      <div class="actions">
+        <button class="mini" data-act="rename" title="Rename">✎</button>
+        <button class="mini" data-act="del" title="Delete">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+};
+
+const openChatDrawer = ()=>{ const d=byId('aiChatDrawer'); if(!d) return; d.classList.add('show'); renderChatList(); };
+const closeChatDrawer = ()=>{ const d=byId('aiChatDrawer'); if(!d) return; d.classList.remove('show'); };
+
+byId('aiChatsBtn')?.addEventListener('click', openChatDrawer);
+byId('aiChatDrawerClose')?.addEventListener('click', closeChatDrawer);
+byId('aiChatDrawer')?.addEventListener('click', (e)=>{ if(e.target===byId('aiChatDrawer')) closeChatDrawer(); });
+byId('aiChatNew')?.addEventListener('click', ()=>{
+  ensureDefaultChat();
+  const meta = getChatsMeta();
+  const id = makeChatId();
+  meta.unshift({ id, title:'Новый чат', createdAt:Date.now(), updatedAt:Date.now() });
+  saveChatsMeta(meta);
+  setActiveChatId(id);
+  saveChat(id, []);
+  renderChat();
+  renderChatList();
+});
+
+byId('aiChatList')?.addEventListener('click', (e)=>{
+  const item = e.target.closest('.aiChatItem');
+  if(!item) return;
+  const id = item.getAttribute('data-id')||'';
+  if(!id) return;
+  const act = e.target?.getAttribute?.('data-act');
+  if(act==='rename'){
+    const meta = getChatsMeta();
+    const i = meta.findIndex(x=>x.id===id);
+    const cur = i>=0 ? (meta[i].title||'Chat') : 'Chat';
+    const nn = prompt('Название чата', cur);
+    if(nn && i>=0){ meta[i].title = String(nn).trim().slice(0,60) || cur; meta[i].updatedAt=Date.now(); saveChatsMeta(meta); renderChatList(); }
+    return;
+  }
+  if(act==='del'){
+    const ok = confirm('Удалить чат? (только локально)');
+    if(!ok) return;
+    const meta = getChatsMeta().filter(x=>x.id!==id);
+    saveChatsMeta(meta);
+    try{ localStorage.removeItem(chatKey(id)); }catch(e){}
+    if(getActiveChatId()===id){ setActiveChatId(meta[0]?.id || ''); }
+    ensureDefaultChat();
+    renderChat();
+    renderChatList();
+    return;
+  }
+  setActiveChatId(id);
+  renderChat();
+  closeChatDrawer();
+});
+
+ensureDefaultChat();
+
+const renderChat = ()=>{
+  const host = byId('aiChatLog');
+  if(!host) return;
+  ensureDefaultChat();
+  const activeId = getActiveChatId();
+  let msgs = loadChat(activeId);
+  if(!Array.isArray(msgs)) msgs = [];
+
+  // Seed with greeting once (per chat)
+  if(msgs.length === 0){
+        let greet = tSafe('ai.chat_intro', 'Привет! Я AI‑бухгалтер OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?');
+    // If i18n returns the key itself (common "missing translation" behavior), fallback to a real greeting.
+    if(!greet || greet === 'ai.chat_intro'){
+      greet = (window.OTD_AI && typeof window.OTD_AI.greeting==='function')
+        ? window.OTD_AI.greeting(getProfile())
+        : 'Привет! Я AI‑бухгалтер OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?';
+    }
+
+    msgs.push({ role:'assistant', text: greet, ts: Date.now() });
+    saveChat(activeId, msgs);
+    touchChatMeta(activeId);
+  }
+
+  host.innerHTML = msgs.map(m=>{
+    const role = (m.role === 'user') ? 'user' : 'bot';
+    return '<div class="aiMsg '+role+'"><div class="aiBubble">'+escHtml(m.text)+'</div></div>';
+  }).join('');
+  host.scrollTop = host.scrollHeight;
+};
+
+const pushMsg = (role, text)=>{
+  ensureDefaultChat();
+  const activeId = getActiveChatId();
+  const msgs = loadChat(activeId);
+  msgs.push({ role, text, ts: Date.now() });
+  saveChat(activeId, msgs);
+  touchChatMeta(activeId);
+  renderChat();
+};
+
+// Quick chips -> send
+const quickPairs = [
   ['aiQSpending','ai.q_spending'],
   ['aiQWithdraw','ai.q_withdraw'],
   ['aiQMonth','ai.q_month']
 ];
-
 quickPairs.forEach(([id,key])=>{
-  const btn = document.getElementById(id);
+  const btn = byId(id);
   if(!btn) return;
   btn.addEventListener('click', ()=>{
-    const inp = document.getElementById('aiChatInput');
+    const inp = byId('aiChatInput');
     if(!inp) return;
-    // Use new i18n system
-    if (window.i18n && window.i18n.t) {
-      inp.value = window.i18n.t(key) || '';
-    }
-    const send = document.getElementById('aiChatSend');
-    if(send) send.click();
+    let text = tSafe(key, '');
+    if(!text) text = (btn.innerText || '').trim();
+    inp.value = text;
+    byId('aiChatSend')?.click();
   });
 });
 
+const sendAiChat = async ()=>{
+  const inp = byId('aiChatInput');
+  if(!inp) return;
+  const q = (inp.value||'').trim();
+  if(!q) return;
+  inp.value = '';
 
+  // Write user message and a pending assistant bubble into the active chat
+  ensureDefaultChat();
+  const activeId = getActiveChatId();
+  const msgs0 = loadChat(activeId);
+  msgs0.push({ role:'user', text:q, ts: Date.now() });
+  msgs0.push({ role:'assistant', text:'⌛ Думаю…', ts: Date.now(), _pending:true });
+  saveChat(activeId, msgs0);
+  touchChatMeta(activeId);
+  renderChat();
 
-    byId('aiChatSend')?.addEventListener('click', ()=>{
-      const inp = byId('aiChatInput');
-      const log = byId('aiChatLog');
-      if(!inp || !log) return;
-      const q = (inp.value||'').trim();
-      if(!q) return;
-      let profileNote = '';
-      try{
-        const profileRaw = localStorage.getItem('otd_ai_profile');
-        if(profileRaw){
-          const p = JSON.parse(profileRaw);
-          profileNote = '\n\n(Профиль: тип='+ (p.type||'-') +', ниша='+(p.niche||'-')+', цель='+(p.goal||'-')+')';
-        }
-      }catch(e){}
-      const userHtml = '<div style="margin-bottom:6px"><b>Ты:</b> '+q+'</div>';
-      const botHtml = '<div style="margin-bottom:10px"><b>AI-бухгалтер:</b> это прототип интерфейса. На боевой версии здесь будут персональные советы по твоим данным'+profileNote+'.</div>';
-      log.innerHTML = userHtml + botHtml + log.innerHTML;
-      inp.value = '';
-    });
+  try{
+    const profile = getProfile();
+    let ans = '';
+    if(window.OTD_AI && typeof window.OTD_AI.answer === 'function'){
+      ans = await window.OTD_AI.answer(q, { profile });
+    }else{
+      ans = 'AI модуль не подключен. Проверь, что загружается /js/ai/ai-client.js.';
+    }
+
+    const msgs = loadChat(activeId);
+    for(let i=msgs.length-1;i>=0;i--){
+      if(msgs[i] && msgs[i]._pending){
+        msgs[i].text = ans;
+        delete msgs[i]._pending;
+        break;
+      }
+    }
+    saveChat(activeId, msgs);
+    touchChatMeta(activeId);
+    renderChat();
+  }catch(e){
+    const msgs = loadChat(activeId);
+    for(let i=msgs.length-1;i>=0;i--){
+      if(msgs[i] && msgs[i]._pending){
+        msgs[i].text = 'Не смог ответить: ' + ((e && e.message) ? e.message : 'ошибка');
+        delete msgs[i]._pending;
+        break;
+      }
+    }
+    saveChat(activeId, msgs);
+    touchChatMeta(activeId);
+    renderChat();
+  }
+};
+
+byId('aiChatSend')?.addEventListener('click', sendAiChat);
+byId('aiChatInput')?.addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    sendAiChat();
+  }
+});
+
+// Initial render
+renderChat();
+
   }catch(e){
     console.warn('home/ai wiring error', e);
   }
   // Tabs (with gate)
   document.querySelectorAll('.tabs .tab').forEach(t=>{
     t.addEventListener('click', ()=>{
-      if(t.classList.contains('disabled')) { document.querySelector('[data-sec=ustawienia]')?.click(); return; }
-      document.querySelectorAll('.tabs .tab').forEach(x=>x.classList.remove('active'));
-      document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-      t.classList.add('active'); const sec=t.dataset.sec; if(sec) $id(sec)?.classList.add('active');
-      render();
+      // Если раздел заблокирован — ведём в Ustawienia
+      if (t.classList.contains('disabled')) {
+        document.querySelector('[data-sec=ustawienia]')?.click();
+        return;
+      }
+
+      const secId = t.dataset.sec;
+      if (!secId) return;
+
+      // Панель = возврат на домашний экран с плитками
+      if (secId === 'pulpit' && window.appShowHome) {
+        window.appShowHome();
+        return;
+      }
+
+      // Остальные вкладки ведут в свои разделы
+      if (window.appGoSection) {
+        window.appGoSection(secId);
+      }
     });
   });
 
@@ -2231,239 +5318,290 @@ quickPairs.forEach(([id,key])=>{
 
   $id('runDayAI')?.addEventListener('click', ()=>{ try{ fetchSources(); }catch(e){ console.warn('runDayAI error', e); } });
   $id('openAIQuestions')?.addEventListener('click', ()=>{
-    const tab = document.querySelector('.tabs .tab[data-sec="faktury"]');
-    if(tab) tab.click();
+    try{
+      if(window.appGoSection) window.appGoSection('aiAssist');
+      const inp = document.getElementById('aiChatInput');
+      if(inp){
+        inp.focus();
+        try{ inp.scrollIntoView({block:'center'}); }catch(_){}
+      }
+    }catch(e){
+      console.warn('openAIQuestions error', e);
+    }
   });
 
-  // File/url
- $id('txFile')?.addEventListener('change', async e=>{const f=e.target.files[0]; if(!f) return;
-  tx = parseCSV(await f.text());
-  ensureTxIds();
-  inferAccounts();
+
+// File/url
+// Безопасный импорт файлов с честным сообщением пилоту
+async function safeImportFile(kindLabel, importerFn, file){
+  try{
+    const rows = await importerFn(file);
+    return Array.isArray(rows) ? rows : [];
+  }catch(err){
+    console.error("Ошибка импорта (" + kindLabel + ")", err);
+    alert(
+      "Ошибка при импорте файла (" + kindLabel + ").\n\n" +
+      "Для пилота: попробуйте другой экспорт (CSV) или пришлите файл Никите, чтобы мы допилили импорт."
+    );
+    return [];
+  }
+}
+
+$id('txFile')?.addEventListener('change', async e=>{
+  const f = e.target.files[0];
+  if(!f) return;
+
+  // Защищённый импорт выписки
+  const newRows = await safeImportFile("выписка", importTxByFile, f);
+
+  if(!newRows.length){
+alert(
+  "Не могу распознать файл.\n\n" +
+  "Как это работает сейчас:\n" +
+  "- если это CSV, приложение может спросить номера колонок: дата, сумма, описание, контрагент;\n" +
+  "- если таких окон не было, файл вообще не читается как таблица.\n\n" +
+  "Лучше всего сейчас работает простой CSV-экспорт из банка или Stripe.\n" +
+  "Если это уже CSV и ошибка повторяется – пришлите файл команде OneTapDay, формат добавим в импорт."
+);
+    e.target.value = "";
+    return;
+  }
+
+  const normalized = normalizeImportedTxRows(newRows);
+
+  if(!normalized.length){
+    alert("Не могу распознать файл. Проверьте формат или выберите колонки вручную.");
+    e.target.value = "";
+    return;
+  }
+
+   if(typeof confirmTxImport === "function"){
+    const ok = confirmTxImport(normalized);
+    if(!ok){
+      alert("Импорт отменён.");
+      e.target.value = "";
+      return;
+    }
+  }
+
+// P0: сначала привязываем импорт к счёту (чтобы сразу было понятно, откуда выписка)
+if(typeof assignImportedTxToAccount === "function"){
+  assignImportedTxToAccount(normalized);
+}
+
+// P0: merge без потери пользовательских правок + защита от повторного/частичного импорта
+const existingTx = Array.isArray(tx) ? tx : [];
+
+function _otdNormTxt(s){
+  return String(s||'').trim().toLowerCase().replace(/\s+/g,' ').slice(0,120);
+}
+function _otdAmt(v){
+  try{ return (typeof asNum==="function") ? asNum(v) : Number(String(v||'').replace(',','.')); }catch(_){ return 0; }
+}
+function _otdTxFp(r){
+  const d = String(toISO(getVal(r,["Data księgowania","Data","date","Дата"])||"") || "").slice(0,10);
+  const amt = _otdAmt(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+  const cur = String(getVal(r,["Waluta","currency","Валюта"])||"PLN").toUpperCase().trim();
+  const desc = _otdNormTxt(getVal(r,["Tytuł/Opis","Opis transakcji","Opis","description","Описание"])||"");
+  const cp = _otdNormTxt(getVal(r,["Kontrahent","Counterparty","Контрагент"])||"");
+  const bal = _otdNormTxt(getVal(r,["Saldo po operacji","Saldo po","balance"])||"");
+  // intentionally NOT including account in fp (so re-assigning account doesn't break dedupe)
+  return [d, Math.round(amt*100), cur, desc, cp, bal].join("|");
+}
+function _otdBankId(r){
+  const raw = String(getVal(r,["ID transakcji","Transaction ID","Id transakcji","ID","id"])||"").trim();
+  return raw || "";
+}
+function _otdEnrichKeep(existing, incoming){
+  // fill only blanks; never overwrite user's category/status if already set
+  if(!existing || !incoming) return;
+  Object.keys(incoming).forEach(k=>{
+    const v = incoming[k];
+    if(v === undefined || v === null) return;
+    const cur = existing[k];
+    const empty = (cur === undefined || cur === null || cur === "");
+    if(empty && v !== "") existing[k] = v;
+  });
+  // ensure account fields
+  if(incoming._acc && !existing._acc) existing._acc = incoming._acc;
+  if(incoming["ID konta"] && !existing["ID konta"]) existing["ID konta"] = incoming["ID konta"];
+}
+
+// Build multiset of existing fingerprints + fast bankId lookup
+const bankIdSet = new Set();
+const fpToIdxs = new Map();
+existingTx.forEach((r, idx)=>{
+  if(!r) return;
+  const bid = _otdBankId(r);
+  if(bid) bankIdSet.add(bid);
+  const fp = _otdTxFp(r);
+  if(!fpToIdxs.has(fp)) fpToIdxs.set(fp, []);
+  fpToIdxs.get(fp).push(idx);
+});
+const fpUsed = new Map();
+
+const toAdd = [];
+normalized.forEach(r=>{
+  if(!r) return;
+
+  const bid = _otdBankId(r);
+  if(bid){
+    if(bankIdSet.has(bid)){
+      // duplicate by bank transaction id -> enrich and skip adding
+      const fp = _otdTxFp(r);
+      const list = fpToIdxs.get(fp) || [];
+      const used = fpUsed.get(fp) || 0;
+      if(list.length && used < list.length){
+        _otdEnrichKeep(existingTx[list[used]], r);
+        fpUsed.set(fp, used+1);
+      }
+      return;
+    }
+    // IMPORTANT: dedupe внутри импорта по bankId (если файл содержит повтор)
+    bankIdSet.add(bid);
+  }
+
+  const fp = _otdTxFp(r);
+  const list = fpToIdxs.get(fp) || [];
+  const used = fpUsed.get(fp) || 0;
+  if(list.length && used < list.length){
+    // duplicate by fingerprint -> enrich existing row and skip adding
+    _otdEnrichKeep(existingTx[list[used]], r);
+    fpUsed.set(fp, used+1);
+    return;
+  }
+
+  toAdd.push(r);
+  // NOTE: we intentionally do NOT "dedupe inside the same file" by fp, because identical operations may be real.
+});
+
+tx = existingTx.concat(toAdd);
+
+if(typeof ensureTxIds === "function") ensureTxIds();
+
+// Нормальные счета по картам из файла
+
+  // Нормальные счета по картам из файла
+  ensureCardAccountsFromTx();
+
+  // Убиваем мусорные авто-счета вида tx-2025-...
+  dropTxGeneratedAccounts();
+
+  // ВАЖНО: НЕ вызываем inferAccounts()
+
   render();
   saveLocal();
   pushState();
+
+  // Сбрасываем input, чтобы можно было залить тот же файл ещё раз
+  e.target.value = "";
 });
 
+
+
   $id('txImage')?.addEventListener('change', async e=>{ const files=[...e.target.files]; if(!files.length) return; await ocrBankFiles(files); });
-  $id('billFile')?.addEventListener('change', async e=>{ const f=e.target.files[0]; if(!f) return; bills=parseCSV(await f.text()); render(); saveLocal(); pushState(); });
+  $$id('billFile')?.addEventListener('change', async e=>{
+  const f = e.target.files[0];
+  if(!f) return;
+
+  // Защищённый импорт фактур
+  const newRows = await safeImportFile("фактуры", importBillsByFile, f);
+
+  if(!newRows.length){
+    alert("Не могу распознать файл фактур. Проверьте формат или попробуйте CSV.");
+    e.target.value = "";
+    return;
+  }
+
+  const normalized = normalizeImportedBillsRows(newRows);
+
+  if(!normalized.length){
+    alert("Файл фактур распознан, но данные пустые.");
+    e.target.value = "";
+    return;
+  }
+
+  const ok = (typeof confirmBillsImport === "function")
+    ? confirmBillsImport(normalized)
+    : confirm("Импортировать фактуры из файла?");
+
+  if(!ok){
+    alert("Импорт отменён.");
+    e.target.value = "";
+    return;
+  }
+
+  // ВАЖНО: не стираем старые фактуры
+  bills = Array.isArray(bills) ? bills : [];
+  bills.push(...normalized);
+
+  saveLocal();
+  render();
+  pushState();
+
+  e.target.value = "";
+});
+
+
   $id('billImage')?.addEventListener('change', async e=>{ const files=[...e.target.files]; if(!files.length) return; await ocrInvoiceFiles(files); });
 
   // Cash quick & ops
-  $id('addIn')?.addEventListener('click',()=> addKasa('przyjęcie', asNum($id('quickAmt')?.value||0), $id('quickNote')?.value, 'manual'));
-  $id('addOut')?.addEventListener('click',()=> addKasa('wydanie', asNum($id('quickAmt')?.value||0), $id('quickNote')?.value, 'manual'));
-  $id('cashClose')?.addEventListener('click',()=>{ const a=prompt('Итог в кассе (PLN):', kasaBalance().toFixed(2)); if(a===null) return; addKasa('zamknięcie', asNum(a), 'close', 'manual'); });
-  $id('q50')?.addEventListener('click',()=>{ const el=$id('quickAmt'); if(el) el.value=(Number(el.value||0)+50).toFixed(2); });
-  $id('q100')?.addEventListener('click',()=>{ const el=$id('quickAmt'); if(el) el.value=(Number(el.value||0)+100).toFixed(2); });
-  $id('q200')?.addEventListener('click',()=>{ const el=$id('quickAmt'); if(el) el.value=(Number(el.value||0)+200).toFixed(2); });
+function quickCashReadAmount(){
+  const el = $id('quickAmt');
+  if (!el) return NaN;
+  const raw = String(el.value || "").replace(",", ".");
+  const n = (typeof asNum === "function") ? asNum(raw) : Number(raw);
+  return n;
+}
 
-  // Speech
-  const micBtn = $id('micBtn');
-  if (micBtn && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
-    const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const rec = new SR();
+function quickCashAdd(kind){
+  const amtEl  = $id('quickAmt');
+  const noteEl = $id('quickNote');
+  const catSel = $id('quickCashCat');
+  if (!amtEl) return;
 
-    rec.continuous     = false;
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-    rec.lang = localStorage.getItem('speechLang') || 'pl-PL';
+  const amount  = quickCashReadAmount();
+  const comment = (noteEl?.value || "").trim();
+  const cat     = catSel ? (catSel.value || "") : "";
 
-    // Слова для ПРИХОДА (IN)
-    const CMD_IN = [
-      // PL
-      'przyjęcie','przyjecie','wpłata','wplata','depozyt','depozit',
-      // EN
-      'plus','income','cash in','received','receive','deposit',
-      // RU / UKR
-      'плюс','принять','пополнить','пополнил','приход','зачислить'
-    ];
-
-    // Слова для РАСХОДА (OUT)
-    const CMD_OUT = [
-      // PL
-      'wyda','wydat','wypłat','wyplata','koszt',
-      // EN
-      'minus','pay out','payout','expense','cash out','payment',
-      // RU / UKR
-      'выда','выдать','выдал','расход','списать','минус','выточка'
-    ];
-
-    function detectType(text) {
-      const t = text.toLowerCase();
-
-      // 1) Явный знак перед числом: "+200", "-150", "−300"
-      const signMatch = t.match(/([+\-−])\s*\d+[.,]?\d*/);
-      if (signMatch) {
-        const sign = signMatch[1];
-        if (sign === '-' || sign === '−') return 'wydanie';   // расход
-        if (sign === '+')               return 'przyjęcie';   // приход
-      }
-
-      // 2) Ключевые слова
-      if (CMD_OUT.some(w => t.includes(w))) return 'wydanie';
-      if (CMD_IN.some(w  => t.includes(w))) return 'przyjęcie';
-
-      // 3) По умолчанию считаем приход
-      return 'przyjęcie';
-    }
-
-    rec.onstart = () => {
-      micBtn.classList.add('on');
-      if ($id('micStatus')) {
-        $id('micStatus').textContent = `🎙️ ... (${rec.lang})`;
-      }
-    };
-
-    rec.onend = () => {
-      micBtn.classList.remove('on');
-    };
-
-    rec.onresult = (e) => {
-      const text = (e.results[0][0].transcript || "").toLowerCase();
-      if ($id('micStatus')) {
-        $id('micStatus').textContent = '🎙️ ' + text;
-      }
-
-      // Число: "200", "200,50", "200.50" и т.п.
-      const numMatch = text.match(/(\d+[.,]?\d*)\s*(zł|pln|eur|usd)?/i);
-      const num = numMatch ? numMatch[1] : null;
-
-      // Определяем тип: приход / расход
-      const type = detectType(text);
-
-      // Комментарий = текст без числа и валюты
-      const note = text.replace(/(\d+[.,]?\d*\s*(zł|pln|eur|usd)?)/i, "").trim();
-
-      if (!num) {
-        if ($id('micStatus')) {
-          $id('micStatus').textContent = '🎙️ сумма не найдена';
-        }
-        return;
-      }
-
-      addKasa(type, asNum(num), note || 'voice', 'voice');
-    };
-
-    $id('speechLang')?.addEventListener('change', (e) => {
-      rec.lang = e.target.value;
-      localStorage.setItem('speechLang', rec.lang);
-    });
-
-    micBtn.addEventListener('click', () => {
-      try {
-        rec.start();
-      } catch (e) {
-        if ($id('micStatus')) {
-          $id('micStatus').textContent = '🎙️ не смог запустить: ' + e.message;
-        }
-      }
-    });
+  if (!amount || !isFinite(amount)) {
+    alert("Сначала введите сумму");
+    return;
   }
 
-
-  // Settings
-  $id('applySettings')?.addEventListener('click',()=>{
-    localStorage.setItem('cashPLN',$id('cashPLN')?.value||"0");
-    localStorage.setItem('penaltyPct',$id('penaltyPct')?.value||"0.05");
-    localStorage.setItem('intervalMin',$id('intervalMin')?.value||"10");
-    localStorage.setItem('rateEUR',$id('rateEUR')?.value||"4.30");
-    localStorage.setItem('rateUSD',$id('rateUSD')?.value||"3.95");
-    localStorage.setItem('blacklist',$id('blacklist')?.value||"");
-    localStorage.setItem('autoCash', ($id('autoCash')?.checked?"1":"0"));
-    $id('modeCash')&&( $id('modeCash').textContent = (localStorage.getItem('otd_lang')||'pl')==='ru' ? ("Режим: "+($id('autoCash')?.checked?"авто":"ручной")) : ("Mode: "+($id('autoCash')?.checked?"auto":"manual")) );
-    render(); saveLocal(); scheduleAutosync(); pushState();
-  })
-  const themeSelect = $id('themeSelect');
-  if(themeSelect){
-    themeSelect.addEventListener('change', e=> applyTheme(e.target.value||'dark'));
+  if (typeof addKasa !== "function") {
+    console.warn("addKasa is not a function");
+    return;
   }
-;
-  $id('exportCfg')?.addEventListener('click',()=>{
-    const cfg=stateKeys.reduce((m,k)=> (m[k]=localStorage.getItem(k),m),{});
-    const blob=new Blob([JSON.stringify(cfg,null,2)],{type:"application/json"});
-    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='onetapday_settings.json'; a.click();
-  });
-  $id('importCfg')?.addEventListener('change',async e=>{
-    const f=e.target.files[0]; if(!f) return; const cfg=JSON.parse(await f.text());
-    Object.entries(cfg).forEach(([k,v])=> localStorage.setItem(k, v));
-    location.reload();
-  });
-  $id('clearAll')?.addEventListener('click',()=>{
-    if(!confirm('Очистить локальную историю и настройки?')) return;
-    ['kasa','tx_manual_import','bills_manual_import','accMeta'].forEach(k=> localStorage.removeItem(k));
-    loadLocal(); inferAccounts(); render(); pushState();
-  });
 
-  // Demo/Sub controls
-  // Демо теперь активируется автоматически при первом логине
-  // Оставляем обработчик для обратной совместимости, но синхронизируем с сервером
-  $id('startDemo')?.addEventListener('click', async ()=>{
-    if (localStorage.getItem(DEMO_USED) === '1') {
-      alert('Demo уже было использовано. Доступ только по подписке.');
-      return;
-    }
-    // Синхронизируем статус с сервером (демо должно было активироваться автоматически при логине)
-    await syncUserStatus();
-    updateSubUI();
-    gateAccess();
-  });
+  addKasa(kind, amount, comment, 'manual', cat);
 
-  $id('endDemo')?.addEventListener('click', ()=>{
-    localStorage.removeItem(DEMO_START);
-    // DEMO_USED не трогаем: демо уже использовано
-    updateSubUI();
-    gateAccess();
-  });
+  amtEl.value = "";
+  if (noteEl) noteEl.value = "";
+}
 
-  $id('payNow')?.addEventListener('click', async ()=>{
-    try{
-      const r = await fetch('/create-checkout-session', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        credentials:'include',
-        body:JSON.stringify({ demo:true })
-      });
-      const j = await r.json();
-      if(j?.url) { location.href=j.url; return; }
-      alert('No Stripe URL from backend');
-    }catch(e){ 
-      alert('Stripe error: '+(e?.message||e)); 
-    }
-  });
+function quickCashClose(){
+  if (typeof kasaBalance !== "function") {
+    console.warn("kasaBalance is not a function");
+    return;
+  }
+  const current = kasaBalance().toFixed(2);
+  const a = prompt('Итог в кассе (PLN):', current);
+  if (a === null) return;
+  const v = (typeof asNum === "function") ? asNum(a) : Number(String(a).replace(",", "."));
+  if (isNaN(v)) {
+    alert('Сумма некорректна');
+    return;
+  }
+  addKasa('zamknięcie', v, 'close', 'manual');
+}
 
+// безопасно навешиваем обработчики при загрузке
+$id('addIn')?.addEventListener('click', ()=> quickCashAdd('przyjęcie'));
+$id('addOut')?.addEventListener('click', ()=> quickCashAdd('wydanie'));
+$id('cashClose')?.addEventListener('click', ()=> quickCashClose());
 
-
-  // INIT
-  loadLocal(); loadKasa();
-  $id('txUrl')&&( $id('txUrl').value = localStorage.getItem('txUrl')||"" );
-  ['cashPLN','penaltyPct','intervalMin','rateEUR','rateUSD','blacklist'].forEach(k=>{ if($id(k)) $id(k).value = localStorage.getItem(k)|| $id(k).value || ""; });
-  if($id('autoCash')) $id('autoCash').checked = localStorage.getItem('autoCash')==='1';
-  if($id('speechLang') && localStorage.getItem('speechLang')) $id('speechLang').value = localStorage.getItem('speechLang');
-
-  inferAccounts();
-  applyLang(localStorage.getItem('otd_lang')||'pl');
-  render();
-  scheduleAutosync();
-
-    // Remote pull once, then push snapshot
-  (async () => {
-    try {
-      await pullState();
-      loadLocal();
-      inferAccounts();
-      render();
-      pushState();
-      startCloudSync();
-    } catch (e) {
-      console.warn('remote pull error', e);
-      loadLocal();
-      inferAccounts();
-      render();
-      startCloudSync();
-    }
-  })();
-
-  // Save on unload (sendBeacon fallback)
+// Save on unload (sendBeacon fallback)
   window.addEventListener('beforeunload', ()=>{
     if(!REMOTE_OK) return;
     try{
@@ -2471,14 +5609,1882 @@ quickPairs.forEach(([id,key])=>{
       if(!email) return;
       const body={
         email,
-        tx: JSON.parse(localStorage.getItem('tx_manual_import')||'[]'),
-        bills: JSON.parse(localStorage.getItem('bills_manual_import')||'[]'),
-        kasa: JSON.parse(localStorage.getItem('kasa')||'[]'),
-        accMeta: JSON.parse(localStorage.getItem('accMeta')||'{}'),
+        tx: _otdGetJSON('tx_manual_import', []),
+        bills: _otdGetJSON('bills_manual_import', []),
+        kasa: _otdGetJSON('kasa', []),
+        accMeta: _otdGetJSON('accMeta', {}),
         settings: stateKeys.reduce((m,k)=> (m[k]=localStorage.getItem(k), m), {})
       };
       const blob=new Blob([JSON.stringify(body)],{type:'application/json'});
       navigator.sendBeacon && navigator.sendBeacon(`${API_BASE}/state/save`, blob);
     }catch(e){}
   });
+});// Speech
+  const micBtn     = $id('micBtn');
+  const micStatus  = $id('micStatus');
+  const SR         = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!micBtn) {
+    // нет кнопки — нечего делать
+  } else if (!SR) {
+    // браузер не умеет Web Speech API
+    try { micBtn.style.display = 'none'; } catch(e){}
+    if (micStatus) {
+      micStatus.textContent = '🎙️ Голос недоступен в этом браузере';
+    }
+  } else {
+    let rec = null;
+
+    try {
+      rec = new SR();
+    } catch (e) {
+      console.warn('Speech init error', e);
+      if (micStatus) micStatus.textContent = '🎙️ Ошибка голоса: ' + e.message;
+    }
+
+    if (rec) {
+      rec.continuous      = false;
+      rec.interimResults  = false;
+      rec.maxAlternatives = 1;
+      rec.lang            = localStorage.getItem('speechLang') || 'pl-PL';
+
+      // Слова для ПРИХОДА (IN)
+      const CMD_IN = [
+        // PL
+        'przyjęcie','przyjecie','wpłata','wplata','depozyt','depozit',
+        // EN
+        'plus','income','cash in','received','receive','deposit',
+        // RU / UKR
+        'плюс','принять','пополнить','пополнил','приход','зачислить'
+      ];
+
+      // Слова для РАСХОДА (OUT)
+      const CMD_OUT = [
+        // PL
+        'wyda','wydat','wypłat','wyplata','koszt',
+        // EN
+        'minus','pay out','payout','expense','cash out','payment',
+        // RU / UKR
+        'выда','выдать','выдал','расход','списать','минус','выточка'
+      ];
+
+      function detectType(text) {
+        const t = text.toLowerCase();
+
+        // Знак перед числом: "+200" / "-150"
+        const signMatch = t.match(/([+\-−])\s*\d+[.,]?\d*/);
+        if (signMatch) {
+          const sign = signMatch[1];
+          return (sign === '+' ? 'przyjęcie' : 'wydanie');
+        }
+
+        // Ключевые слова
+        for (const w of CMD_IN)  { if (t.includes(w))  return 'przyjęcie'; }
+        for (const w of CMD_OUT) { if (t.includes(w)) return 'wydanie'; }
+
+        // По умолчанию считаем приход
+        return 'przyjęcie';
+      }
+
+      rec.onstart = () => {
+        micBtn.classList.add('on');
+        if (micStatus) micStatus.textContent = '🎙️ Слушаю...';
+      };
+
+      rec.onerror = (e) => {
+        console.warn('Speech error', e);
+        if (micStatus) micStatus.textContent = '🎙️ Ошибка: ' + e.error;
+      };
+
+      rec.onend = () => {
+        micBtn.classList.remove('on');
+      };
+
+      rec.onresult = (e) => {
+        const text = (e.results[0][0].transcript || "").toLowerCase();
+
+        if (micStatus) {
+          micStatus.textContent = '🎙️ ' + text;
+        }
+
+        // Ищем число: "200", "200,50", "200.50", с валютой или без
+        const numMatch = text.match(/(\d+[.,]?\d*)\s*(zł|pln|eur|usd|злот|евро|доллар)?/i);
+        const num = numMatch ? numMatch[1] : null;
+
+        const type = detectType(text);
+        const note = text;
+
+        if (!num) {
+          if (micStatus) micStatus.textContent = '🎙️ сумма не найдена';
+          return;
+        }
+
+        if (typeof addKasa !== 'function') {
+          console.warn('addKasa is not a function, cannot write cash row');
+          return;
+        }
+
+        const amount = (typeof asNum === "function")
+          ? asNum(num)
+          : Number(String(num).replace(',', '.'));
+
+        if (!amount || !isFinite(amount)) {
+          if (micStatus) micStatus.textContent = '🎙️ сумма не распознана';
+          return;
+        }
+
+        addKasa(type, amount, note || 'voice', 'voice');
+      };
+
+      micBtn.addEventListener('click', () => {
+        if (!rec) return;
+        try {
+          // иногда помогает сначала оборвать предыдущую сессию
+          if (typeof rec.abort === 'function') rec.abort();
+          rec.start();
+        } catch (e) {
+          console.warn('Speech start error', e);
+          if (micStatus) micStatus.textContent = '🎙️ не смог запустить: ' + e.message;
+        }
+      });
+
+      $id('speechLang')?.addEventListener('change', (e) => {
+        const lang = e.target.value;
+        if (rec) rec.lang = lang;
+        try { localStorage.setItem('speechLang', lang); } catch(_) {}
+      });
+    }
+  }
+
+/* === Settings MVP bindings (Save/Clear) ===
+   Keep this tiny and stable: settings screen is intentionally minimal now.
+*/
+(function(){
+  // Make settings buttons unbreakable: render() may rebuild DOM, so we use delegated handlers.
+  function doSaveSettingsLocal(){
+    try{
+      if(typeof saveLocal==='function') saveLocal();
+      if(typeof inferAccounts==='function') inferAccounts();
+      if(typeof render==='function') render();
+    }catch(e){
+      console.warn('applySettings error', e);
+    }
+  }
+
+  function doClearHistoryLocal(){
+    try{
+      const ok = confirm('Wyczyścić lokalną historię? (Transakcje, faktury, kasa)\n\nKategorie zostaną.');
+      if(!ok) return;
+
+      try{ window.tx = []; }catch(e){}
+      try{ window.bills = []; }catch(e){}
+      try{ window.kasa = []; }catch(e){}
+      try{ window.accMeta = {}; }catch(e){}
+
+      const keysToRemove = [
+        'tx_manual_import','bills_manual_import','kasa','accMeta',
+        'txUrl','billUrl',
+        'tx_last_import','bill_last_import','cash_last_import'
+      ];
+      keysToRemove.forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
+
+      if(typeof inferAccounts==='function') try{ inferAccounts(); }catch(e){}
+      if(typeof render==='function') try{ render(); }catch(e){}
+      alert('Wyczyszczono lokalnie ✅');
+    }catch(e){
+      console.warn('clearAll error', e);
+    }
+  }
+
+  // Expose for debugging / optional inline onclick.
+  try{ window._otdSaveSettings = doSaveSettingsLocal; }catch(_){ }
+  try{ window._otdClearHistoryLocal = doClearHistoryLocal; }catch(_){ }
+
+  function delegatedSettingsHandler(e){
+    const t = e.target;
+    if(!t) return;
+
+    const clearBtn = t.closest && t.closest('#clearAll');
+    if(clearBtn){
+      e.preventDefault();
+      e.stopPropagation();
+      doClearHistoryLocal();
+      return;
+    }
+
+    const saveBtn = t.closest && t.closest('#applySettings');
+    if(saveBtn){
+      e.preventDefault();
+      e.stopPropagation();
+      doSaveSettingsLocal();
+    }
+  }
+
+  // Capture phase to survive any stopPropagation in the app.
+  document.addEventListener('click', delegatedSettingsHandler, true);
+  document.addEventListener('pointerup', delegatedSettingsHandler, true);
+})();
+
+/* ===== Document Vault MVP (v2025-12-18) =====
+   Цель: локальный "сейф" документов (IndexedDB) + запросы бухгалтера + пакеты ZIP (store-only).
+   Ничего не ломаем: просто добавляем новый слой хранения и UI в разделе #docs.
+*/
+(function(){
+  const VAULT = {};
+  const DB_NAME = 'otd_docvault_v1';
+  const DB_VER = 1;
+  const storeNames = { docs:'docs', files:'files', requests:'requests', packages:'packages' };
+  const nowIso = ()=> new Date().toISOString();
+
+  const escapeHtml = (s)=>String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+  function uuid(){
+    try{ if (crypto && crypto.randomUUID) return crypto.randomUUID(); }catch(_){}
+    return 'id-'+Math.random().toString(16).slice(2)+'-'+Date.now().toString(16);
+  }
+
+  function guessType(file){
+    const n = (file?.name||'').toLowerCase();
+    const m = (file?.type||'').toLowerCase();
+    if (n.includes('mt940') || n.includes('statement') || n.includes('wyciag') || n.endsWith('.csv') || n.endsWith('.ofx') || n.endsWith('.qif') || n.endsWith('.sta') || n.endsWith('.xml') || n.endsWith('.json')) return 'statement';
+    if (n.includes('fakt') || n.includes('invoice')) return 'invoice';
+    if (n.includes('paragon') || n.includes('receipt')) return 'receipt';
+    if (n.includes('umowa') || n.includes('contract')) return 'contract';
+    if (n.includes('spis') || n.includes('inventory') || n.includes('inwent')) return 'inventory';
+    if (n.includes('zus') || n.includes('urzad') || n.includes('us ') || n.includes('letter') || n.includes('pismo')) return 'letter';
+    if (m.startsWith('image/')) return 'receipt';
+    return 'other';
+  }
+
+  function guessPeriod(file){
+    const n = (file?.name||'');
+    const m1 = n.match(/(20\d{2})[-_. ]?(0[1-9]|1[0-2])/);
+    if (m1) return `${m1[1]}-${m1[2]}`;
+    return '';
+  }
+
+  async function sha256Hex(blob){
+    try{
+      const max = 5*1024*1024; // не хешируем гигантов
+      if (!blob || blob.size > max) return '';
+      const buf = await blob.arrayBuffer();
+      const digest = await crypto.subtle.digest('SHA-256', buf);
+      const arr = Array.from(new Uint8Array(digest));
+      return arr.map(b=>b.toString(16).padStart(2,'0')).join('');
+    }catch(e){ return ''; }
+  }
+
+  function openDb(){
+    return new Promise((resolve,reject)=>{
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = ()=>{
+        const db = req.result;
+        if(!db.objectStoreNames.contains(storeNames.docs)) db.createObjectStore(storeNames.docs, { keyPath:'id' });
+        if(!db.objectStoreNames.contains(storeNames.files)) db.createObjectStore(storeNames.files, { keyPath:'id' });
+        if(!db.objectStoreNames.contains(storeNames.requests)) db.createObjectStore(storeNames.requests, { keyPath:'id' });
+        if(!db.objectStoreNames.contains(storeNames.packages)) db.createObjectStore(storeNames.packages, { keyPath:'id' });
+      };
+      req.onsuccess = ()=> resolve(req.result);
+      req.onerror = ()=> reject(req.error);
+    });
+  }
+
+  function tx(db, stores, mode='readonly'){ return db.transaction(stores, mode); }
+
+  async function put(store, value){
+    const db = await openDb();
+    return new Promise((resolve,reject)=>{
+      const t = tx(db, [store], 'readwrite');
+      t.oncomplete = ()=> resolve(true);
+      t.onerror = ()=> reject(t.error);
+      t.objectStore(store).put(value);
+    });
+  }
+
+  async function get(store, key){
+    const db = await openDb();
+    return new Promise((resolve,reject)=>{
+      const t = tx(db, [store], 'readonly');
+      const req = t.objectStore(store).get(key);
+      req.onsuccess = ()=> resolve(req.result || null);
+      req.onerror = ()=> reject(req.error);
+    });
+  }
+
+  async function del(store, key){
+    const db = await openDb();
+    return new Promise((resolve,reject)=>{
+      const t = tx(db, [store], 'readwrite');
+      const req = t.objectStore(store).delete(key);
+      req.onsuccess = ()=> resolve(true);
+      req.onerror = ()=> reject(req.error);
+    });
+  }
+
+  async function getAll(store){
+    const db = await openDb();
+    return new Promise((resolve,reject)=>{
+      const t = tx(db, [store], 'readonly');
+      const req = t.objectStore(store).getAll();
+      req.onsuccess = ()=> resolve(req.result || []);
+      req.onerror = ()=> reject(req.error);
+    });
+  }
+
+  function auditAppend(doc, action, extra){
+    const item = { ts: nowIso(), action, ...(extra||{}) };
+    doc.audit = Array.isArray(doc.audit) ? doc.audit : [];
+    doc.audit.unshift(item);
+    if (doc.audit.length > 50) doc.audit = doc.audit.slice(0,50);
+  }
+
+  async function addFiles(files, opts={}){
+    const list = Array.from(files || []);
+    for(const file of list){
+      const id = uuid();
+      const type = opts.type || guessType(file);
+      const period = (opts.period || guessPeriod(file) || '').trim();
+      const hash = await sha256Hex(file);
+      const meta = {
+        id,
+        name: file?.name || `file-${id}`,
+        size: file?.size || 0,
+        mime: file?.type || '',
+        created_at: nowIso(),
+        source: opts.source || 'upload',
+        type,
+        period,
+        counterparty: (opts.counterparty || '').trim(),
+        for_accountant: !!opts.for_accountant,
+        status: 'new',
+        deleted_at: '',
+        content_hash: hash,
+        links: [],
+        audit: []
+      };
+      auditAppend(meta, 'created', { source: meta.source, type: meta.type });
+      await put(storeNames.docs, meta);
+      await put(storeNames.files, { id, blob: file });
+    }
+  }
+
+  function fmtBytes(n){
+    if(!Number.isFinite(n) || n<=0) return '0 B';
+    const units = ['B','KB','MB','GB'];
+    let i=0; let v=n;
+    while(v>=1024 && i<units.length-1){ v/=1024; i++; }
+    return `${v.toFixed(i===0?0:1)} ${units[i]}`;
+  }
+
+  function typeLabel(t){
+    const map = {
+      statement:'Wyciąg bankowy',
+      invoice:'Faktura',
+      receipt:'Paragon / rachunek',
+      contract:'Umowa',
+      inventory:'Inwentaryzacja',
+      letter:'Pismo / urząd',
+      handover:'Protokół przekazania',
+      explain:'Wyjaśnienie przelewu',
+      other:'Inne'
+    };
+    return map[t] || 'Inne';
+  }
+
+  function sanitizeName(name){
+    return String(name||'file').replace(/[\/\\:*?"<>|]/g,'_').slice(0,160);
+  }
+
+  // --- ZIP writer (STORE, без сжатия, зато без библиотек) ---
+  const CRC_TABLE = (function(){
+    let c; const table = new Uint32Array(256);
+    for(let n=0;n<256;n++){
+      c = n;
+      for(let k=0;k<8;k++) c = (c & 1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1);
+      table[n]=c>>>0;
+    }
+    return table;
+  })();
+
+  function crc32(buf){
+    let crc = 0xFFFFFFFF;
+    for(let i=0;i<buf.length;i++){
+      crc = CRC_TABLE[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function dosTime(date){
+    const d = date instanceof Date ? date : new Date();
+    const sec = Math.floor(d.getSeconds()/2);
+    const min = d.getMinutes();
+    const hour = d.getHours();
+    return (hour<<11) | (min<<5) | sec;
+  }
+  function dosDate(date){
+    const d = date instanceof Date ? date : new Date();
+    const day = d.getDate();
+    const month = d.getMonth()+1;
+    const year = d.getFullYear();
+    return ((year-1980)<<9) | (month<<5) | day;
+  }
+  const u16 = (n)=> [n & 0xFF, (n>>>8)&0xFF];
+  const u32 = (n)=> [n & 0xFF, (n>>>8)&0xFF, (n>>>16)&0xFF, (n>>>24)&0xFF];
+
+  async function makeZip(fileEntries){
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+    const dt = new Date();
+
+    for(const ent of fileEntries){
+      const name = sanitizeName(ent.name);
+      const nameBytes = new TextEncoder().encode(name);
+      const dataBuf = new Uint8Array(await ent.blob.arrayBuffer());
+      const crc = crc32(dataBuf);
+      const mtime = ent.mtime ? new Date(ent.mtime) : dt;
+      const modTime = dosTime(mtime);
+      const modDate = dosDate(mtime);
+
+      const localHeader = new Uint8Array([
+        ...u32(0x04034b50),
+        ...u16(20),
+        ...u16(0),
+        ...u16(0),
+        ...u16(modTime),
+        ...u16(modDate),
+        ...u32(crc),
+        ...u32(dataBuf.length),
+        ...u32(dataBuf.length),
+        ...u16(nameBytes.length),
+        ...u16(0)
+      ]);
+      localParts.push(localHeader, nameBytes, dataBuf);
+
+      const centralHeader = new Uint8Array([
+        ...u32(0x02014b50),
+        ...u16(20),
+        ...u16(20),
+        ...u16(0),
+        ...u16(0),
+        ...u16(modTime),
+        ...u16(modDate),
+        ...u32(crc),
+        ...u32(dataBuf.length),
+        ...u32(dataBuf.length),
+        ...u16(nameBytes.length),
+        ...u16(0),
+        ...u16(0),
+        ...u16(0),
+        ...u16(0),
+        ...u32(0),
+        ...u32(offset)
+      ]);
+      centralParts.push(centralHeader, nameBytes);
+
+      offset += localHeader.length + nameBytes.length + dataBuf.length;
+    }
+
+    const centralStart = offset;
+    let centralSize = 0;
+    for(const part of centralParts) centralSize += part.length;
+
+    const end = new Uint8Array([
+      ...u32(0x06054b50),
+      ...u16(0), ...u16(0),
+      ...u16(fileEntries.length),
+      ...u16(fileEntries.length),
+      ...u32(centralSize),
+      ...u32(centralStart),
+      ...u16(0)
+    ]);
+
+    return new Blob([...localParts, ...centralParts, end], {type:'application/zip'});
+  }
+
+  function downloadBlob(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 700);
+  }
+
+  
+  // UI state
+  let els = {};
+  let state = { docs:[], sel:null, requests:[], packages:[], view:'all', prevView:'all' };
+
+  const q = (id)=>document.getElementById(id);
+
+  function setBtnActive(activeBtn, btns){
+    (btns||[]).forEach(b=>{
+      if(!b) return;
+      b.classList.remove('secondary');
+      b.classList.add('ghost');
+    });
+    if(activeBtn){
+      activeBtn.classList.remove('ghost');
+      activeBtn.classList.add('secondary');
+    }
+  }
+
+  function setView(view){
+    state.view = view || 'all';
+
+    // Panels
+    if(els.panelDocs) els.panelDocs.style.display = (state.view==='all' || state.view==='accountant' || state.view==='trash') ? '' : 'none';
+    if(els.panelReq)  els.panelReq.style.display  = (state.view==='requests') ? '' : 'none';
+    if(els.tplPanel)  els.tplPanel.style.display  = (state.view==='templates') ? '' : 'none';
+
+    // Tabs
+    const tabSet = [els.tabAll, els.tabAcc, els.tabReq, els.tabTrash];
+    if(state.view==='all') setBtnActive(els.tabAll, tabSet);
+    else if(state.view==='accountant') setBtnActive(els.tabAcc, tabSet);
+    else if(state.view==='requests') setBtnActive(els.tabReq, tabSet);
+    else if(state.view==='trash') setBtnActive(els.tabTrash, tabSet);
+    else setBtnActive(null, tabSet);
+
+    // Highlight "Utwórz dokument" when templates are open
+    if(els.createDocBtn){
+      if(state.view==='templates'){
+        els.createDocBtn.classList.remove('ghost');
+        els.createDocBtn.classList.add('secondary');
+      }else{
+        els.createDocBtn.classList.add('ghost');
+        els.createDocBtn.classList.remove('secondary');
+      }
+    }
+
+    // Details only on docs views
+    if(state.view!=='all' && state.view!=='accountant' && state.view!=='trash'){
+      closeModal();
+      if(els.det) els.det.style.display='none';
+      state.sel = null;
+    }
+
+    if(state.view==='templates'){
+      renderTemplateChooser();
+    }
+
+    renderList();
+    renderRequests();
+  }
+
+  function bindUI(){
+    els.addBtn = q('vaultAddBtn');
+    els.createDocBtn = q('vaultCreateDocBtn');
+    els.shareBtn = q('vaultShareBtn');
+    els.sharePeriod = q('vaultSharePeriod');
+    els.overlay = q('vaultOverlay');
+    els.detClose = q('vaultDetCloseBtn');
+
+    els.input = q('vaultInput');
+    els.search = q('vaultSearch');
+    els.list = q('vaultList');
+    els.stats = q('vaultStats');
+
+    els.panelDocs = q('vaultPanelDocs');
+    els.panelReq  = q('vaultPanelReq');
+    els.tplPanel  = q('vaultTemplatesPanel');
+    els.tplHost   = q('tplFormHost');
+
+    els.tabAll = q('vaultTabAll');
+    els.tabAcc = q('vaultTabAcc');
+    els.tabReq = q('vaultTabReq');
+    els.tabTrash = q('vaultTabTrash');
+
+    // Details
+    els.det = q('vaultDetails');
+    els.detType = q('vaultDetType');
+    els.detName = q('vaultDetName');
+    els.detMeta = q('vaultDetMeta');
+    els.editType = q('vaultEditType');
+    els.editPeriod = q('vaultEditPeriod');
+    els.editCounterparty = q('vaultEditCounterparty');
+    els.editForAcc = q('vaultEditForAcc');
+    els.saveMeta = q('vaultSaveMetaBtn');
+    els.download = q('vaultDownloadBtn');
+    els.preview = q('vaultPreviewBtn');
+    els.trash = q('vaultToTrashBtn');
+    els.restore = q('vaultRestoreBtn');
+    els.audit = q('vaultAudit');
+
+    // Requests
+    els.reqList = q('vaultReqList');
+    els.newReqBtn = q('vaultNewReqBtn');
+
+    // Templates
+    els.tplHandoverBtn = q('tplHandoverBtn');
+    els.tplExplainBtn = q('tplExplainBtn');
+    els.tplCloseBtn = q('tplCloseBtn');
+
+    if(!els.addBtn || !els.input || !els.list) return false;
+
+    // Delegated list events (bind once)
+    if(!state._listBound){
+      state._listBound = true;
+      els.list.addEventListener('click', onListClick);
+      els.list.addEventListener('change', onListChange);
+    }
+
+    // Add doc
+    els.addBtn.addEventListener('click', ()=> els.input.click());
+    els.input.addEventListener('change', async ()=>{
+      if(!els.input.files || !els.input.files.length) return;
+      await addFiles(els.input.files, {source:'upload'});
+      els.input.value='';
+      await refresh();
+      setView('all');
+    });
+
+    // Search
+    els.search?.addEventListener('input', ()=> renderList());
+    els.sharePeriod?.addEventListener('input', ()=> renderList());
+
+    // Modal close
+    els.overlay?.addEventListener('click', ()=> closeModal());
+    els.detClose?.addEventListener('click', ()=> closeModal());
+
+    // Tabs
+    els.tabAll?.addEventListener('click', ()=> setView('all'));
+    els.tabAcc?.addEventListener('click', ()=> setView('accountant'));
+    els.tabReq?.addEventListener('click', ()=> setView('requests'));
+    els.tabTrash?.addEventListener('click', ()=> setView('trash'));
+
+    // Create doc (templates)
+    els.createDocBtn?.addEventListener('click', ()=>{
+      // Inline templates view (no blur/no modal)
+      state.prevView = state.view || 'all';
+      setView('templates');
+    });
+    els.tplCloseBtn?.addEventListener('click', ()=>{ setView(state.prevView || 'all'); });
+
+    // Templates buttons
+    els.tplHandoverBtn?.addEventListener('click', ()=> renderTemplateHandover());
+    els.tplExplainBtn?.addEventListener('click', ()=> renderTemplateExplain());
+
+    // Share to accountant (ZIP)
+    els.shareBtn?.addEventListener('click', async ()=>{
+      const period = (els.sharePeriod?.value || '').trim();
+      await createAccountantPackage(period);
+    });
+
+    // Save meta
+    els.saveMeta?.addEventListener('click', async ()=>{
+      const doc = state.sel;
+      if(!doc) return;
+      doc.type = els.editType?.value || doc.type;
+      doc.period = (els.editPeriod?.value || '').trim();
+      doc.counterparty = (els.editCounterparty?.value || '').trim();
+      doc.for_accountant = !!(els.editForAcc?.checked);
+      auditAppend(doc, 'meta_saved', {type:doc.type, period:doc.period, counterparty:doc.counterparty, for_accountant:doc.for_accountant});
+      await put(storeNames.docs, doc);
+      await refresh(doc.id);
+    });
+
+    // Download
+    els.download?.addEventListener('click', async ()=>{
+      if(!state.sel) return;
+      const f = await get(storeNames.files, state.sel.id);
+      if(!f || !f.blob) return alert('Brak pliku w magazynie.');
+      downloadBlob(f.blob, sanitizeName(state.sel.name || 'document'));
+    });
+
+els.preview?.addEventListener('click', async ()=>{
+      if(!state.sel) return;
+      await previewDoc(state.sel.id);
+    });
+
+    // Trash / restore
+    els.trash?.addEventListener('click', async ()=>{
+      if(!state.sel) return;
+      const doc = state.sel;
+      if(doc.deleted_at) return;
+      doc.deleted_at = nowIso();
+      auditAppend(doc, 'trashed', {});
+      await put(storeNames.docs, doc);
+      await refresh(null);
+    });
+    els.restore?.addEventListener('click', async ()=>{
+      if(!state.sel) return;
+      const doc = state.sel;
+      if(!doc.deleted_at) return;
+      doc.deleted_at = '';
+      auditAppend(doc, 'restored', {});
+      await put(storeNames.docs, doc);
+      await refresh(doc.id);
+    });
+
+    // Requests: new request
+    els.newReqBtn?.addEventListener('click', async ()=>{
+      const title = prompt('Co prosi księgowy? (np. „Wyciąg 2025-11 + 3 faktury”)','');
+      if(!title || !title.trim()) return;
+      const req = {
+        id: uuid(),
+        created_at: nowIso(),
+        title: title.trim(),
+        items: [{ id: uuid(), text: title.trim(), done:false, doc_id:'' }]
+      };
+      await put(storeNames.requests, req);
+      await refreshRequests();
+      setView('requests');
+    });
+
+    // Default view
+    setView('all');
+
+    return true;
+  }
+
+  function visibleDocs(){
+    const docs = Array.isArray(state.docs)? state.docs : [];
+    const s = (els.search?.value || '').trim().toLowerCase();
+    let list = docs.slice();
+
+    if(state.view==='trash'){
+      list = list.filter(d=>!!d.deleted_at);
+    } else {
+      list = list.filter(d=>!d.deleted_at);
+    }
+
+    if(state.view==='accountant'){
+      list = list.filter(d=>d.for_accountant);
+    }
+
+if(s){
+      list = list.filter(d=>{
+        const hay = `${d.name||''} ${d.type||''} ${d.period||''} ${d.counterparty||''}`.toLowerCase();
+        return hay.includes(s);
+      });
+    }
+
+    // sort: non-deleted first, then by created desc
+    list.sort((a,b)=>{
+      const ad = a.deleted_at?1:0;
+      const bd = b.deleted_at?1:0;
+      if(ad!==bd) return ad-bd;
+      return (b.created_at||'').localeCompare(a.created_at||'');
+    });
+    return list;
+  }
+
+  async function previewDoc(docId){
+    const f = await get(storeNames.files, docId);
+    if(!f || !f.blob) return alert('Brak pliku w magazynie.');
+    const url = URL.createObjectURL(f.blob);
+    window.open(url, '_blank');
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  }
+
+  function showOverlay(){
+    if(els.overlay) els.overlay.style.display = 'block';
+  }
+  function hideOverlay(){
+    if(els.overlay) els.overlay.style.display = 'none';
+  }
+
+  function openModal(kind){
+    state.modal = kind || null;
+    if(kind==='details'){
+      showOverlay();
+      if(els.det) els.det.style.display = '';
+    }
+  }
+
+  function closeModal(){
+    if(els.det) els.det.style.display = 'none';
+    hideOverlay();
+    state.modal = null;
+  }
+
+
+
+  
+  function renderList(){
+    if(!els.list) return;
+
+    const list = visibleDocs();
+
+    if(els.stats){
+      const total = (state.docs||[]).filter(d=>!d.deleted_at).length;
+      const accAll = (state.docs||[]).filter(d=>!d.deleted_at && d.for_accountant).length;
+      const trash = (state.docs||[]).filter(d=>!!d.deleted_at).length;
+      els.stats.textContent = `Dokumenty: ${total} · Do księgowego: ${accAll} · Kosz: ${trash}`;
+    }
+
+    const period = (els.sharePeriod?.value || '').trim();
+    const packCount = (state.docs||[]).filter(d=>!d.deleted_at && d.for_accountant && (!period || (d.period||'')===period)).length;
+    if(els.shareBtn) els.shareBtn.textContent = `Przekaż księgowemu (${packCount})`;
+
+    if(!list.length){
+      const msg = state.view==='accountant'
+        ? 'Brak dokumentów oznaczonych „Do wysłania”. Zaznacz checkbox przy dokumencie.'
+        : (state.view==='trash'
+            ? 'Kosz jest pusty.'
+            : (state.view==='requests'
+                ? 'Brak zapytań od księgowego.'
+                : 'Brak dokumentów. Dodaj pliki (PDF/zdjęcia/CSV/XLSX/MT940).'));
+      els.list.innerHTML = `<div class="vaultEmpty">${escapeHtml(msg)}</div>`;
+      return;
+    }
+
+    els.list.innerHTML = list.map(d=>{
+      const subParts = [];
+      if(d.period) subParts.push(d.period);
+      if(d.counterparty) subParts.push(d.counterparty);
+      const sub = subParts.join(' · ');
+      const isTrash = !!d.deleted_at;
+
+      return `
+        <div class="vaultItem ${d.id===state.sel?.id?'active':''}" data-doc="${d.id}">
+          <div class="vaultInfo">
+            <div class="vaultName">${escapeHtml(d.name||'—')}</div>
+            <div class="vaultSub">${escapeHtml(typeLabel(d.type))}${sub?` · ${escapeHtml(sub)}`:''}</div>
+          </div>
+          <div class="vaultActions">
+            <div class="vaultQuick">
+              ${!isTrash
+                ? `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-action="foracc" data-id="${d.id}" ${d.for_accountant?'checked':''}/> <span class="muted small">Do wysłania</span></label>`
+                : `<span class="pill" style="border-color:rgba(239,68,68,.25);color:#fecaca">W koszu</span>`}
+              ${!isTrash
+                ? `<button class="btn link" data-action="trash" data-id="${d.id}" type="button">Do kosza</button>`
+                : `<button class="btn link" data-action="restore" data-id="${d.id}" type="button">Przywróć</button>`}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Delegated list handlers (more reliable than re-binding per render)
+  async function onListClick(e){
+    const t = e.target;
+
+    // Ignore clicks on checkbox/label so it doesn't open details
+    if(t?.matches('input[data-action="foracc"]') || (t?.closest('label') && t.closest('label').querySelector('input[data-action="foracc"]'))){
+      return;
+    }
+
+    const actBtn = t?.closest('[data-action]');
+    if(actBtn){
+      const action = actBtn.getAttribute('data-action');
+      const id = actBtn.getAttribute('data-id');
+
+      if(action==='trash'){
+        e.preventDefault(); e.stopPropagation();
+        await toTrash(id);
+        if(state.sel && state.sel.id===id){ closeModal(); state.sel=null; }
+        await refresh();
+        return;
+      }
+      if(action==='restore'){
+        e.preventDefault(); e.stopPropagation();
+        await restoreDoc(id);
+        if(state.sel && state.sel.id===id){ closeModal(); state.sel=null; }
+        await refresh();
+        return;
+      }
+    }
+
+    const item = t?.closest('.vaultItem');
+    if(item){
+      const id = item.getAttribute('data-doc');
+      if(id) selectDoc(id);
+    }
+  }
+
+  async function onListChange(e){
+    const t = e.target;
+    if(!t?.matches('input[data-action="foracc"]')) return;
+    const id = t.getAttribute('data-id');
+    const doc = (state.docs||[]).find(d=>d.id===id);
+    if(!doc) return;
+    doc.for_accountant = !!t.checked;
+    auditAppend(doc, 'for_accountant_set', { for_accountant: doc.for_accountant });
+    await put(storeNames.docs, doc);
+    renderList();
+  }
+
+
+
+  function renderDetails(){
+    if(!els.det) return;
+    const doc = state.sel;
+    if(!doc){
+      els.det.style.display='none';
+      return;
+    }
+    els.det.style.display='';
+    if(els.detType) els.detType.textContent = typeLabel(doc.type);
+    if(els.detName) els.detName.textContent = doc.name || '—';
+
+    const metaBits = [];
+    if(doc.size) metaBits.push(fmtBytes(doc.size));
+    if(doc.mime) metaBits.push(doc.mime);
+    if(doc.created_at) metaBits.push(doc.created_at.slice(0,10));
+    if(doc.for_accountant) metaBits.push('Dla księgowego');
+    if(doc.deleted_at) metaBits.push('W koszu');
+    if(els.detMeta) els.detMeta.textContent = metaBits.join(' · ') || '—';
+
+    if(els.editType) els.editType.value = doc.type || 'other';
+    if(els.editPeriod) els.editPeriod.value = doc.period || '';
+    if(els.editCounterparty) els.editCounterparty.value = doc.counterparty || '';
+    if(els.editForAcc) els.editForAcc.checked = !!doc.for_accountant;
+
+    if(els.restore) els.restore.style.display = doc.deleted_at ? '' : 'none';
+    if(els.trash) els.trash.style.display = doc.deleted_at ? 'none' : '';
+
+    // Audit
+    if(els.audit){
+      const lines = (doc.audit||[]).slice().reverse().map(a=>{
+        const t = a.at ? a.at : '';
+        const ev = a.ev || '';
+        const data = a.data ? JSON.stringify(a.data) : '';
+        return `${t} — ${ev}${data?` — ${data}`:''}`;
+      });
+      els.audit.textContent = lines.length ? lines.join('\n') : '—';
+    }
+  }
+
+  async function selectDoc(id){
+    const doc = (state.docs||[]).find(d=>d.id===id);
+    state.sel = doc || null;
+    renderList();
+    renderDetails();
+    if(state.sel) openModal('details'); else closeModal();
+  }
+
+  async function refresh(selectId=null){
+    try{
+      state.docs = await getAll(storeNames.docs);
+      // keep selection
+      if(selectId){
+        state.sel = state.docs.find(d=>d.id===selectId) || null;
+      } else if(state.sel){
+        state.sel = state.docs.find(d=>d.id===state.sel.id) || null;
+      }
+      renderList();
+      renderDetails();
+      await refreshRequests();
+    }catch(e){
+      console.warn('Vault refresh error', e);
+      if(els.list) els.list.innerHTML = `<div class="vaultEmpty">Błąd Vault: ${escapeHtml(e?.message || String(e))}</div>`;
+    }
+  }
+
+  async function refreshRequests(){
+    try{
+      state.requests = await getAll(storeNames.requests);
+      renderRequests();
+    }catch(e){
+      console.warn('Vault req refresh error', e);
+    }
+  }
+
+  function renderRequests(){
+    if(!els.reqList) return;
+    if(state.view!=='requests') return;
+
+    const reqs = (state.requests||[]).sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||''));
+    if(!reqs.length){
+      els.reqList.innerHTML = `<div class="vaultEmpty">Brak próśb. Dodaj nowe, gdy księgowy prosi o dokumenty.</div>`;
+      return;
+    }
+
+    const docs = (state.docs||[]).filter(d=>!d.deleted_at);
+    const options = ['<option value="">— wybierz dokument —</option>'].concat(
+      docs.map(d=>`<option value="${d.id}">${escapeHtml(d.name)} (${typeLabel(d.type)} ${escapeHtml(d.period||'')})</option>`)
+    ).join('');
+
+    els.reqList.innerHTML = reqs.map(r=>{
+      const itemsHtml = (r.items||[]).map(it=>{
+        return `
+          <div class="card" style="margin-top:8px;padding:10px">
+            <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
+              <label class="muted small" style="display:flex;align-items:center;gap:6px">
+                <input type="checkbox" data-req="${r.id}" data-item="${it.id}" ${it.done?'checked':''}/>
+                Zrobione
+              </label>
+              <div style="font-weight:700;flex:1">${escapeHtml(it.text||'')}</div>
+            </div>
+            <div class="row" style="margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap">
+              <select data-req="${r.id}" data-item-doc="${it.id}" style="min-width:260px">
+                ${options}
+              </select>
+              <button class="btn ghost small" data-add-item="${r.id}" type="button">+ punkt</button>
+              <button class="btn ghost small" data-del-req="${r.id}" type="button">Usuń</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="card" style="margin-top:10px">
+          <div style="font-weight:800">${escapeHtml(r.title||'Prośba')}</div>
+          ${itemsHtml}
+        </div>
+      `;
+    }).join('');
+
+    // restore selected values
+    reqs.forEach(r=>{
+      (r.items||[]).forEach(it=>{
+        const sel = els.reqList.querySelector(`select[data-req="${r.id}"][data-item-doc="${it.id}"]`);
+        if(sel && it.doc_id) sel.value = it.doc_id;
+      });
+    });
+
+    // handlers
+    els.reqList.querySelectorAll('input[type=checkbox][data-req]').forEach(cb=>{
+      cb.addEventListener('change', async ()=>{
+        const rid = cb.getAttribute('data-req');
+        const itemId = cb.getAttribute('data-item');
+        const req = reqs.find(x=>x.id===rid);
+        if(!req) return;
+        const it = (req.items||[]).find(x=>x.id===itemId);
+        if(!it) return;
+        it.done = !!cb.checked;
+        await put(storeNames.requests, req);
+        await refreshRequests();
+      });
+    });
+
+    els.reqList.querySelectorAll('select[data-req][data-item-doc]').forEach(sel=>{
+      sel.addEventListener('change', async ()=>{
+        const rid = sel.getAttribute('data-req');
+        const itemId = sel.getAttribute('data-item-doc');
+        const req = reqs.find(x=>x.id===rid);
+        if(!req) return;
+        const it = (req.items||[]).find(x=>x.id===itemId);
+        if(!it) return;
+        it.doc_id = sel.value || '';
+        await put(storeNames.requests, req);
+        await refreshRequests();
+      });
+    });
+
+    els.reqList.querySelectorAll('[data-add-item]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const rid = btn.getAttribute('data-add-item');
+        const req = reqs.find(x=>x.id===rid);
+        if(!req) return;
+        const text = prompt('Nowy punkt (co jeszcze trzeba dostarczyć?)','');
+        if(!text || !text.trim()) return;
+        req.items = req.items || [];
+        req.items.push({ id: uuid(), text: text.trim(), done:false, doc_id:'' });
+        await put(storeNames.requests, req);
+        await refreshRequests();
+      });
+    });
+
+    els.reqList.querySelectorAll('[data-del-req]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const rid = btn.getAttribute('data-del-req');
+        if(!confirm('Usunąć prośbę?')) return;
+        await del(storeNames.requests, rid);
+        await refreshRequests();
+      });
+    });
+  }
+
+  async function createAccountantPackage(period){
+    const docs = (state.docs||[]).filter(d=>!d.deleted_at && d.for_accountant);
+    const chosen = period ? docs.filter(d=>String(d.period||'')===period) : docs;
+
+    if(!chosen.length){
+      alert('Brak dokumentów do przekazania.\nZaznacz „Dla księgowego” w szczegółach dokumentu (i ustaw Okres, jeśli filtrujesz).');
+      return;
+    }
+
+    const pkgId = uuid();
+    const manifest = {
+      package_id: pkgId,
+      created_at: nowIso(),
+      period: period || '',
+      mode: 'accountant',
+      count: chosen.length,
+      docs: chosen.map(d=>({
+        id:d.id,
+        name:d.name,
+        type:d.type,
+        period:d.period||'',
+        counterparty:d.counterparty||'',
+        mime:d.mime||'',
+        size:d.size||0,
+        content_hash:d.content_hash||''
+      }))
+    };
+
+    const entries = [];
+    // manifest.json
+    entries.push({ name: 'manifest.json', blob: new Blob([JSON.stringify(manifest,null,2)], {type:'application/json'}) });
+
+    for(const d of chosen){
+      const f = await get(storeNames.files, d.id);
+      if(f && f.blob){
+        entries.push({ name: sanitizeName(d.name), blob: f.blob });
+      }
+    }
+
+    const zipBlob = makeZip(entries);
+    const safePeriod = period ? period.replace(/[^0-9\-]/g,'') : 'all';
+    downloadBlob(zipBlob, `OneTapDay_DlaKsiegowego_${safePeriod}.zip`);
+
+    // optional: audit
+    for(const d of chosen){
+      const doc = (state.docs||[]).find(x=>x.id===d.id);
+      if(doc){
+        auditAppend(doc, 'shared_with_accountant', {period: period || ''});
+        await put(storeNames.docs, doc);
+      }
+    }
+    await refresh(state.sel?.id || null);
+  }
+
+  function renderTemplateChooser(){
+    if(!els.tplHost) return;
+    els.tplHost.innerHTML = `
+      <div class="vaultEmpty">Wybierz szablon powyżej. Wygenerowany plik pojawi się w „Moje dokumenty” i będzie oznaczony jako „Dla księgowego”.</div>
+    `;
+  }
+
+  function renderTemplateHandover(){
+    if(!els.tplHost) return;
+    const defaultPeriod = (new Date()).toISOString().slice(0,7);
+    els.tplHost.innerHTML = `
+      <div class="card" style="padding:12px">
+        <div style="font-weight:800">Protokół przekazania dokumentów</div>
+        <div class="muted small" style="margin-top:6px">Dowód „przekazałem”. Przydatne, kiedy ktoś udaje, że nic nie dostał.</div>
+
+        <div class="row" style="margin-top:10px;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <label class="muted small">Okres (YYYY-MM)
+            <input id="tplHandPeriod" type="text" placeholder="np. 2025-11" value="${defaultPeriod}"/>
+          </label>
+          <label class="muted small">Nazwa firmy
+            <input id="tplHandCompany" type="text" placeholder="Twoja firma"/>
+          </label>
+          <label class="muted small">Księgowy (opc.)
+            <input id="tplHandAcc" type="text" placeholder="Imię / biuro rachunkowe"/>
+          </label>
+        </div>
+
+        <div class="muted small" style="margin-top:10px">Dokumenty do dołączenia:</div>
+        <div id="tplHandDocs" style="margin-top:8px"></div>
+
+        <label class="muted small" style="margin-top:10px;display:block">Komentarz (opc.)
+          <input id="tplHandNote" type="text" placeholder="np. brak faktury od X, doślę jutro"/>
+        </label>
+
+        <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="tplHandGen" type="button">Wygeneruj</button>
+        </div>
+      </div>
+    `;
+
+    // Render doc checkboxes
+    const docsHost = q('tplHandDocs');
+    const period = q('tplHandPeriod')?.value?.trim() || '';
+    const docs = (state.docs||[]).filter(d=>!d.deleted_at && d.for_accountant && (!period || d.period===period));
+    docsHost.innerHTML = docs.length ? docs.map(d=>`
+      <label class="muted small" style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <input type="checkbox" data-docchk="${d.id}" checked/>
+        <span>${escapeHtml(d.name)} <span class="muted">(${escapeHtml(typeLabel(d.type))} ${escapeHtml(d.period||'')})</span></span>
+      </label>
+    `).join('') : `<div class="vaultEmpty">Brak dokumentów oznaczonych „Dla księgowego” dla tego okresu. Oznacz dokumenty i wróć.</div>`;
+
+    // Update list when period changes
+    q('tplHandPeriod')?.addEventListener('input', ()=> renderTemplateHandover());
+
+    q('tplHandGen')?.addEventListener('click', async ()=>{
+      const periodVal = (q('tplHandPeriod')?.value || '').trim();
+      const company = (q('tplHandCompany')?.value || '').trim();
+      const accountant = (q('tplHandAcc')?.value || '').trim();
+      const note = (q('tplHandNote')?.value || '').trim();
+
+      const checkedIds = Array.from(els.tplHost.querySelectorAll('input[type=checkbox][data-docchk]'))
+        .filter(x=>x.checked).map(x=>x.getAttribute('data-docchk'));
+
+      if(!checkedIds.length){
+        alert('Zaznacz przynajmniej jeden dokument.');
+        return;
+      }
+      const chosen = (state.docs||[]).filter(d=>checkedIds.includes(d.id));
+
+      const rows = chosen.map((d, i)=>`
+        <tr>
+          <td style="padding:6px;border:1px solid #333">${i+1}</td>
+          <td style="padding:6px;border:1px solid #333">${escapeHtml(d.name||'')}</td>
+          <td style="padding:6px;border:1px solid #333">${escapeHtml(typeLabel(d.type))}</td>
+          <td style="padding:6px;border:1px solid #333">${escapeHtml(d.period||'')}</td>
+        </tr>
+      `).join('');
+
+      const html = `
+<!doctype html><html><head><meta charset="utf-8"/>
+<title>Protokół przekazania</title>
+<style>
+  body{font-family:Arial, sans-serif; padding:24px; color:#111;}
+  h1{font-size:18px;margin:0 0 8px 0;}
+  .muted{color:#555;font-size:12px;}
+  table{border-collapse:collapse; width:100%; margin-top:12px; font-size:12px;}
+  .sig{margin-top:18px; display:flex; gap:40px;}
+  .sig div{flex:1;}
+  .line{border-top:1px solid #333; margin-top:28px;}
+</style>
+</head><body>
+<h1>Protokół przekazania dokumentów</h1>
+<div class="muted">Okres: ${escapeHtml(periodVal||'—')}</div>
+<div class="muted">Firma: ${escapeHtml(company||'—')}</div>
+<div class="muted">Księgowy: ${escapeHtml(accountant||'—')}</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="padding:6px;border:1px solid #333;text-align:left">#</th>
+      <th style="padding:6px;border:1px solid #333;text-align:left">Dokument</th>
+      <th style="padding:6px;border:1px solid #333;text-align:left">Typ</th>
+      <th style="padding:6px;border:1px solid #333;text-align:left">Okres</th>
+    </tr>
+  </thead>
+  <tbody>${rows}</tbody>
+</table>
+
+${note?`<div class="muted" style="margin-top:12px">Uwagi: ${escapeHtml(note)}</div>`:''}
+
+<div class="sig">
+  <div><div class="line"></div><div class="muted">Przekazujący</div></div>
+  <div><div class="line"></div><div class="muted">Przyjmujący (księgowy)</div></div>
+</div>
+
+<div class="muted" style="margin-top:16px">Wygenerowano w OneTapDay. Możesz wydrukować do PDF.</div>
+</body></html>`;
+
+      const filename = sanitizeName(`Protokol_przekazania_${periodVal||'okres'}.html`);
+      const file = new File([html], filename, {type:'text/html'});
+
+      await addFiles([file], {source:'template', type:'handover', period:periodVal, counterparty:accountant, for_accountant:true});
+      await refresh();
+      setView('all');
+    });
+  }
+
+  function renderTemplateExplain(){
+    if(!els.tplHost) return;
+
+    const txList = (typeof _otdGetJSON==='function') ? (_otdGetJSON('tx_manual_import', []) || []) : [];
+    const last = (txList||[]).slice().reverse().slice(0,100);
+
+    const opt = ['<option value="">— wybierz transakcję —</option>'].concat(
+      last.map(r=>{
+        const id = r.id || r["ID transakcji"] || '';
+        const date = (r["Data księgowania"] || r["Data transakcji"] || r["Data"] || '').toString();
+        const amt = (r["Kwota"] || r["Kwota transakcji"] || r["Amount"] || '').toString();
+        const who = (r["Nazwa kontrahenta"] || r["Kontrahent"] || r["Odbiorca/Nadawca"] || r["Opis"] || '').toString();
+        const label = `${date} | ${amt} | ${who}`.slice(0,120);
+        return `<option value="${escapeHtml(String(id))}">${escapeHtml(label)}</option>`;
+      })
+    ).join('');
+
+    els.tplHost.innerHTML = `
+      <div class="card" style="padding:12px">
+        <div style="font-weight:800">Wyjaśnienie przelewu</div>
+        <div class="muted small" style="margin-top:6px">Krótki dokument „co to za płatność”. Najczęściej tego brakuje.</div>
+
+        <label class="muted small" style="display:block;margin-top:10px">Transakcja (opcjonalnie)
+          <select id="tplExpTx" style="width:100%;margin-top:6px">${opt}</select>
+        </label>
+
+        <div class="row" style="margin-top:10px;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <label class="muted small">Data
+            <input id="tplExpDate" type="text" placeholder="YYYY-MM-DD"/>
+          </label>
+          <label class="muted small">Kwota
+            <input id="tplExpAmt" type="text" placeholder="np. -1299.00 PLN"/>
+          </label>
+          <label class="muted small">Kontrahent
+            <input id="tplExpWho" type="text" placeholder="np. Landlord"/>
+          </label>
+        </div>
+
+        <label class="muted small" style="display:block;margin-top:10px">Powód / opis (możesz dyktować)
+          <input id="tplExpReason" type="text" placeholder="np. czynsz za listopad 2025"/>
+        </label>
+
+        <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="tplExpGen" type="button">Wygeneruj</button>
+        </div>
+      </div>
+    `;
+
+    // when tx selected, prefill
+    q('tplExpTx')?.addEventListener('change', ()=>{
+      const id = q('tplExpTx')?.value || '';
+      if(!id) return;
+      const r = (txList||[]).find(x=>String(x.id || x["ID transakcji"] || '')===String(id));
+      if(!r) return;
+      const date = (r["Data księgowania"] || r["Data transakcji"] || r["Data"] || '').toString();
+      const amt = (r["Kwota"] || r["Kwota transakcji"] || r["Amount"] || '').toString();
+      const who = (r["Nazwa kontrahenta"] || r["Kontrahent"] || r["Odbiorca/Nadawca"] || r["Opis"] || '').toString();
+      if(q('tplExpDate')) q('tplExpDate').value = date;
+      if(q('tplExpAmt')) q('tplExpAmt').value = amt;
+      if(q('tplExpWho')) q('tplExpWho').value = who;
+    });
+
+    q('tplExpGen')?.addEventListener('click', async ()=>{
+      const date = (q('tplExpDate')?.value || '').trim();
+      const amt = (q('tplExpAmt')?.value || '').trim();
+      const who = (q('tplExpWho')?.value || '').trim();
+      const reason = (q('tplExpReason')?.value || '').trim();
+
+      if(!date && !amt && !who && !reason){
+        alert('Wypełnij przynajmniej opis.');
+        return;
+      }
+
+      const period = (date && date.length>=7) ? date.slice(0,7) : '';
+
+      const html = `
+<!doctype html><html><head><meta charset="utf-8"/>
+<title>Wyjaśnienie przelewu</title>
+<style>
+  body{font-family:Arial, sans-serif; padding:24px; color:#111;}
+  h1{font-size:18px;margin:0 0 8px 0;}
+  .muted{color:#555;font-size:12px;}
+  .box{border:1px solid #333; padding:12px; margin-top:12px; font-size:12px;}
+  .line{border-top:1px solid #333; margin-top:28px; width:240px;}
+</style>
+</head><body>
+<h1>Wyjaśnienie przelewu</h1>
+<div class="muted">Okres: ${escapeHtml(period||'—')}</div>
+
+<div class="box">
+  <div><b>Data:</b> ${escapeHtml(date||'—')}</div>
+  <div><b>Kwota:</b> ${escapeHtml(amt||'—')}</div>
+  <div><b>Kontrahent:</b> ${escapeHtml(who||'—')}</div>
+  <div style="margin-top:10px"><b>Opis:</b> ${escapeHtml(reason||'—')}</div>
+</div>
+
+<div class="line"></div>
+<div class="muted">Podpis</div>
+
+<div class="muted" style="margin-top:16px">Wygenerowano w OneTapDay. Możesz wydrukować do PDF.</div>
+</body></html>`;
+
+      const safe = (date||'').replace(/[^0-9\-]/g,'') || 'date';
+      const filename = sanitizeName(`Wyjasnienie_przelewu_${safe}.html`);
+      const file = new File([html], filename, {type:'text/html'});
+
+      await addFiles([file], {source:'template', type:'explain', period, counterparty:who, for_accountant:true});
+      await refresh();
+      setView('all');
+    });
+  }
+
+    VAULT.init = async function(){
+    if(!bindUI()) return;
+    await refresh(null);
+  };
+
+  window.OTD_DocVault = VAULT;
+})();
+
+
+document.addEventListener('DOMContentLoaded', ()=>{ 
+  try{ window.OTD_DocVault?.init?.(); }catch(e){ console.warn('DocVault init error', e); } 
 });
+
+
+/* ===========================
+   Invoice template (local)
+   - lives in "Dokumenty" as accountant tool
+   - does NOT create records in "Faktury"
+   =========================== */
+
+let invoiceTplEditingId = null;
+
+function _otdTplById(id){ return document.getElementById(id); }
+
+function _otdTplEscHtml(s){
+  return String(s ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'","&#39;");
+}
+
+function _otdTplDownload(filename, content, mime){
+  try{
+    const blob = new Blob([content], {type: mime || 'text/plain;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ try{ URL.revokeObjectURL(a.href); }catch(_){} a.remove(); }, 0);
+  }catch(err){
+    console.warn(err);
+    toast('Nie udało się pobrać pliku (download).');
+  }
+}
+
+function _otdTplGetForm(){
+  return {
+    id: invoiceTplEditingId || ('tpl_' + Date.now()),
+    name: (_otdTplById('invoiceTplName')?.value || '').trim() || 'Szablon',
+    number: (_otdTplById('invoiceTplNumber')?.value || '').trim(),
+    currency: (_otdTplById('invoiceTplCurrency')?.value || '').trim() || 'PLN',
+    issue: (_otdTplById('invoiceTplIssue')?.value || '').trim(),
+    due: (_otdTplById('invoiceTplDue')?.value || '').trim(),
+    seller: (_otdTplById('invoiceTplSeller')?.value || '').trim(),
+    buyer: (_otdTplById('invoiceTplBuyer')?.value || '').trim(),
+    title: (_otdTplById('invoiceTplTitle')?.value || '').trim(),
+    amount: (_otdTplById('invoiceTplAmount')?.value || '').trim(),
+    note: (_otdTplById('invoiceTplNote')?.value || '').trim(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function _otdTplFillForm(t){
+  if(!t) return;
+  invoiceTplEditingId = t.id || null;
+  if(_otdTplById('invoiceTplName')) _otdTplById('invoiceTplName').value = t.name || '';
+  if(_otdTplById('invoiceTplNumber')) _otdTplById('invoiceTplNumber').value = t.number || '';
+  if(_otdTplById('invoiceTplCurrency')) _otdTplById('invoiceTplCurrency').value = t.currency || 'PLN';
+  if(_otdTplById('invoiceTplIssue')) _otdTplById('invoiceTplIssue').value = t.issue || '';
+  if(_otdTplById('invoiceTplDue')) _otdTplById('invoiceTplDue').value = t.due || '';
+  if(_otdTplById('invoiceTplSeller')) _otdTplById('invoiceTplSeller').value = t.seller || '';
+  if(_otdTplById('invoiceTplBuyer')) _otdTplById('invoiceTplBuyer').value = t.buyer || '';
+  if(_otdTplById('invoiceTplTitle')) _otdTplById('invoiceTplTitle').value = t.title || '';
+  if(_otdTplById('invoiceTplAmount')) _otdTplById('invoiceTplAmount').value = t.amount || '';
+  if(_otdTplById('invoiceTplNote')) _otdTplById('invoiceTplNote').value = t.note || '';
+  invoiceTplUpdateEditState();
+}
+
+function _otdTplClearForm(){
+  invoiceTplEditingId = null;
+  ['invoiceTplName','invoiceTplNumber','invoiceTplCurrency','invoiceTplIssue','invoiceTplDue','invoiceTplSeller','invoiceTplBuyer','invoiceTplTitle','invoiceTplAmount','invoiceTplNote']
+    .forEach(id => { const el=_otdTplById(id); if(el) el.value = (id==='invoiceTplCurrency' ? 'PLN' : ''); });
+  invoiceTplUpdateEditState();
+}
+
+function _otdTplRenderList(){
+  const box = _otdTplById('invoiceTplList');
+  if(!box) return;
+  box.innerHTML = '';
+  const arr = Array.isArray(invoiceTemplates) ? invoiceTemplates : [];
+  if(arr.length === 0){
+    box.innerHTML = '<div class="muted small">Brak zapisanych szablonów.</div>';
+    return;
+  }
+  arr
+    .slice()
+    .sort((a,b)=> String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')))
+    .forEach(t=>{
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.gap = '8px';
+      row.style.alignItems = 'center';
+
+      const left = document.createElement('div');
+      left.style.flex = '1';
+      left.style.minWidth = '0';
+      left.innerHTML = `<div style="font-weight:700">${_otdTplEscHtml(t.name||'Szablon')}</div>
+                        <div class="muted small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                          ${_otdTplEscHtml(t.number||'')} ${t.amount ? ('• ' + _otdTplEscHtml(t.amount) + ' ' + _otdTplEscHtml(t.currency||'')) : ''}
+                        </div>`;
+      row.appendChild(left);
+
+      const btnLoad = document.createElement('button');
+      btnLoad.className = 'btn secondary';
+      btnLoad.textContent = 'Edytuj';
+      btnLoad.onclick = ()=>{ _otdTplFillForm(t); toast('Szablon załadowany.'); };
+      row.appendChild(btnLoad);
+
+      const btnDel = document.createElement('button');
+      btnDel.className = 'btn ghost';
+      btnDel.textContent = 'Usuń';
+      btnDel.onclick = ()=>{
+        invoiceTemplates = invoiceTemplates.filter(x=>x.id!==t.id);
+        saveLocal();
+        _otdTplRenderList();
+        if(invoiceTplEditingId === t.id) _otdTplClearForm();
+        toast('Usunięto.');
+      };
+      row.appendChild(btnDel);
+
+      box.appendChild(row);
+    });
+}
+
+function openInvoiceTplModal(){
+  const el = _otdTplById('invoiceTplModal');
+  if(!el) return;
+  el.classList.add('show');
+  // refresh from storage in case we came from another tab
+  try{ invoiceTemplates = _otdGetJSON('invoice_templates', invoiceTemplates || []); }catch(_){}
+  _otdTplRenderList();
+  invoiceTplUpdateEditState();
+}
+
+function closeInvoiceTplModal(){
+  const el = _otdTplById('invoiceTplModal');
+  if(!el) return;
+  el.classList.remove('show');
+}
+
+
+function invoiceTplUpdateEditState(){
+  const label = _otdTplById('invoiceTplEditState');
+  const btnSave = _otdTplById('invoiceTplSave');
+  if(!btnSave) return;
+  if(invoiceTplEditingId){
+    if(label) label.textContent = 'Tryb edycji: zapiszesz zmiany w tym szablonie.';
+    btnSave.textContent = 'Zapisz zmiany';
+  }else{
+    if(label) label.textContent = '';
+    btnSave.textContent = 'Zapisz';
+  }
+}
+
+let _invoiceVoiceRec = null;
+function invoiceVoiceDictate(){
+  const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!Speech){
+    try{ showToast?.('Rozpoznawanie mowy niedostępne w tej przeglądarce'); }catch(_){}
+    return;
+  }
+  if(!_invoiceVoiceRec){
+    _invoiceVoiceRec = new Speech();
+    _invoiceVoiceRec.interimResults = false;
+    _invoiceVoiceRec.maxAlternatives = 1;
+    _invoiceVoiceRec.onresult = (e)=>{
+      const t = (e?.results?.[0]?.[0]?.transcript || '').trim();
+      if(!t) return;
+      const active = document.activeElement;
+      if(active && (active.tagName==='INPUT' || active.tagName==='TEXTAREA')){
+        const prev = active.value || '';
+        active.value = prev ? (prev + ' ' + t) : t;
+        try{ active.dispatchEvent(new Event('input', {bubbles:true})); }catch(_){}
+        return;
+      }
+      // fallback: title
+      const fallback = _otdTplById('invoiceTplTitle') || _otdTplById('invoiceTplNote');
+      if(fallback){
+        const prev = fallback.value || '';
+        fallback.value = prev ? (prev + ' ' + t) : t;
+        try{ fallback.dispatchEvent(new Event('input', {bubbles:true})); }catch(_){}
+      }
+    };
+    _invoiceVoiceRec.onerror = ()=>{
+      try{ showToast?.('Błąd rozpoznawania mowy'); }catch(_){}
+    };
+  }
+  const langSel = _otdTplById('invoiceVoiceLang');
+  _invoiceVoiceRec.lang = (langSel?.value || 'pl-PL');
+  try{ showToast?.('Mów teraz…'); }catch(_){}
+  try{ _invoiceVoiceRec.start(); }catch(_){}
+}
+
+
+function invoiceTplSaveFromForm(){
+  const t = _otdTplGetForm();
+  if(!t.seller && !t.buyer && !t.title && !t.amount){
+    toast('Wypełnij przynajmniej sprzedawcę/nabywcę/opis/kwotę.');
+    return;
+  }
+  const idx = (invoiceTemplates||[]).findIndex(x=>x.id===t.id);
+  if(idx >= 0) invoiceTemplates[idx] = t;
+  else invoiceTemplates = [...(invoiceTemplates||[]), t];
+
+  saveLocal();
+  _otdTplRenderList();
+  invoiceTplUpdateEditState();
+  toast('Zapisano szablon.');
+}
+
+function _otdTplBuildHtml(t){
+  const seller = _otdTplEscHtml(t.seller||'');
+  const buyer  = _otdTplEscHtml(t.buyer||'');
+  const title  = _otdTplEscHtml(t.title||'Usługa');
+  const amount = _otdTplEscHtml(t.amount||'');
+  const cur    = _otdTplEscHtml(t.currency||'PLN');
+  const num    = _otdTplEscHtml(t.number||'');
+  const issue  = _otdTplEscHtml(t.issue||'');
+  const due    = _otdTplEscHtml(t.due||'');
+  const note   = _otdTplEscHtml(t.note||'');
+
+  return `<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Faktura ${num}</title>
+<style>
+  body{font-family:Arial, sans-serif; margin:24px; color:#111;}
+  .row{display:flex; gap:24px;}
+  .col{flex:1;}
+  .h{font-size:20px; font-weight:700; margin-bottom:10px;}
+  .box{border:1px solid #ddd; border-radius:10px; padding:12px;}
+  table{width:100%; border-collapse:collapse; margin-top:14px;}
+  th,td{border-bottom:1px solid #eee; padding:8px; text-align:left; vertical-align:top;}
+  th{background:#f7f7f7;}
+  .right{text-align:right;}
+  .muted{color:#666; font-size:12px;}
+</style>
+</head>
+<body>
+  <div class="h">Faktura ${num}</div>
+  <div class="muted">Data wystawienia: ${issue || '—'} • Termin płatności: ${due || '—'}</div>
+
+  <div class="row" style="margin-top:14px">
+    <div class="col box"><div style="font-weight:700;margin-bottom:6px">Sprzedawca</div><div>${seller.replaceAll('\n','<br/>')}</div></div>
+    <div class="col box"><div style="font-weight:700;margin-bottom:6px">Nabywca</div><div>${buyer.replaceAll('\n','<br/>')}</div></div>
+  </div>
+
+  <table>
+    <thead><tr><th>Pozycja</th><th class="right">Kwota</th></tr></thead>
+    <tbody><tr><td>${title}</td><td class="right">${amount} ${cur}</td></tr></tbody>
+    <tfoot><tr><th class="right">Razem</th><th class="right">${amount} ${cur}</th></tr></tfoot>
+  </table>
+
+  ${note ? `<div class="box" style="margin-top:14px"><div style="font-weight:700;margin-bottom:6px">Uwagi</div><div>${note.replaceAll('\n','<br/>')}</div></div>` : ''}
+
+  <div class="muted" style="margin-top:14px">Wygenerowane w OneTapDay (MVP).</div>
+</body>
+</html>`;
+}
+
+function invoiceTplDownloadHTML(){
+  const t = _otdTplGetForm();
+  const html = _otdTplBuildHtml(t);
+  const name = (t.number ? t.number : (t.name||'invoice')).replaceAll(' ','_');
+  _otdTplDownload(`Faktura_${name}.html`, html, 'text/html;charset=utf-8');
+}
+
+function invoiceTplDownloadCSV(){
+  const t = _otdTplGetForm();
+  // very simple CSV: one row template
+  const cols = ['template_name','invoice_no','issue_date','due_date','seller','buyer','title','amount_gross','currency','note'];
+  const row = [
+    t.name||'',
+    t.number||'',
+    t.issue||'',
+    t.due||'',
+    (t.seller||'').replaceAll('\n',' '),
+    (t.buyer||'').replaceAll('\n',' '),
+    t.title||'',
+    t.amount||'',
+    t.currency||'PLN',
+    (t.note||'').replaceAll('\n',' ')
+  ];
+  const esc = (v)=> `"${String(v??'').replaceAll('"','""')}"`;
+  const csv = cols.join(',') + "\n" + row.map(esc).join(',');
+  const name = (t.name||'invoice_template').replaceAll(' ','_');
+  _otdTplDownload(`SzablonFaktury_${name}.csv`, csv, 'text/csv;charset=utf-8');
+}
+
+
+// ===============================
+// INVENTORY TEMPLATE (local)
+// ===============================
+let inventoryTemplates = [];
+let inventoryTplEditingName = null;
+
+function openInventoryTplModal(){
+  const el = _otdTplById('inventoryTplModal');
+  if(!el) return;
+  el.classList.add('show');
+  try{ inventoryTemplates = _otdGetJSON('inventory_templates', inventoryTemplates || []); }catch(_){}
+  _otdInvRenderList();
+  inventoryTplUpdateEditState();
+}
+
+function closeInventoryTplModal(){
+  const el = _otdTplById('inventoryTplModal');
+  if(!el) return;
+  el.classList.remove('show');
+}
+
+function _otdInvGetForm(){
+  const get = (id)=> (_otdTplById(id)?.value || '').trim();
+  const name = get('inventoryTplName');
+  const date = get('inventoryTplDate');
+  const location = get('inventoryTplLocation');
+  const rowsRaw = get('inventoryTplRows');
+  let rows = parseInt(rowsRaw || '50', 10);
+  if(isNaN(rows) || rows < 10) rows = 50;
+  if(rows > 500) rows = 500;
+  return { name, date, location, rows, updatedAt: Date.now() };
+}
+
+function _otdInvSetForm(t){
+  const set = (id,val)=>{ const el=_otdTplById(id); if(el) el.value = (val||''); };
+  set('inventoryTplName', t?.name || '');
+  set('inventoryTplDate', t?.date || '');
+  set('inventoryTplLocation', t?.location || '');
+  set('inventoryTplRows', String(t?.rows || 50));
+}
+
+
+function inventoryTplUpdateEditState(){
+  const label = byId('inventoryTplEditState');
+  const btnSave = byId('inventoryTplSave');
+  if(!btnSave) return;
+  if(inventoryTplEditingName){
+    if(label) label.textContent = 'Tryb edycji: zapiszesz zmiany w tym szablonie.';
+    btnSave.textContent = 'Zapisz zmiany';
+  }else{
+    if(label) label.textContent = '';
+    btnSave.textContent = 'Zapisz';
+  }
+}
+
+function inventoryTplClearForm(){
+  _otdInvSetForm({name:'', place:'', date:'', items:''});
+  inventoryTplEditingName = null;
+  inventoryTplUpdateEditState();
+}
+
+
+function inventoryTplSaveFromForm(){
+  const t = _otdInvGetForm();
+  if(!t.name){
+    try{ showToast?.('Podaj nazwę szablonu'); }catch(_){}
+    return;
+  }
+  // upsert by name
+  try{
+    inventoryTemplates = _otdGetJSON('inventory_templates', inventoryTemplates || []);
+  }catch(_){}
+  const idx = inventoryTemplates.findIndex(x => (x?.name||'').toLowerCase() === t.name.toLowerCase());
+  if(idx >= 0) inventoryTemplates[idx] = { ...inventoryTemplates[idx], ...t };
+  else inventoryTemplates.unshift(t);
+  _otdSetJSON('inventory_templates', inventoryTemplates);
+  _otdInvRenderList();
+  inventoryTplEditingName = t.name;
+  inventoryTplUpdateEditState();
+  try{ showToast?.('Zapisano'); }catch(_){}
+}
+
+function _otdInvRenderList(){
+  const wrap = _otdTplById('inventoryTplList');
+  if(!wrap) return;
+  wrap.innerHTML = '';
+  let list = inventoryTemplates || [];
+  try{ list = _otdGetJSON('inventory_templates', list); }catch(_){}
+  inventoryTemplates = Array.isArray(list) ? list : [];
+  if(inventoryTemplates.length === 0){
+    const empty = document.createElement('div');
+    empty.className = 'muted small';
+    empty.textContent = 'Brak zapisanych szablonów';
+    wrap.appendChild(empty);
+    return;
+  }
+  inventoryTemplates.forEach((t, i)=>{
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.gap = '8px';
+    row.style.alignItems = 'center';
+    row.style.justifyContent = 'space-between';
+    row.style.border = '1px solid rgba(255,255,255,0.08)';
+    row.style.borderRadius = '12px';
+    row.style.padding = '8px';
+    const left = document.createElement('div');
+    left.style.display = 'flex';
+    left.style.flexDirection = 'column';
+    left.style.gap = '2px';
+    const title = document.createElement('div');
+    title.style.fontWeight = '700';
+    title.style.fontSize = '12px';
+    title.innerHTML = escapeHtml(t?.name || 'Szablon');
+    const meta = document.createElement('div');
+    meta.className = 'muted small';
+    meta.style.fontSize = '11px';
+    const parts = [];
+    if(t?.date) parts.push(t.date);
+    if(t?.location) parts.push(t.location);
+    parts.push(`wiersze: ${t?.rows || 50}`);
+    meta.textContent = parts.join(' · ');
+    left.appendChild(title);
+    left.appendChild(meta);
+
+    const right = document.createElement('div');
+    right.style.display = 'flex';
+    right.style.gap = '6px';
+    const btnLoad = document.createElement('button');
+    btnLoad.className = 'btn secondary small';
+    btnLoad.textContent = 'Edytuj';
+    btnLoad.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplEditingName = (t?.name || null); _otdInvSetForm(t); inventoryTplUpdateEditState(); toast('Załadowano do edycji'); });
+
+    const btnDel = document.createElement('button');
+    btnDel.className = 'btn ghost small';
+    btnDel.textContent = 'Usuń';
+    btnDel.addEventListener('click', (e)=>{
+      e.preventDefault();
+      inventoryTemplates = inventoryTemplates.filter((_, idx)=> idx !== i);
+      _otdSetJSON('inventory_templates', inventoryTemplates);
+      _otdInvRenderList();
+    });
+
+    right.appendChild(btnLoad);
+    right.appendChild(btnDel);
+
+    row.appendChild(left);
+    row.appendChild(right);
+    wrap.appendChild(row);
+  });
+}
+
+function _otdInvBuildHeader(){
+  return ['Item name','SKU/Code','Unit','Qty counted','Unit price','Total','VAT rate','Warehouse/Location','Notes'];
+}
+
+function inventoryTplDownloadCSV(){
+  const t = _otdInvGetForm();
+  const header = _otdInvBuildHeader();
+  const rows = [];
+  rows.push(header);
+  const n = t.rows || 50;
+  for(let i=0;i<n;i++){
+    rows.push(['','','','','','','','','']);
+  }
+  const csv = rows.map(r => r.map(v => {
+    const s = String(v ?? '');
+    if(s.includes('"') || s.includes(',') || s.includes('\n')) return `"${s.replaceAll('"','""')}"`;
+    return s;
+  }).join(',')).join('\n');
+  const name = (t.name || 'inventory').replaceAll(' ','_');
+  _otdTplDownload(`Inwentaryzacja_${name}.csv`, csv, 'text/csv;charset=utf-8');
+}
+
+function inventoryTplDownloadXLSX(){
+  const t = _otdInvGetForm();
+  const header = _otdInvBuildHeader();
+  const aoa = [];
+  // optional metadata row (kept simple)
+  if(t.date || t.location){
+    aoa.push([`Inventory date: ${t.date || ''}`, `Location: ${t.location || ''}`]);
+    aoa.push([]);
+  }
+  aoa.push(header);
+  const n = t.rows || 50;
+  for(let i=0;i<n;i++){
+    aoa.push(['','','','','','','','','']);
+  }
+
+  if(!(window.XLSX && XLSX.utils && XLSX.writeFile)){
+    // fallback to CSV
+    inventoryTplDownloadCSV();
+    try{ showToast?.('Brak XLSX: pobrano CSV'); }catch(_){}
+    return;
+  }
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
+  const name = (t.name || 'inventory').replaceAll(' ','_');
+  XLSX.writeFile(wb, `Inwentaryzacja_${name}.xlsx`);
+}

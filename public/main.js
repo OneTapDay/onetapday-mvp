@@ -56,6 +56,8 @@
   const SUB_TO_KEY    = 'otd_sub_to';
   const DEMO_START_KEY = 'otd_demo_started_at';
   const DEMO_USED_KEY  = 'otd_demo_used';
+  const ROLE_KEY = 'otd_role';
+  const STATUS_KEY = 'otd_status';
 
   const $ = id => document.getElementById(id);
 
@@ -316,6 +318,13 @@
     });
 
     const emailEl = $('email'), passEl = $('pass'), loginBtn = $('doLogin'), doPayBtn = $('doPay'), stripeBtn = $('payStripe'), demoBtn = $('demoBtn');
+    const roleRow = $('roleRow');
+    const roleSelect = $('roleSelect');
+    try {
+      const activeTab0 = document.querySelector('.tabs button.on');
+      const isReg0 = activeTab0 && activeTab0.dataset.tab === 'reg';
+      if (roleRow) roleRow.style.display = isReg0 ? 'block' : 'none';
+    } catch(e) {}
 
     // Registration / Login
     if (loginBtn) loginBtn.addEventListener('click', async ()=>{
@@ -326,7 +335,14 @@
       const isReg = activeTab && activeTab.dataset.tab === 'reg';
       const endpoint = isReg ? '/register' : '/login';
 
-      const resp = await postJSON(endpoint, { email, password: pass });
+            const body = { email, password: pass };
+      if (isReg) {
+        const role = (roleSelect && roleSelect.value) ? String(roleSelect.value) : 'freelance_business';
+        body.role = role;
+        localStorage.setItem(ROLE_KEY, role);
+      }
+
+      const resp = await postJSON(endpoint, body);
       if (!resp.ok) {
         const err = (resp.body && (resp.body.error || resp.body.message || JSON.stringify(resp.body))) || `HTTP ${resp.status}`;
         return alert('Ошибка: ' + err);
@@ -335,10 +351,12 @@
       const data = resp.body;
       const user = data && (data.user || data);
       if (user && user.email) localStorage.setItem('otd_user', user.email);
+      if (user && user.role) localStorage.setItem(ROLE_KEY, user.role);
+      if (user && user.status) localStorage.setItem(STATUS_KEY, user.status);
       
       // Демо теперь активируется автоматически при первом логине на сервере
       // Обновляем локальное состояние демо из ответа сервера
-      if (user && user.endAt && user.status === 'active') {
+      if (user && user.endAt && (user.status === 'active' || user.status === 'acct_trial' || user.status === 'acct_pro_trial')) {
         const demoUntil = new Date(user.endAt).getTime();
         localStorage.setItem(DEMO_START_KEY, user.startAt || new Date().toISOString());
         localStorage.setItem(DEMO_USED_KEY, user.demoUsed ? '1' : '0');
@@ -362,7 +380,9 @@
         if (user && user.status === 'active' && user.endAt) {
           const demoUntil = new Date(user.endAt).getTime();
           if (demoUntil > Date.now()) {
-            alert('Вход успешен. Демо активно до ' + new Date(demoUntil).toLocaleString());
+                      const r = localStorage.getItem(ROLE_KEY) || (user && user.role) || '';
+          const label = (r === 'accountant') ? 'Trial' : 'Демо';
+          alert('Вход успешен. ' + label + ' активно до ' + new Date(demoUntil).toLocaleString());
           } else {
             alert('Вход успешен. Демо истекло.');
           }

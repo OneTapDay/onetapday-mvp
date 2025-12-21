@@ -3,7 +3,6 @@
     "title": "OneTapDay",
     "subtitle": "Premium AI-CFO dla właścicieli, którzy nie chcą tonąć w tabelach."
   },
-
   "nav": {
     "home": "Strona główna",
     "transactions": "Wyciągi",
@@ -14,7 +13,6 @@
     "reports": "Raporty",
     "settings": "Ustawienia"
   },
-
   "home": {
     "tagline": "Premium AI-CFO dla właścicieli, którzy nie chcą tonąć w tabelach.",
     "trend_title": "Ruch za miesiąc",
@@ -32,7 +30,6 @@
     "tile_reports_title": "Raporty i eksport",
     "tile_reports_desc": "CSV dla księgowego i inwestora."
   },
-
   "documents": {
     "title": "Dokumenty",
     "desc": "Tu wrzucasz wyciągi, faktury i paragony.",
@@ -47,14 +44,22 @@
     "invoices": "Faktury",
     "invoices_desc": "Dokumenty od klientów i dostawców.",
     "receipts": "Paragony / wydatki",
-    "receipts_desc": "Gotówka i małe wydatki."
+    "receipts_desc": "Gotówka i małe wydatki.",
+    "accountant_tools": "Dla księgowego",
+    "accountant_tools_desc": "Eksporty i szablony (bez udostępniania linków).",
+    "accountant_open": "Otwórz narzędzia",
+    "accountant_hint": "Dostęp księgowego będzie przez konto w aplikacji (ustawienia później).",
+    "accountant_modal_title": "Narzędzia księgowego",
+    "accountant_modal_desc": "Eksporty danych i praca z szablonami dokumentów.",
+    "accountant_tab_exports": "Eksporty",
+    "accountant_tab_templates": "Szablony",
+    "accountant_modal_hint": "Wybierz eksport lub otwórz szablon. W szablonie możesz edytować i zapisać zmiany.",
+    "voice_hint": "Kliknij pole i naciśnij 🎤, żeby podyktować."
   },
-
   "money": {
     "title": "Pieniądze i płatności",
     "desc": "Status, ruch i zobowiązania."
   },
-
   "ai": {
     "prototype_note": "To prototyp. Pełne porady pojawią się później.",
     "ask_title": "Zadaj pytanie AI-księgowemu",
@@ -65,7 +70,6 @@
     "q_month": "Czy starczy mi do końca miesiąca?",
     "ask_btn": "Zapytaj",
     "chat_intro": "Tu później pojawi się rozmowa z AI-księgowym.",
-
     "top_title": "AI-księgowy",
     "top_desc": "Powiedz kilka rzeczy o sobie, aby zwiększyć dokładność podpowiedzi.",
     "profile_who": "Kim jesteś?",
@@ -81,12 +85,73 @@
     "profile_goal_grow": "Rosnąć i skalować",
     "profile_save": "Zapisz profil",
     "profile_saved": "Profil zapisany.",
-
     "placeholders": {
       "goal_input": "Np. „20 000 PLN miesięcznie\"."
-    }
+    },
+    "hub_title": "AI Księgowy",
+    "hub_desc": "Cel → plan → działania. Mniej słów, więcej sensu.",
+    "btn_settings": "Ustawienia",
+    "btn_settings_short": "⚙︎",
+    "btn_open_chat": "Otwórz czat",
+    "goal_title": "Cel na miesiąc",
+    "goal_not_set": "Cel nieustawiony",
+    "goal_hint": "Ustaw cel i otwórz czat: asystent podciągnie Twoje liczby.",
+    "snapshot_net30": "Netto za 30 dni",
+    "snapshot_runway": "Ryzyko i zapas",
+    "quick_title": "Szybkie pytania",
+    "btn_clear_chat": "Wyczyść czat",
+    "chip_goal": "Jak dojść do celu?",
+    "chip_spending": "Gdzie wydaję za dużo?",
+    "chip_withdraw": "Ile bezpiecznie wypłacić?",
+    "chip_month": "Czy starczy do końca miesiąca?",
+    "btn_back": "Wróć",
+    "chat_title": "Czat z AI Księgowym",
+    "chat_ph": "Np.: „cel 20 000 PLN, co robić najpierw?”",
+    "chat_starter": "Ustaw cel i zapytaj, co robić dalej.",
+    "settings_title": "Ustawienia asystenta",
+    "settings_desc": "To MVP: odpowiedzi bazują na Twoich danych i prostych regułach. Bez kluczy i „magii”.",
+    "settings_goal_amt": "Mój cel (miesięcznie)",
+    "settings_goal_hint": "Domyślnie liczę „cel” jako wynik netto / miesiąc, jeśli nie doprecyzujesz.",
+    "settings_profile_title": "Profil (opcjonalnie)",
+    "settings_save": "Zapisz",
+    "btn_close": "Zamknij",
+    "top_expense": "Top wydatek",
+    "days": "dni",
+    "due_to_eom": "Do zapłaty do końca miesiąca",
+    "clear_confirm": "Wyczyścić historię czatu?",
+    "q_goal": "Jak dojść do celu?",
+    "reply_snapshot": "Na podstawie danych w aplikacji",
+    "reply_net30": "Netto za 30 dni",
+    "reply_due": "Do zapłaty do końca miesiąca",
+    "reply_avail": "Dostępne teraz",
+    "reply_top": "Top wydatek",
+    "reply_goal_set": "Cel zapisany",
+    "reply_goal_next": "Teraz zapytaj: „jak dojść do celu?”",
+    "reply_need_goal": "Najpierw ustaw cel: napisz „cel 20000 PLN”",
+    "reply_goal_title": "Plan do celu",
+    "reply_goal_fx": "Teraz liczę w PLN. Jeśli cel masz w innej walucie, ustaw PLN dla dokładnych wyliczeń.",
+    "reply_goal_hit": "Przy tempie z ostatnich 30 dni jesteś na celu lub powyżej. Zadanie: utrzymać tempo i nie wpaść w zaległości.",
+    "reply_goal_gap": "Brakuje około",
+    "reply_goal_actions": "3 szybkie dźwignie na ten tydzień:",
+    "reply_goal_cut": "Uciąć koszty",
+    "reply_goal_raise": "Podnieść przychód",
+    "reply_goal_system": "Systematyka",
+    "reply_spending_title": "Gdzie można oszczędzić",
+    "reply_spending_no_data": "Mało danych albo brak kategorii. Szybki fix: przypisz kategorie do 10–20 największych wydatków.",
+    "reply_spending_top": "Główny „pożeracz”",
+    "reply_spending_try": "Spróbuj",
+    "reply_withdraw_title": "Bezpieczna wypłata",
+    "reply_withdraw_est": "Szacunek (z poduszką)",
+    "reply_withdraw_note": "Logika",
+    "reply_month_title": "Do końca miesiąca",
+    "reply_month_days": "Dni zostało",
+    "reply_month_if": "Jeśli utrzyma się tempo z 30 dni",
+    "reply_month_gap": "Potencjalna luka",
+    "reply_default": "Chcesz, żebym był dokładniejszy:",
+    "reply_default_1": "ustaw cel („cel 20000 PLN”)",
+    "reply_default_2": "przypisz kategorie dużym wydatkom",
+    "reply_default_3": "zaimportuj świeży wyciąg/kasę"
   },
-
   "reports": {
     "title": "Raporty i eksport",
     "desc": "Pobierz CSV i raporty.",
@@ -94,7 +159,6 @@
     "export_invoices": "Eksport faktur (CSV)",
     "export_month": "Raport miesiąca (CSV)"
   },
-
   "cash": {
     "title": "Kasa — szybkie operacje",
     "note": "Kasa głosowa i szybkie przyciski.",
@@ -113,7 +177,6 @@
     "th_source": "Źródło",
     "th_comment": "Komentarz"
   },
-
   "accounts": {
     "title": "Konta",
     "desc": "Konta wykryte podczas importu wyciągów.",
@@ -126,7 +189,6 @@
     "th_start_balance": "Saldo początkowe",
     "th_include": "Uwzględniać"
   },
-
   "kpi": {
     "due_today": "Do zapłaty dziś",
     "unmatched": "Niesparowane transakcje",
@@ -135,7 +197,6 @@
     "total": "Razem dostępne",
     "gap_today": "Luka kasowa dziś"
   },
-
   "plan": {
     "title": "Plan płatności",
     "filter_label": "Filtr:",
@@ -151,14 +212,14 @@
     "th_amount": "Kwota",
     "th_reason": "Powód"
   },
-
   "spending": {
     "title": "Wydatki wg kategorii",
     "desc": "Dokąd najczęściej idą pieniądze.",
     "add_custom": "+ Własna kategoria",
-    "empty": "Brak danych."
+    "empty": "Brak danych.",
+    "manage": "Edytuj kategorie",
+    "uncat": "Bez kategorii"
   },
-
   "spcat": {
     "title": "Nowa kategoria wydatków",
     "desc": "Podaj nazwę i wybierz emoji.",
@@ -166,9 +227,9 @@
     "name_ph": "Np. Subskrypcje",
     "emoji_label": "Emoji",
     "save": "Zapisz",
-    "cancel": "Anuluj"
+    "cancel": "Anuluj",
+    "delete": "Usuń"
   },
-
   "tables": {
     "th_date": "Data",
     "th_account": "Konto",
@@ -188,7 +249,6 @@
     "inv_th_score": "Score",
     "inv_th_action": "Akcja"
   },
-
   "settings": {
     "title": "Ustawienia",
     "lang_title": "Język",
@@ -211,7 +271,6 @@
     "btn_end_demo": "Zakończ demo",
     "sub_hint": "Płatności tylko przez ustawienia. Stripe-link wkładasz do localStorage."
   },
-
   "buttons": {
     "sync": "Synchronizacja",
     "ai_match": "AI-dopasowanie",
@@ -221,22 +280,33 @@
     "make_plan": "Utwórz",
     "apply_plan": "Zastosuj"
   },
-
   "placeholders": {
     "amount": "Kwota",
     "comment": "Komentarz",
     "csv_url": "URL pliku CSV"
   },
-
   "modal": {
     "locked_title": "Dostęp zablokowany",
     "locked_desc": "Demo wygasło lub brak subskrypcji.",
     "open_settings": "Przejdź do ustawień"
   },
-
   "errors": {
     "no_data": "Brak danych",
     "upload_failed": "Błąd wczytywania",
     "parse_failed": "Błąd przetwarzania danych"
+  },
+  "hero_today_label": "Ruch dziś (PLN)",
+  "spcatmgr": {
+    "title": "Kategorie wydatków",
+    "desc": "Edytuj nazwy i emoji. ID zostaje to samo.",
+    "add": "Dodaj",
+    "close": "Zamknij"
+  },
+  "uncat": {
+    "title": "Bez kategorii",
+    "desc": "Wybierz kategorię dla wydatków bez przypisania.",
+    "close": "Zamknij",
+    "none": "Brak wydatków bez kategorii.",
+    "choose": "Wybierz"
   }
 }

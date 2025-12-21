@@ -3,7 +3,6 @@
     "title": "OneTapDay",
     "subtitle": "Premium AI-CFO for owners who don't want to drown in spreadsheets."
   },
-
   "nav": {
     "home": "Home",
     "transactions": "Statements",
@@ -14,7 +13,6 @@
     "reports": "Reports",
     "settings": "Settings"
   },
-
   "home": {
     "tagline": "A premium AI-CFO for owners who don't want to drown in spreadsheets.",
     "trend_title": "Monthly movement",
@@ -32,7 +30,6 @@
     "tile_reports_title": "Reports & export",
     "tile_reports_desc": "CSV exports for accountant or investor."
   },
-
   "documents": {
     "title": "Documents",
     "desc": "Upload your statements, invoices and receipts here.",
@@ -47,14 +44,22 @@
     "invoices": "Invoices",
     "invoices_desc": "Client and vendor invoices.",
     "receipts": "Receipts / expenses",
-    "receipts_desc": "Cash and small expenses."
+    "receipts_desc": "Cash and small expenses.",
+    "accountant_tools": "Accountant tools",
+    "accountant_tools_desc": "Exports and templates (no share links).",
+    "accountant_open": "Open tools",
+    "accountant_hint": "Accountant access will be via an in-app account (settings later).",
+    "accountant_modal_title": "Accountant tools",
+    "accountant_modal_desc": "Data exports and document templates.",
+    "accountant_tab_exports": "Exports",
+    "accountant_tab_templates": "Templates",
+    "accountant_modal_hint": "Pick an export or open a template. In templates you can edit and save changes.",
+    "voice_hint": "Click a field and press 🎤 to dictate."
   },
-
   "money": {
     "title": "Money & payments",
     "desc": "Status, movement and obligations."
   },
-
   "ai": {
     "prototype_note": "This is a prototype. Full AI suggestions will appear later.",
     "ask_title": "Ask the AI-accountant",
@@ -65,7 +70,6 @@
     "q_month": "Will I last until the end of the month?",
     "ask_btn": "Ask",
     "chat_intro": "A full conversation with the AI-accountant will appear here later.",
-
     "top_title": "AI-accountant",
     "top_desc": "Tell a bit about yourself to improve suggestions.",
     "profile_who": "Who are you?",
@@ -81,12 +85,73 @@
     "profile_goal_grow": "Grow and scale",
     "profile_save": "Save profile",
     "profile_saved": "Profile saved.",
-
     "placeholders": {
       "goal_input": "Example: \"20,000 PLN per month\"."
-    }
+    },
+    "hub_title": "AI Accountant",
+    "hub_desc": "Goal → plan → actions. Less talk, more signal.",
+    "btn_settings": "Settings",
+    "btn_settings_short": "⚙︎",
+    "btn_open_chat": "Open chat",
+    "goal_title": "Monthly goal",
+    "goal_not_set": "Goal not set",
+    "goal_hint": "Set a goal and open chat: the assistant will pull your numbers.",
+    "snapshot_net30": "Net for 30 days",
+    "snapshot_runway": "Risk & buffer",
+    "quick_title": "Quick prompts",
+    "btn_clear_chat": "Clear chat",
+    "chip_goal": "How do I reach the goal?",
+    "chip_spending": "Where do I overspend?",
+    "chip_withdraw": "How much can I safely withdraw?",
+    "chip_month": "Will I make it to month end?",
+    "btn_back": "Back",
+    "chat_title": "Chat with AI Accountant",
+    "chat_ph": "Example: “goal 20,000 PLN, what should I do first?”",
+    "chat_starter": "Set a goal and ask what to do next.",
+    "settings_title": "Assistant settings",
+    "settings_desc": "This is an MVP: answers are built from your data and simple rules. No keys, no magic.",
+    "settings_goal_amt": "My goal (per month)",
+    "settings_goal_hint": "I treat “goal” as net result per month unless you say otherwise.",
+    "settings_profile_title": "Profile (optional)",
+    "settings_save": "Save",
+    "btn_close": "Close",
+    "top_expense": "Top expense",
+    "days": "days",
+    "due_to_eom": "Due until month end",
+    "clear_confirm": "Clear chat history?",
+    "q_goal": "How do I reach the goal?",
+    "reply_snapshot": "Based on the app data",
+    "reply_net30": "Net for 30 days",
+    "reply_due": "Due until month end",
+    "reply_avail": "Available now",
+    "reply_top": "Top expense",
+    "reply_goal_set": "Goal saved",
+    "reply_goal_next": "Now ask: “how do I reach the goal?”",
+    "reply_need_goal": "Set a goal first: type “goal 20000 PLN”",
+    "reply_goal_title": "Plan to the goal",
+    "reply_goal_fx": "Right now calculations are in PLN. Set the goal in PLN for accurate numbers.",
+    "reply_goal_hit": "At the last-30-days pace you’re at the goal or above. Task: keep pace and avoid slipping on obligations.",
+    "reply_goal_gap": "You need roughly",
+    "reply_goal_actions": "3 quick levers this week:",
+    "reply_goal_cut": "Cut expenses",
+    "reply_goal_raise": "Increase income",
+    "reply_goal_system": "System",
+    "reply_spending_title": "Where you can save",
+    "reply_spending_no_data": "Not enough data or no categories. Quick fix: categorize your top 10–20 expenses.",
+    "reply_spending_top": "Main “sink”",
+    "reply_spending_try": "Try",
+    "reply_withdraw_title": "Safe withdrawal",
+    "reply_withdraw_est": "Estimate (with buffer)",
+    "reply_withdraw_note": "Logic",
+    "reply_month_title": "Until month end",
+    "reply_month_days": "Days left",
+    "reply_month_if": "If the 30-day pace holds",
+    "reply_month_gap": "Potential gap",
+    "reply_default": "If you want tighter answers:",
+    "reply_default_1": "set a goal (“goal 20000 PLN”)",
+    "reply_default_2": "categorize big expenses",
+    "reply_default_3": "import fresh statements/cash"
   },
-
   "reports": {
     "title": "Reports & export",
     "desc": "Download CSV and monthly reports.",
@@ -94,7 +159,6 @@
     "export_invoices": "Export invoices (CSV)",
     "export_month": "Monthly report (CSV)"
   },
-
   "cash": {
     "title": "Cash — quick operations",
     "note": "Voice cash + quick buttons.",
@@ -113,7 +177,6 @@
     "th_source": "Source",
     "th_comment": "Comment"
   },
-
   "accounts": {
     "title": "Accounts",
     "desc": "Accounts detected from uploaded statements.",
@@ -126,7 +189,6 @@
     "th_start_balance": "Starting balance",
     "th_include": "Include"
   },
-
   "kpi": {
     "due_today": "Due today",
     "unmatched": "Unmatched transactions",
@@ -135,7 +197,6 @@
     "total": "Total available",
     "gap_today": "Cash gap today"
   },
-
   "plan": {
     "title": "Payment plan",
     "filter_label": "Filter:",
@@ -151,14 +212,14 @@
     "th_amount": "Amount",
     "th_reason": "Reason"
   },
-
   "spending": {
     "title": "Spending by category",
     "desc": "Where money usually goes.",
     "add_custom": "+ Custom category",
-    "empty": "No data."
+    "empty": "No data.",
+    "manage": "Manage categories",
+    "uncat": "Uncategorized"
   },
-
   "spcat": {
     "title": "New expense category",
     "desc": "Give the category a name and choose an emoji.",
@@ -166,9 +227,9 @@
     "name_ph": "Example: Subscriptions",
     "emoji_label": "Emoji",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "delete": "Delete"
   },
-
   "tables": {
     "th_date": "Date",
     "th_account": "Account",
@@ -188,7 +249,6 @@
     "inv_th_score": "Score",
     "inv_th_action": "Action"
   },
-
   "settings": {
     "title": "Settings",
     "lang_title": "Language",
@@ -211,7 +271,6 @@
     "btn_end_demo": "End demo",
     "sub_hint": "Payments only through settings. If you have a Stripe link — store it in localStorage."
   },
-
   "buttons": {
     "sync": "Sync",
     "ai_match": "AI matching",
@@ -221,22 +280,33 @@
     "make_plan": "Create",
     "apply_plan": "Apply"
   },
-
   "placeholders": {
     "amount": "Amount",
     "comment": "Comment",
     "csv_url": "CSV file URL"
   },
-
   "modal": {
     "locked_title": "Access blocked",
     "locked_desc": "Demo expired or no subscription.",
     "open_settings": "Open settings"
   },
-
   "errors": {
     "no_data": "No data",
     "upload_failed": "Upload error",
     "parse_failed": "Parsing error"
+  },
+  "hero_today_label": "Today movement (PLN)",
+  "spcatmgr": {
+    "title": "Spending categories",
+    "desc": "Edit names and emoji. IDs stay the same.",
+    "add": "Add",
+    "close": "Close"
+  },
+  "uncat": {
+    "title": "Uncategorized",
+    "desc": "Assign categories to uncategorized expenses.",
+    "close": "Close",
+    "none": "No uncategorized expenses.",
+    "choose": "Choose"
   }
 }

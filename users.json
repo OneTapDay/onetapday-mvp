@@ -22,5 +22,44 @@
     "demoUsed": false,
     "appState": {},
     "isAdmin": false
+  },
+  "1tapday@gmail.com": {
+    "email": "1tapday@gmail.com",
+    "salt": "4184e4fd8b000f9cb084a595a176f63a",
+    "hash": "25bdb89850744a9805b7613e1b960b152419e7d41a617bcff5357236dd7e9d633e988de718fe162f382f6b969c02c4d5a575526580b2c9595ace85dd65aac39e:100000:64:sha512",
+    "status": "ended",
+    "startAt": "2025-12-14T00:42:48.173Z",
+    "endAt": "2025-12-15T00:42:48.173Z",
+    "discountUntil": null,
+    "demoUsed": true,
+    "appState": {},
+    "isAdmin": true
+  },
+  "aisoulinc@gmail.com": {
+    "email": "aisoulinc@gmail.com",
+    "salt": "bb6d9720aa3cd30ff6babfbbb880b990",
+    "hash": "8dac4d4c1ec3b32a1049e7b6ea7685f955e31edac2c801917501b883c79ca7cf4db3b2447e35d0d0e7641bafe1164a403125250fc5617666f9b35b4dc4d82814:100000:64:sha512",
+    "status": "none",
+    "startAt": null,
+    "endAt": null,
+    "discountUntil": null,
+    "demoUsed": false,
+    "appState": {},
+    "isAdmin": false
+  },
+  "korean.cosmetics.pl1@gmail.com": {
+    "email": "korean.cosmetics.pl1@gmail.com",
+    "role": "freelance_business",
+    "salt": "5f9afaa5c1e533103ec5325ac845d391",
+    "hash": "db27ec0c0327dadfb09ab523b53aad659bbf21de22a04fb9e734058aa2a3e3c78aceb33ae4686b96ad4917f0ea794ca53e87a83c071718f5d33e949a50c16d4e:100000:64:sha512",
+    "status": "none",
+    "startAt": null,
+    "endAt": null,
+    "discountUntil": null,
+    "demoUsed": false,
+    "acctTrialUsed": false,
+    "acctProTrialUsed": false,
+    "appState": {},
+    "isAdmin": false
   }
 }
