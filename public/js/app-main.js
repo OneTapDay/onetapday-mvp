@@ -840,158 +840,28 @@ function setAnalyticsButtons(days){
   const b30 = document.getElementById('analyticsRange30');
   const b90 = document.getElementById('analyticsRange90');
   const b365 = document.getElementById('analyticsRange365');
+  if (b30) b30.className = 'btn ghost';
+  if (b90) b90.className = 'btn ghost';
+  if (b365) b365.className = 'btn ghost';
+  if (days <= 30 && b30) b30.className = 'btn';
+  else if (days <= 90 && b90) b90.className = 'btn';
+  else if (b365) b365.className = 'btn';
+}
 
-  [b30,b90,b365].forEach(b=>{
-    if(!b) return;
-    b.classList.remove('on');
-    b.setAttribute('aria-selected','false');
-  });
+function renderAnalyticsChart(){
+  const wrap = document.getElementById('analyticsChart');
+  if (!wrap) return;
 
-  let active = null;
-  if(days <= 30) active = b30;
-  else if(days <= 90) active = b90;
-  else active = b365;
+  const days = getAnalyticsDays();
+  const labelEl = document.getElementById('analyticsRangeLabel');
+  if (labelEl) labelEl.textContent = analyticsLabel(days);
 
-  if(active){
-    active.classList.add('on');
-    active.setAttribute('aria-selected','true');
+  const series = buildTrendSeries(days);
+  if (!series || !series.length){
+    wrap.innerHTML = '<div class="muted small">Brak danych do wykresu.</div>';
+    setAnalyticsButtons(days);
+    return;
   }
-
-  const badge = document.getElementById('analyticsLineBadge');
-  if (badge) badge.textContent = analyticsLabel(days);
-  const hint = document.getElementById('analyticsRangeLabel');
-  if (hint) hint.textContent = analyticsLabel(days);
-}
-
-function fmtPLN2(n){
-  const v = Number(n||0);
-  const sign = v < 0 ? '-' : '';
-  const abs = Math.abs(v);
-  const s = abs.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,' ');
-  return `${sign}${s} PLN`;
-}
-
-function buildAnalyticsSeries(days){
-  const d = Math.max(1, Math.floor(Number(days||30)));
-  const now = new Date();
-  const end = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-  const start = new Date(end.getTime() - (d-1)*86400000);
-
-  const map = {};
-  for(let i=0;i<d;i++){
-    const dt = new Date(start.getTime() + i*86400000);
-    const iso = dt.toISOString().slice(0,10);
-    map[iso] = 0;
-  }
-
-  (tx||[]).forEach(r=>{
-    const iso = toISO(getVal(r,["Data księgowania","Data","date","Дата"])) || '';
-    if(!iso || !(iso in map)) return;
-    const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])) || 0;
-    if(!amt) return;
-    map[iso] += amt;
-  });
-
-  (kasa||[]).forEach(k=>{
-    const iso = String(k.date||'').slice(0,10);
-    if(!iso || !(iso in map)) return;
-    let amt = Number(k.amount||0);
-    if(!amt) return;
-    const t = String(k.type||'').toLowerCase();
-    if(t.includes('wyd')) amt = -Math.abs(amt);
-    else if(t.includes('przy')) amt = Math.abs(amt);
-    else amt = 0;
-    map[iso] += amt;
-  });
-
-  return Object.keys(map).sort().map(d=>({date:d, value: map[d]}));
-}
-
-function computeAnalyticsSummary(days){
-  const d = Math.max(1, Math.floor(Number(days||30)));
-  const now = new Date();
-  const end = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-  const endIso = end.toISOString().slice(0,10);
-  const start = new Date(end.getTime() - (d-1)*86400000);
-  const startIso = start.toISOString().slice(0,10);
-
-  const inRange = (iso)=> iso && iso >= startIso && iso <= endIso;
-
-  let income = 0;
-  let expense = 0;
-  let net = 0;
-  const cat = {};
-
-  // bank tx
-  (tx||[]).forEach(r=>{
-    const iso = toISO(getVal(r,["Data księgowania","Data","date","Дата"])) || '';
-    if(!inRange(iso)) return;
-
-    const amt = asNum(getVal(r,["Kwota","Kwota","Kwота","amount","Kwota_raw"])) || 0;
-    if(!amt) return;
-
-    net += amt;
-    if(amt > 0) income += amt;
-    else expense += Math.abs(amt);
-
-    if(amt < 0){
-      const cidRaw = getVal(r,["Kategoria","Category","категория","Категория","KategoriaId","cat","categoryId"]);
-      const key = cidRaw && String(cidRaw).trim() ? String(cidRaw).trim() : '__uncat__';
-      cat[key] = (cat[key]||0) + Math.abs(amt);
-    }
-  });
-
-  // cash
-  (kasa||[]).forEach(k=>{
-    const iso = String(k.date||'').slice(0,10);
-    if(!inRange(iso)) return;
-
-    let amt = Number(k.amount||0);
-    if(!amt) return;
-
-    const t = String(k.type||'').toLowerCase();
-    if(t.includes('wyd')){
-      const v = Math.abs(amt);
-      net -= v; expense += v;
-      const cidRaw = (k.category||k.cat||'');
-      const key = cidRaw && String(cidRaw).trim() ? String(cidRaw).trim() : '__uncat__';
-      cat[key] = (cat[key]||0) + v;
-    }else if(t.includes('przy')){
-      const v = Math.abs(amt);
-      net += v; income += v;
-    }
-  });
-
-  const totalExpense = expense || 0;
-
-  // labels
-  const cats = (typeof getAllSpCats === 'function') ? getAllSpCats() : [];
-  const labelForKey = (k)=>{
-    if(k === '__uncat__') return 'Без категории';
-    if(k === '__other__') return '📦 Inne';
-    const found = cats.find(c=>String(c.id)===String(k));
-    if(found) return (found.emoji ? (found.emoji+' '+found.label) : found.label);
-    return String(k);
-  };
-
-  let items = Object.entries(cat).map(([key,val])=>({key, val}));
-  items.sort((a,b)=>b.val-a.val);
-
-  const top = items.slice(0,6);
-  const rest = items.slice(6).reduce((s,x)=>s+x.val,0);
-  if(rest > 0) top.push({key:'__other__', val: rest});
-
-  const rows = top.map((x, idx)=>{
-    const pct = totalExpense ? (x.val/totalExpense) : 0;
-    const alpha = Math.max(0.25, 0.95 - idx*0.12);
-    return { key: x.key, label: labelForKey(x.key), value: x.val, pct, alpha };
-  });
-
-  return { income, expense, net, rows, totalExpense, startIso, endIso };
-}
-
-function renderLineSvg(series, fillId){
-  if(!series || !series.length) return '<div class="muted small">Brak danych.</div>';
 
   const values = series.map(p=>p.value);
   const max = Math.max.apply(null, values);
@@ -1005,176 +875,24 @@ function renderLineSvg(series, fillId){
     return x.toFixed(2)+','+y.toFixed(2);
   }).join(' ');
 
-  return `
+  const svg = `
 <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Trend">
   <defs>
-    <linearGradient id="${fillId}" x1="0" x2="0" y1="0" y2="1">
+    <linearGradient id="aFill" x1="0" x2="0" y1="0" y2="1">
       <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35"></stop>
       <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"></stop>
     </linearGradient>
   </defs>
   <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></polyline>
-  <polyline points="${pts} 100,100 0,100" fill="url(#${fillId})" stroke="none"></polyline>
+  <polyline points="${pts} 100,100 0,100" fill="url(#aFill)" stroke="none"></polyline>
 </svg>`.trim();
-}
 
-function renderAnalyticsDonut(rows, total){
-  const host = document.getElementById('analyticsDonut');
-  const center = document.getElementById('analyticsDonutTotal');
-  const sub = document.querySelector('.donutSub');
-  const hint = document.getElementById('analyticsCatsHint');
-  if(center) center.textContent = total ? fmtPLN2(total) : '—';
-  if(sub) sub.textContent = 'wydatki';
-  if(hint) hint.textContent = rows && rows.length ? ('Top ' + rows.length) : 'Top';
-
-  if(!host) return;
-
-  if(!rows || !rows.length || !total){
-    host.innerHTML = '<div class="muted small" style="padding:32px 0">Brak danych.</div>';
-    return;
-  }
-
-  const r = 46;
-  const c = 2*Math.PI*r;
-  const gap = 2.2;
-
-  let acc = 0;
-  const segs = rows.map((row, idx)=>{
-    const rawLen = row.pct * c;
-    const len = Math.max(0, rawLen - gap);
-    const dash = `${len.toFixed(2)} ${(c-len).toFixed(2)}`;
-    const off = (-acc).toFixed(2);
-    acc += (len + gap);
-    const alpha = row.alpha != null ? row.alpha : 0.7;
-    return `<circle data-key="${escapeHtml(String(row.key))}"
-      cx="60" cy="60" r="${r}" fill="none"
-      stroke="rgba(71,181,0,${alpha.toFixed(2)})"
-      stroke-width="10" stroke-linecap="round"
-      stroke-dasharray="${dash}" stroke-dashoffset="${off}"></circle>`;
-  }).join('');
-
-  host.innerHTML = `
-<svg viewBox="0 0 120 120" width="220" height="220" aria-label="Wydatki po kategoriach">
-  <g transform="rotate(-90 60 60)">
-    <circle cx="60" cy="60" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="10"></circle>
-    ${segs}
-  </g>
-</svg>`.trim();
-}
-
-function renderAnalyticsCatList(rows, total){
-  const list = document.getElementById('analyticsCatList');
-  if(!list) return;
-  if(!rows || !rows.length || !total){
-    list.innerHTML = '<div class="muted small">Brak danych do kategorii.</div>';
-    return;
-  }
-  list.innerHTML = rows.map((r, idx)=>{
-    const pct = Math.round((r.pct||0)*100);
-    const w = Math.max(0, Math.min(100, (r.pct||0)*100));
-    const alpha = r.alpha != null ? r.alpha : 0.7;
-    return `
-<div class="catItem" data-key="${escapeHtml(String(r.key))}" style="cursor:pointer">
-  <div class="catRow">
-    <span class="catDot" style="background:rgba(71,181,0,${alpha.toFixed(2)});box-shadow:0 0 0 4px rgba(71,181,0,${Math.min(0.18, alpha*0.18).toFixed(2)})"></span>
-    <div class="catName">${escapeHtml(String(r.label))}</div>
-    <div class="catAmt">${escapeHtml(fmtPLN2(r.value))}</div>
-  </div>
-  <div class="catBar" aria-label="${pct}%">
-    <i style="width:${w.toFixed(1)}%"></i>
-  </div>
-</div>`.trim();
-  }).join('');
-
-  // click = focus donut center
-  list.querySelectorAll('.catItem').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      const key = el.getAttribute('data-key');
-      const row = (rows||[]).find(x=>String(x.key)===String(key));
-      const center = document.getElementById('analyticsDonutTotal');
-      const sub = document.querySelector('.donutSub');
-      if(row && center){
-        center.textContent = fmtPLN2(row.value);
-        if(sub) sub.textContent = row.label;
-      }else{
-        if(center) center.textContent = fmtPLN2(total);
-        if(sub) sub.textContent = 'wydatki';
-      }
-    });
-  });
-}
-
-function openAnalyticsModal(){
-  const modal = document.getElementById('analyticsFullModal');
-  if(!modal) return;
-  modal.classList.add('show');
-  modal.setAttribute('aria-hidden','false');
-
-  // render full chart
-  const days = getAnalyticsDays();
-  const full = document.getElementById('analyticsFullChart');
-  const lbl = document.getElementById('analyticsFullLabel');
-  if(lbl) lbl.textContent = analyticsLabel(days);
-  if(full){
-    const series = buildAnalyticsSeries(days);
-    full.innerHTML = renderLineSvg(series, 'aFillFull');
-  }
-}
-function closeAnalyticsModal(){
-  const modal = document.getElementById('analyticsFullModal');
-  if(!modal) return;
-  modal.classList.remove('show');
-  modal.setAttribute('aria-hidden','true');
-}
-
-function exportAnalyticsCSV(){
-  const days = getAnalyticsDays();
-  const series = buildAnalyticsSeries(days);
-  if(!series || !series.length) return;
-
-  const rows = ['date,value'];
-  series.forEach(p=> rows.push(`${p.date},${Number(p.value||0)}`));
-  const blob = new Blob([rows.join('\\n')], {type:'text/csv;charset=utf-8'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `onetapday-analytics-${days}d.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url), 1500);
-}
-
-function renderAnalyticsChart(){
-  const wrap = document.getElementById('analyticsChart');
-  if (!wrap) return;
-
-  const days = getAnalyticsDays();
+  wrap.innerHTML = svg;
   setAnalyticsButtons(days);
-
-  const labelEl = document.getElementById('analyticsRangeLabel');
-  if (labelEl) labelEl.textContent = analyticsLabel(days);
-
-  const s = computeAnalyticsSummary(days);
-  const inEl = document.getElementById('analyticsIn');
-  const outEl = document.getElementById('analyticsOut');
-  const netEl = document.getElementById('analyticsNet');
-  if(inEl) inEl.textContent = fmtPLN2(s.income);
-  if(outEl) outEl.textContent = fmtPLN2(s.expense);
-  if(netEl) netEl.textContent = fmtPLN2(s.net);
-
-  // line chart
-  const series = buildAnalyticsSeries(days);
-  wrap.innerHTML = renderLineSvg(series, 'aFill');
-  // donut + list
-  renderAnalyticsDonut(s.rows, s.totalExpense);
-  renderAnalyticsCatList(s.rows, s.totalExpense);
-
-  const fullBtn = document.getElementById('analyticsFullBtn');
-  if(fullBtn) fullBtn.onclick = openAnalyticsModal;
 }
 
 function initAnalyticsUI(){
+  // range buttons
   const b30 = document.getElementById('analyticsRange30');
   const b90 = document.getElementById('analyticsRange90');
   const b365 = document.getElementById('analyticsRange365');
@@ -1182,40 +900,6 @@ function initAnalyticsUI(){
   if (b30) b30.addEventListener('click', ()=>{ setAnalyticsDays(30); renderAnalyticsChart(); });
   if (b90) b90.addEventListener('click', ()=>{ setAnalyticsDays(90); renderAnalyticsChart(); });
   if (b365) b365.addEventListener('click', ()=>{ setAnalyticsDays(365); renderAnalyticsChart(); });
-
-  // open modal
-  const fullBtn = document.getElementById('analyticsFullBtn');
-  if(fullBtn) fullBtn.addEventListener('click', openAnalyticsModal);
-
-  const close1 = document.getElementById('analyticsFullClose');
-  const close2 = document.getElementById('analyticsFullClose2');
-  if(close1) close1.addEventListener('click', closeAnalyticsModal);
-  if(close2) close2.addEventListener('click', closeAnalyticsModal);
-
-  const modal = document.getElementById('analyticsFullModal');
-  if(modal){
-    modal.addEventListener('click', (e)=>{
-      if(e.target === modal) closeAnalyticsModal();
-    });
-  }
-
-  const exportBtn = document.getElementById('analyticsExportCSV');
-  if(exportBtn) exportBtn.addEventListener('click', exportAnalyticsCSV);
-
-  document.addEventListener('keydown', (e)=>{
-    if(e.key === 'Escape') closeAnalyticsModal();
-  });
-
-  const chart = document.getElementById('analyticsChart');
-  if(chart){
-    chart.addEventListener('click', openAnalyticsModal);
-    chart.addEventListener('keydown', (e)=>{
-      if(e.key === 'Enter' || e.key === ' '){
-        e.preventDefault();
-        openAnalyticsModal();
-      }
-    });
-  }
 
   // click on home chart -> analytics
   const card = document.getElementById('trendCard') || document.getElementById('trendChart');
@@ -2790,10 +2474,11 @@ if(btn.id==='spOpenListBtn'){
 
   }, true);
 
-  // Default screen: Panel (pulpit)
+  // Default screen: Home (tiles). Open the panel only from the "Money & payments" tile.
   window.addEventListener('load', () => {
     try {
-      if (window.appGoSection) window.appGoSection('pulpit');
+      if (window.appShowHome) window.appShowHome();
+      else if (window.appGoSection) window.appGoSection('pulpit');
     } catch (_) {}
   }, { once: true });
 
@@ -8548,10 +8233,9 @@ function renderKasaQalta(listKasa){
         const st = document.createElement('style');
         st.id = 'otdNotifCss';
         st.textContent = `
-          .otdNotifBell{ position:fixed; top:12px; right:12px; z-index:9999; display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:999px; background:rgba(0,0,0,.35); border:1px solid rgba(71,181,0,.35); backdrop-filter: blur(10px); cursor:pointer; user-select:none; }
-          .otdNotifBell .t{ font-weight:700; color:#dfffd0; font-size:13px; }
-          .otdNotifBadge{ min-width:18px; height:18px; padding:0 6px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#0b1a07; background:#47b500; }
-          .otdNotifPanel{ position:fixed; top:54px; right:12px; width:min(360px, calc(100vw - 24px)); max-height:60vh; overflow:auto; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; }
+          .otdNotifBellBtn{ position:relative; display:inline-flex; align-items:center; justify-content:center; }
+          .otdNotifBellBtn .otdNotifBadge{ position:absolute; top:-4px; right:-4px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#0b1a07; background:#47b500; border:1px solid rgba(0,0,0,.35); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+          .otdNotifPanel{ position:fixed; top: calc(env(safe-area-inset-top) + 64px); right:12px; width:min(360px, calc(100vw - 24px)); max-height:60vh; overflow:auto; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; }
           .otdNotifPanel header{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); }
           .otdNotifPanel header .h{ font-weight:700; color:#eaffdf; font-size:13px; }
           .otdNotifPanel header button{ background:transparent; border:1px solid rgba(255,255,255,.16); color:#eaffdf; border-radius:12px; padding:6px 10px; cursor:pointer; }
@@ -8572,10 +8256,12 @@ function renderKasaQalta(listKasa){
       function ensureUi(){
         injectCss();
         if (document.getElementById('otdNotifBell')) return;
-        const bell = document.createElement('div');
+        const bell = document.createElement('button');
+        bell.type = 'button';
         bell.id = 'otdNotifBell';
-        bell.className = 'otdNotifBell';
-        bell.innerHTML = `<span class="t">🔔</span><span class="t">Уведомления</span><span class="otdNotifBadge" style="display:none">0</span>`;
+        bell.className = 'iconBtn otdNotifBellBtn';
+        bell.setAttribute('aria-label','Уведомления');
+        bell.innerHTML = `🔔<span class="otdNotifBadge" style="display:none">0</span>`;
         const panel = document.createElement('div');
         panel.id = 'otdNotifPanel';
         panel.className = 'otdNotifPanel';
@@ -8584,11 +8270,17 @@ function renderKasaQalta(listKasa){
         toast.id = 'otdNotifToast';
         toast.className = 'otdNotifToast';
 
-        document.body.appendChild(bell);
+        try{
+          const top = document.querySelector('.top');
+          const settingsBtn = document.getElementById('navSettingsBtn');
+          if (top && settingsBtn) top.insertBefore(bell, settingsBtn);
+          else if (top) top.appendChild(bell);
+          else document.body.appendChild(bell);
+        }catch(_){ document.body.appendChild(bell); }
         document.body.appendChild(panel);
         document.body.appendChild(toast);
 
-        bell.addEventListener('click', async ()=>{
+bell.addEventListener('click', async ()=>{
           const shown = panel.style.display === 'block';
           panel.style.display = shown ? 'none' : 'block';
           if (!shown) { try{ await pull(); }catch(_){}} 
