@@ -2,13 +2,13 @@
 
 require('dotenv').config();
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || 'price_1SSHX0KQldLeJYVfxcZe4eKr';
-const STRIPE_PRICE_ID_ACCOUNTANT = process.env.STRIPE_PRICE_ID_ACCOUNTANT || '';
 console.log('[BOOT] STRIPE_PRICE_ID =', STRIPE_PRICE_ID);
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 // простое in-memory хранилище по email
 const appStateStore = {};
 
@@ -28,6 +28,77 @@ const PORT = process.env.PORT || 10000;
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, 'users.json');
 
 
+// Accountants ↔ Clients linking (MVP)
+const INVITES_FILE = process.env.INVITES_FILE || path.join(__dirname, 'invites.json');
+const REQUESTS_FILE = process.env.REQUESTS_FILE || path.join(__dirname, 'requests.json');
+
+const NOTIFICATIONS_FILE = process.env.NOTIFICATIONS_FILE || (fs.existsSync('/data') ? '/data/notifications.json' : path.join(__dirname, 'notifications.json'));
+const DOCUMENTS_FILE = process.env.DOCUMENTS_FILE || (fs.existsSync('/data') ? path.join('/data','documents.json') : path.join(__dirname,'documents.json'));
+
+function loadJsonFile(file, fallback){
+  try {
+    if (!fs.existsSync(file)) return fallback;
+    const raw = fs.readFileSync(file, 'utf-8');
+    const parsed = JSON.parse(raw || 'null');
+    return parsed && typeof parsed === 'object' ? parsed : fallback;
+  } catch (e) {
+    console.warn('[DATA] failed to load', file, e && e.message ? e.message : e);
+    return fallback;
+  }
+}
+function saveJsonFile(file, obj){
+  try {
+    fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('[DATA] failed to save', file, e && e.message ? e.message : e);
+  }
+}
+const invitesStore = loadJsonFile(INVITES_FILE, { links: {} });   // key: "acc::client"
+const requestsStore = loadJsonFile(REQUESTS_FILE, { items: {} }); // key: requestId
+const notificationsStore = loadJsonFile(NOTIFICATIONS_FILE, { items: {} }); // key: notificationId
+const documentsStore = loadJsonFile(DOCUMENTS_FILE, { users: {}, files: {} }); // Document vault
+function linkKey(accEmail, clientEmail){ return `${accEmail}::${clientEmail}`; }
+
+function notifId(){ return 'n_' + crypto.randomBytes(8).toString('hex'); }
+function addNotification(toEmail, type, message, extra){
+  try {
+    const id = notifId();
+    const now = new Date().toISOString();
+    const n = Object.assign({
+      id,
+      toEmail: normalizeEmail(toEmail || ''),
+      type,
+      message: String(message || '').slice(0, 500),
+      createdAt: now,
+      read: false
+    }, (extra || {}));
+    notificationsStore.items = notificationsStore.items || {};
+    notificationsStore.items[id] = n;
+    saveJsonFile(NOTIFICATIONS_FILE, notificationsStore);
+    return id;
+  } catch (e) {
+    console.warn('[NOTIF] add failed', e && e.message ? e.message : e);
+    return null;
+  }
+}
+function listNotificationsFor(email, unreadOnly){
+  const e = normalizeEmail(email || '');
+  const items = notificationsStore.items || {};
+  const out = [];
+  Object.keys(items).forEach(id=>{
+    const n = items[id];
+    if (!n) return;
+    if (normalizeEmail(n.toEmail) !== e) return;
+    if (unreadOnly && n.read) return;
+    out.push(n);
+  });
+  out.sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  return out;
+}
+
+
+
+
 app.use((req, res, next) => {
   console.log(new Date().toISOString(), req.method, req.url);
   next();
@@ -40,18 +111,34 @@ app.use((req, res, next) => {
   if (req.originalUrl === '/webhook') {
     return next();
   }
-  return express.json({ limit: '10mb' })(req, res, next);
+  return express.json({ limit: '25mb' })(req, res, next);
 });
 
 app.use(express.static('public'));
 
 
-// serve uploaded images (if any)
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  try { fs.mkdirSync(uploadsDir); } catch(e) { console.warn('[UPLOAD] mkdir failed', e && e.message); }
+// uploads dirs (Render persistent disk: /data)
+const DATA_ROOT = (fs.existsSync('/data') ? '/data' : __dirname);
+
+// Public uploads (legacy: used by /save-image)
+const publicUploadsDir = process.env.PUBLIC_UPLOADS_DIR || path.join(DATA_ROOT, 'uploads');
+if (!fs.existsSync(publicUploadsDir)) {
+  try { fs.mkdirSync(publicUploadsDir, { recursive:true }); } catch(e) { console.warn('[UPLOAD] mkdir failed', e && e.message); }
 }
-app.use('/uploads', express.static(uploadsDir));
+app.use('/uploads', express.static(publicUploadsDir));
+
+// Secure uploads (accountant requests attachments) — NOT publicly served
+const secureUploadsDir = process.env.SECURE_UPLOADS_DIR || path.join(DATA_ROOT, 'secure_uploads');
+if (!fs.existsSync(secureUploadsDir)) {
+  try { fs.mkdirSync(secureUploadsDir, { recursive:true }); } catch(e) { console.warn('[UPLOAD] secure mkdir failed', e && e.message); }
+}
+
+
+// Vault uploads (client document storage) — NOT publicly served
+const vaultUploadsDir = process.env.VAULT_UPLOADS_DIR || path.join(DATA_ROOT, 'vault_uploads');
+if (!fs.existsSync(vaultUploadsDir)) {
+  try { fs.mkdirSync(vaultUploadsDir, { recursive:true }); } catch(e) { console.warn('[UPLOAD] vault mkdir failed', e && e.message); }
+}
 
 // volatile sessions map kept for backward compatibility with old random tokens
 const sessions = {}; // token -> email
@@ -160,35 +247,20 @@ function expireStatuses(user) {
   if (!user) return false;
   const now = new Date();
   let changed = false;
-
-  // time-limited access modes that use endAt
-  const timeboxedStatuses = new Set(['active', 'demo', 'acct_trial', 'acct_pro_trial']);
-  if (user.endAt && timeboxedStatuses.has(String(user.status || ''))) {
-    if (new Date(user.endAt) < now) {
-      user.status = 'ended';
-      changed = true;
-    }
+  if (user.status === 'active' && user.endAt && new Date(user.endAt) < now) {
+    user.status = 'ended';
+    changed = true;
   }
-
-  // discount flag uses discountUntil
   if (user.status === 'discount_active' && user.discountUntil && new Date(user.discountUntil) < now) {
     user.status = 'ended';
     changed = true;
   }
-
   if (changed) saveUsers();
   return changed;
 }
 
 function normalizeEmail(e) {
   return String(e || '').toLowerCase().trim();
-}
-
-function normalizeRole(roleRaw){
-  const r = String(roleRaw || '').trim().toLowerCase();
-  if (r === 'accountant' || r === 'buchalter' || r === 'buhgalter') return 'accountant';
-  // everything else collapses into one bucket
-  return 'freelance_business';
 }
 function okPassword(p) {
   return typeof p === 'string' && p.length >= 8;
@@ -230,9 +302,6 @@ function getUserBySession(req) {
     let u = findUserByEmail(payload.email);
     if (u) {
       u = ensureAdminFlag(u);
-
-  // normalize missing role for legacy users
-  u.role = normalizeRole(u.role);
       if (typeof expireStatuses === 'function') expireStatuses(u);
       return u;
     }
@@ -268,7 +337,7 @@ app.post('/save-image', (req, res) => {
     }
     const base64 = data.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
     const buf = Buffer.from(base64, 'base64');
-    const outPath = path.join(uploadsDir, Date.now() + '-' + filename);
+    const outPath = path.join(publicUploadsDir, Date.now() + '-' + filename);
     fs.writeFileSync(outPath, buf);
     return res.json({ success: true, path: '/uploads/' + path.basename(outPath) });
   } catch (err) {
@@ -305,9 +374,7 @@ app.post('/register', (req, res) => {
     const storedHash = hashPassword(password, salt);
 
     users[email] = {
-        email,
-        role: 'freelance_business',
-      role: normalizeRole(req.body && req.body.role),
+      email,
       salt,
       hash: storedHash,
       status: 'none',
@@ -315,8 +382,6 @@ app.post('/register', (req, res) => {
       endAt: null,
       discountUntil: null,
       demoUsed: false,
-      acctTrialUsed: false,
-      acctProTrialUsed: false,
       appState: {},
       isAdmin: email === ADMIN_EMAIL
     };
@@ -327,7 +392,7 @@ app.post('/register', (req, res) => {
     setSessionCookie(res, email);
 
     console.log('[REGISTER] success', email);
-    return res.json({ success: true, user: { email, role: users[email].role, status: users[email].status, demoUsed: false, startAt: null, endAt: null } });
+    return res.json({ success: true, user: { email, role, status: 'none', demoUsed: false } });
   } catch (err) {
     console.error('[REGISTER] error', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: 'internal', detail: String(err && err.message ? err.message : err) });
@@ -353,9 +418,6 @@ const u = findUserByEmail(email);
     // важно: поднять админ-флаг, если это ADMIN_EMAIL
     user = ensureAdminFlag(user);
 
-  // normalize missing role for legacy users
-  user.role = normalizeRole(user.role);
-
 
     if (user.hash && user.salt) {
       if (!verifyPassword(password, user.salt, user.hash)) {
@@ -379,40 +441,19 @@ const u = findUserByEmail(email);
 
     setSessionCookie(res, user.email);
     
-    // Автоматическая выдача бесплатного доступа при первом логине:
-    // - freelance_business: демо 24 часа (один раз)
-    // - accountant: trial 7 дней (один раз)
-    const nowMs = Date.now();
-    const nowISO = new Date(nowMs).toISOString();
-
-    // normalize missing role for legacy users
-    user.role = normalizeRole(user.role);
-
-    if (user.role === 'accountant') {
-      const isPaid = (user.status === 'active' || user.status === 'discount_active');
-      const isAnyTrial = (user.status === 'acct_trial' || user.status === 'acct_pro_trial');
-      if (!isPaid && !isAnyTrial && !user.acctTrialUsed) {
-        user.acctTrialUsed = true;
-        user.status = 'acct_trial';
-        user.startAt = nowISO;
-        user.endAt = new Date(nowMs + 7 * 24 * 60 * 60 * 1000).toISOString();
-        saveUsers();
-        console.log(`[ACCT] Auto-activated 7d trial for ${user.email} until ${user.endAt}`);
-      }
-    } else {
-      if (!user.demoUsed && user.status !== 'active' && user.status !== 'discount_active') {
-        user.demoUsed = true;
-        user.status = 'active';
-        user.startAt = nowISO;
-        user.endAt = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
-        saveUsers();
-        console.log(`[DEMO] Auto-activated demo for ${user.email} until ${user.endAt}`);
-      }
+    // Автоматическая активация демо при первом логине (если еще не использовано)
+    if (!user.demoUsed && user.status !== 'active' && user.status !== 'discount_active') {
+      user.demoUsed = true;
+      user.status = 'active';
+      user.startAt = new Date().toISOString();
+      user.endAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      saveUsers();
+      console.log(`[DEMO] Auto-activated demo for ${user.email} until ${user.endAt}`);
     }
     
     expireStatuses(user);
 
-    return res.json({ success: true, user: { email: user.email, role: user.role, status: user.status, demoUsed: !!user.demoUsed, acctTrialUsed: !!user.acctTrialUsed, acctProTrialUsed: !!user.acctProTrialUsed, startAt: user.startAt, endAt: user.endAt } });
+    return res.json({ success: true, user: { email: user.email, role: user.role || 'freelance_business', status: user.status, demoUsed: !!user.demoUsed, startAt: user.startAt, endAt: user.endAt } });
   } catch (err) {
     console.error('[LOGIN] error', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: 'internal' });
@@ -490,43 +531,6 @@ u.demoStartAt = null;   // если поле есть - обнуляем
 
 // Start demo (authenticated) — DEPRECATED: demo now auto-activates on first login
 // Оставлен для обратной совместимости, но демо теперь активируется автоматически при первом логине
-
-// Accountant: start PRO trial (7 days) — only when accountant has >3 clients (or is attempting to go above)
-app.post('/accountant/start-pro-trial', (req, res) => {
-  const user = getUserBySession(req);
-  if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
-
-  user.role = normalizeRole(user.role);
-  expireStatuses(user);
-
-  if (user.role !== 'accountant') {
-    return res.status(403).json({ success: false, error: 'Only for accountant role' });
-  }
-
-  // already paid
-  if (user.status === 'active' || user.status === 'discount_active') {
-    return res.json({ success: true, user: { email: user.email, role: user.role, status: user.status, startAt: user.startAt, endAt: user.endAt } });
-  }
-
-  if (user.acctProTrialUsed) {
-    return res.status(400).json({ success: false, error: 'PRO trial already used' });
-  }
-
-  const clientsCount = Number(req.body && req.body.clientsCount);
-  if (!Number.isFinite(clientsCount) || clientsCount <= 3) {
-    return res.status(400).json({ success: false, error: 'PRO trial starts only when clients > 3' });
-  }
-
-  const nowMs = Date.now();
-  user.acctProTrialUsed = true;
-  user.status = 'acct_pro_trial';
-  user.startAt = new Date(nowMs).toISOString();
-  user.endAt = new Date(nowMs + 7 * 24 * 60 * 60 * 1000).toISOString();
-  saveUsers();
-
-  return res.json({ success: true, user: { email: user.email, role: user.role, status: user.status, startAt: user.startAt, endAt: user.endAt, acctProTrialUsed: true } });
-});
-
 app.post('/start-demo', (req, res) => {
   const user = getUserBySession(req);
   if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
@@ -581,6 +585,1381 @@ app.get('/me', (req, res) => {
 
   return res.json({ success: true, user: safe });
 });
+
+/* ===== Notifications (in-app) ===== */
+app.get('/api/notifications', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const unreadOnly = String(req.query && req.query.unread || '') === '1';
+  const list = listNotificationsFor(email, unreadOnly).slice(0, 50);
+  return res.json({ success:true, notifications: list });
+});
+
+app.post('/api/notifications/mark-read', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const body = req.body || {};
+  const all = !!body.all;
+  const ids = Array.isArray(body.ids) ? body.ids : [];
+  const items = notificationsStore.items || {};
+  let changed = 0;
+
+  if (all) {
+    Object.keys(items).forEach(id=>{
+      const n = items[id];
+      if (!n) return;
+      if (normalizeEmail(n.toEmail) !== email) return;
+      if (n.read) return;
+      n.read = true;
+      n.readAt = new Date().toISOString();
+      changed++;
+    });
+  } else {
+    ids.forEach(id=>{
+      const n = items[id];
+      if (!n) return;
+      if (normalizeEmail(n.toEmail) !== email) return;
+      if (n.read) return;
+      n.read = true;
+      n.readAt = new Date().toISOString();
+      changed++;
+    });
+  }
+  if (changed > 0) saveJsonFile(NOTIFICATIONS_FILE, notificationsStore);
+  return res.json({ success:true, changed });
+});
+
+
+
+// ===== Accountant ↔ Client API (MVP) =====
+function mustAuth(req, res){
+  const u = getUserBySession(req);
+  if (!u) { res.status(401).json({ success:false, error:'Not authenticated' }); return null; }
+  expireStatuses(u);
+  return ensureAdminFlag(u);
+}
+function mustAccountant(req, res){
+  const u = mustAuth(req, res);
+  if (!u) return null;
+  const role = (u.role || 'freelance_business');
+  if (role !== 'accountant') { res.status(403).json({ success:false, error:'Accountant only' }); return null; }
+  return u;
+}
+
+
+// ===== Document Vault (folders + files) =====
+function docFolderId(){ return 'df_' + crypto.randomBytes(6).toString('hex'); }
+function docFileId(){ return 'dfile_' + crypto.randomBytes(8).toString('hex'); }
+
+const DOC_CATEGORIES = {
+  incoming: 'Входящие фактуры / закупы',
+  outgoing: 'Выставленные фактуры / доход',
+  tax: 'Податки / ZUS / PIT',
+  proof: 'Подтверждения платежей',
+  other: 'Другое'
+};
+function isValidDocMonth(m){ return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m||'')); }
+function normalizeDocCat(c){
+  const key = String(c||'').toLowerCase().trim();
+  return DOC_CATEGORIES[key] ? key : 'other';
+}
+function smartFolderKey(month, cat){ return `${month}:${cat}`; }
+
+
+function isFolderShared(folder){
+  // Default: shared=true (backward compatible)
+  if (!folder) return true;
+  if (typeof folder.sharedWithAccountant === 'boolean') return folder.sharedWithAccountant;
+  if (folder.share && typeof folder.share.accountant === 'boolean') return folder.share.accountant;
+  return true;
+}
+
+function activeAccountantsForClient(clientEmail){
+  const ce = normalizeEmail(clientEmail || '');
+  const links = invitesStore.links || {};
+  const out = [];
+  Object.keys(links).forEach(k=>{
+    const it = links[k];
+    if (!it) return;
+    if (normalizeEmail(it.clientEmail || '') !== ce) return;
+    if (String(it.status || '') !== 'active') return;
+    const ae = normalizeEmail(it.accountantEmail || '');
+    if (ae) out.push(ae);
+  });
+  return Array.from(new Set(out));
+}
+
+
+
+function ensureUserDocs(email){
+  const e = normalizeEmail(email || '');
+  documentsStore.users = documentsStore.users || {};
+  documentsStore.files = documentsStore.files || {};
+  if (!documentsStore.users[e]) documentsStore.users[e] = { folders:{}, fileIds:[], smart:{} };
+  if (!documentsStore.users[e].folders) documentsStore.users[e].folders = {};
+  if (!Array.isArray(documentsStore.users[e].fileIds)) documentsStore.users[e].fileIds = [];
+  if (!documentsStore.users[e].smart) documentsStore.users[e].smart = {};
+  return documentsStore.users[e];
+}
+
+function listDocsFor(email, opts){
+  const e = normalizeEmail(email || '');
+  const ud = ensureUserDocs(e);
+  const sharedOnly = !!(opts && opts.sharedOnly);
+
+  const foldersAll = Object.keys(ud.folders||{}).map(id=>({ id, ...(ud.folders[id] || {}) }));
+  const folders = sharedOnly ? foldersAll.filter(f=>isFolderShared(f)) : foldersAll;
+  const allowedFolderIds = new Set(folders.map(f=>String(f.id)));
+
+  const filesAll = (ud.fileIds||[]).map(fid=>documentsStore.files && documentsStore.files[fid]).filter(Boolean);
+  const files = sharedOnly ? filesAll.filter(f=>allowedFolderIds.has(String(f.folderId || ''))) : filesAll;
+
+  return { folders, files };
+}
+
+
+app.get('/api/docs/state', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  return res.json({ success:true, ...listDocsFor(email) });
+});
+
+app.post('/api/docs/folders/create', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const name = String((req.body && req.body.name) || '').trim().slice(0, 60);
+  if (!name) return res.status(400).json({ success:false, error:'Missing name' });
+
+  const ud = ensureUserDocs(email);
+  const id = docFolderId();
+  ud.folders[id] = { name, createdAt: new Date().toISOString(), sharedWithAccountant: true };
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true, folder:{ id, ...ud.folders[id] } });
+});
+
+app.post('/api/docs/folders/ensure', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const month = String((req.body && (req.body.month || req.body.period)) || '').trim();
+  const category = normalizeDocCat((req.body && (req.body.category || req.body.cat)) || '');
+  if (!isValidDocMonth(month)) return res.status(400).json({ success:false, error:'Invalid month (YYYY-MM)' });
+
+  const ud = ensureUserDocs(email);
+  const key = smartFolderKey(month, category);
+  let id = ud.smart && ud.smart[key];
+  if (id && ud.folders && ud.folders[id]){
+    return res.json({ success:true, folder:{ id, ...ud.folders[id] } });
+  }
+
+  // try find existing folder by meta
+  id = '';
+  try{
+    Object.keys(ud.folders||{}).forEach(fid=>{
+      if (id) return;
+      const f = ud.folders[fid];
+      if (f && f.meta && f.meta.month === month && f.meta.category === category) id = fid;
+    });
+  }catch(_){ id = ''; }
+
+  const now = new Date().toISOString();
+  if (!id){
+    id = docFolderId();
+    ud.folders[id] = {
+      name: `${month} • ${DOC_CATEGORIES[category] || DOC_CATEGORIES.other}`,
+      createdAt: now,
+      meta: { month, category, smart:true },
+      sharedWithAccountant: true
+    };
+  } else {
+    ud.folders[id].meta = { ...(ud.folders[id].meta||{}), month, category, smart:true };
+    if (typeof ud.folders[id].sharedWithAccountant !== 'boolean') ud.folders[id].sharedWithAccountant = true;
+    if (!ud.folders[id].createdAt) ud.folders[id].createdAt = now;
+  }
+
+  ud.smart = ud.smart || {};
+  ud.smart[key] = id;
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true, folder:{ id, ...ud.folders[id] } });
+});
+
+app.post('/api/docs/folders/update', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const folderId = String((req.body && (req.body.folderId || req.body.id)) || '').trim();
+  const nameProvided = req.body && Object.prototype.hasOwnProperty.call(req.body, 'name');
+  const nameRaw = req.body && req.body.name;
+  const monthProvided = req.body && (Object.prototype.hasOwnProperty.call(req.body, 'month') || Object.prototype.hasOwnProperty.call(req.body, 'period'));
+  const monthRaw = String((req.body && (req.body.month || req.body.period)) || '').trim();
+  const catProvided = req.body && (Object.prototype.hasOwnProperty.call(req.body, 'category') || Object.prototype.hasOwnProperty.call(req.body, 'cat'));
+  const catRaw = (req.body && (req.body.category || req.body.cat)) || '';
+
+  if (!folderId) return res.status(400).json({ success:false, error:'Missing folderId' });
+
+  const ud = ensureUserDocs(email);
+  if (!ud.folders || !ud.folders[folderId]) return res.status(404).json({ success:false, error:'Folder not found' });
+
+  const f = ud.folders[folderId];
+  if (nameProvided){
+    const nm = String(nameRaw || '').trim().slice(0, 60);
+    if (!nm) return res.status(400).json({ success:false, error:'Invalid name' });
+    f.name = nm;
+  }
+
+  if (monthProvided || catProvided){
+    const prevMeta = f.meta || {};
+    const isSmart = !!prevMeta.smart;
+    const month = monthProvided ? monthRaw : String(prevMeta.month || '').trim();
+    const category = catProvided ? normalizeDocCat(catRaw) : normalizeDocCat(prevMeta.category || 'other');
+
+    if (!isValidDocMonth(month)) return res.status(400).json({ success:false, error:'Invalid month (YYYY-MM)' });
+
+    f.meta = { ...prevMeta, month, category, smart: isSmart };
+
+    // keep file meta in sync
+    try{
+      Object.keys(documentsStore.files || {}).forEach(fid=>{
+        const rec = (documentsStore.files || {})[fid];
+        if (!rec) return;
+        if (normalizeEmail(rec.ownerEmail || '') !== email) return;
+        if (String(rec.folderId || '') !== folderId) return;
+        rec.month = month;
+        rec.category = category;
+      });
+    }catch(_){}
+
+    // update smart mapping ONLY for smart folders (the "default" month+category folder)
+    if (isSmart){
+      ud.smart = ud.smart || {};
+      Object.keys(ud.smart).forEach(k=>{
+        if (ud.smart[k] === folderId) delete ud.smart[k];
+      });
+      ud.smart[smartFolderKey(month, category)] = folderId;
+    }
+  }
+
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true, folder:{ id: folderId, ...ud.folders[folderId] } });
+});
+
+
+app.post('/api/docs/folders/share', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const folderId = String((req.body && (req.body.folderId || req.body.id)) || '').trim();
+  const shared = !!(req.body && (req.body.shared !== undefined ? req.body.shared : req.body.open));
+  if (!folderId) return res.status(400).json({ success:false, error:'Missing folderId' });
+
+  const ud = ensureUserDocs(email);
+  if (!ud.folders || !ud.folders[folderId]) return res.status(404).json({ success:false, error:'Folder not found' });
+
+  ud.folders[folderId].sharedWithAccountant = shared;
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+
+  // Notify active accountants (optional signal)
+  if (shared){
+    const accs = activeAccountantsForClient(email);
+    const fname = (ud.folders[folderId] && ud.folders[folderId].name) ? ud.folders[folderId].name : folderId;
+    accs.forEach(ae=>{
+      addNotification(ae, 'vault_folder_shared', `Клиент открыл доступ к папке: ${fname}`, { clientEmail: email, folderId });
+    });
+  }
+  return res.json({ success:true, folder:{ id: folderId, ...(ud.folders[folderId] || {}) } });
+});
+
+app.post('/api/docs/folders/delete', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const folderId = String((req.body && (req.body.folderId || req.body.id)) || '').trim();
+  if (!folderId) return res.status(400).json({ success:false, error:'Missing folderId' });
+
+  const ud = ensureUserDocs(email);
+  if (!ud.folders || !ud.folders[folderId]) return res.status(404).json({ success:false, error:'Folder not found' });
+
+  // remove all files in this folder (owned by this user)
+  const toDelete = [];
+  try{
+    (ud.fileIds || []).forEach(fid=>{
+      const rec = (documentsStore.files || {})[fid];
+      if (rec && String(rec.folderId || '') === folderId) toDelete.push(fid);
+    });
+  }catch(_){}
+
+  toDelete.forEach(fid=>{
+    const rec = (documentsStore.files || {})[fid];
+    if (rec){
+      const abs = path.isAbsolute(rec.filePath) ? rec.filePath : path.join(DATA_ROOT, rec.filePath);
+      try{ if (fs.existsSync(abs)) fs.unlinkSync(abs); }catch(_){}
+      delete (documentsStore.files || {})[fid];
+    }
+  });
+
+  ud.fileIds = (ud.fileIds || []).filter(fid=>!toDelete.includes(fid));
+
+  // remove folder + smart mapping (if points here)
+  delete ud.folders[folderId];
+  if (ud.smart){
+    Object.keys(ud.smart).forEach(k=>{
+      if (ud.smart[k] === folderId) delete ud.smart[k];
+    });
+  }
+
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true });
+});
+
+
+app.post('/api/docs/upload', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const folderId = String((req.body && req.body.folderId) || '').trim();
+  const fileNameIn = String((req.body && req.body.fileName) || '').trim();
+  const dataUrl = String((req.body && req.body.dataUrl) || '');
+  if (!folderId) return res.status(400).json({ success:false, error:'Missing folderId' });
+  if (!dataUrl.startsWith('data:') || dataUrl.indexOf('base64,') < 0) return res.status(400).json({ success:false, error:'Invalid dataUrl' });
+
+  const ud = ensureUserDocs(email);
+  if (!ud.folders[folderId]) return res.status(404).json({ success:false, error:'Folder not found' });
+
+  const head = dataUrl.slice(0, dataUrl.indexOf('base64,'));
+  const mimeMatch = head.match(/^data:([^;]+);/i);
+  const mime = (mimeMatch && mimeMatch[1]) ? String(mimeMatch[1]).toLowerCase() : '';
+  const ALLOW = ['image/jpeg','image/jpg','image/png','application/pdf'];
+  if (!ALLOW.includes(mime)) return res.status(415).json({ success:false, error:'Unsupported file type' });
+
+  const b64 = dataUrl.slice(dataUrl.indexOf('base64,')+7);
+  let buf;
+  try { buf = Buffer.from(b64, 'base64'); } catch(e){ return res.status(400).json({ success:false, error:'Bad base64' }); }
+  const MAX = 10 * 1024 * 1024; // 10MB
+  if (buf.length > MAX) return res.status(413).json({ success:false, error:'File too large (max 10MB)' });
+
+  const extMap = { 'image/jpeg':'.jpg', 'image/jpg':'.jpg', 'image/png':'.png', 'application/pdf':'.pdf' };
+  const ext = extMap[mime] || '';
+  const safeBase = (fileNameIn || 'document').replace(/[^a-z0-9_\-\.]/gi,'_').slice(0,64) || 'document';
+  const fileId = docFileId();
+  const storedName = `${fileId}_${safeBase}${ext}`;
+  const absPath = path.join(vaultUploadsDir, storedName);
+  try { fs.writeFileSync(absPath, buf); } catch(e){ return res.status(500).json({ success:false, error:'Failed to save file' }); }
+
+  const relPath = path.relative(DATA_ROOT, absPath).replace(/\\/g,'/');
+  const now = new Date().toISOString();
+  const rec = {
+    id: fileId,
+    ownerEmail: email,
+    folderId,
+    fileName: safeBase.endsWith(ext) ? safeBase : (safeBase + ext),
+    fileMime: mime,
+    fileSize: buf.length,
+    filePath: relPath, // internal
+    fileUrl: `/api/docs/file/${fileId}`,
+    uploadedAt: now,
+    month: (ud.folders[folderId] && ud.folders[folderId].meta && ud.folders[folderId].meta.month) ? ud.folders[folderId].meta.month : '',
+    category: (ud.folders[folderId] && ud.folders[folderId].meta && ud.folders[folderId].meta.category) ? ud.folders[folderId].meta.category : ''
+  };
+  documentsStore.files = documentsStore.files || {};
+  documentsStore.files[fileId] = rec;
+  ud.fileIds = ud.fileIds || [];
+  ud.fileIds.push(fileId);
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+
+  return res.json({ success:true, file: rec });
+});
+
+// ===== Vault file operations (client only) =====
+function safeDisplayFileName(name, fallbackExt){
+  const raw = String(name || '').trim();
+  const cleaned = raw.replace(/[\\/]/g, '_').slice(0, 120);
+  let ext = String(path.extname(cleaned) || '').toLowerCase();
+  const base = cleaned.replace(/\.[^.]+$/,'');
+
+  // Keep original extension to avoid lying about file type
+  const fb = String(fallbackExt || '').toLowerCase();
+  if (!ext && fb) ext = fb;
+  if (fb && ext && ext !== fb) ext = fb;
+  if (!ext) ext = '';
+
+  const safeBase = base.replace(/[^a-z0-9_\- \.(\)\[\]]/gi,'_').trim().slice(0, 64) || 'document';
+  return `${safeBase}${ext}`;
+}
+
+app.post('/api/docs/files/rename', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const role = (u.role || 'freelance_business');
+  // Only file owner can rename
+  if (role === 'accountant') return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const fileId = String((req.body && (req.body.fileId || req.body.id)) || '').trim();
+  const fileName = String((req.body && (req.body.fileName || req.body.name)) || '').trim();
+  if (!fileId) return res.status(400).json({ success:false, error:'Missing fileId' });
+  if (!fileName) return res.status(400).json({ success:false, error:'Missing fileName' });
+
+  const rec = (documentsStore.files || {})[fileId];
+  if (!rec) return res.status(404).json({ success:false, error:'File not found' });
+  if (normalizeEmail(rec.ownerEmail || '') !== email) return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const currentExt = String(path.extname(rec.fileName || '') || '').toLowerCase();
+  rec.fileName = safeDisplayFileName(fileName, currentExt);
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true, file: rec });
+});
+
+app.post('/api/docs/files/move', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const role = (u.role || 'freelance_business');
+  if (role === 'accountant') return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const fileId = String((req.body && (req.body.fileId || req.body.id)) || '').trim();
+  const folderIdIn = String((req.body && (req.body.folderId || req.body.toFolderId)) || '').trim();
+  const monthIn = String((req.body && (req.body.month || req.body.period)) || '').trim();
+  const catIn = (req.body && (req.body.category || req.body.cat)) || '';
+  if (!fileId) return res.status(400).json({ success:false, error:'Missing fileId' });
+
+  const rec = (documentsStore.files || {})[fileId];
+  if (!rec) return res.status(404).json({ success:false, error:'File not found' });
+  if (normalizeEmail(rec.ownerEmail || '') !== email) return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const ud = ensureUserDocs(email);
+  let destFolderId = folderIdIn;
+
+  if (!destFolderId) {
+    const month = monthIn;
+    const category = normalizeDocCat(catIn);
+    if (!isValidDocMonth(month)) return res.status(400).json({ success:false, error:'Invalid month (YYYY-MM)' });
+
+    // ensure smart folder exists (same logic as /api/docs/folders/ensure)
+    const key = smartFolderKey(month, category);
+    let fid = ud.smart && ud.smart[key];
+    if (!fid || !(ud.folders && ud.folders[fid])) {
+      fid = '';
+      try{
+        Object.keys(ud.folders||{}).forEach(x=>{
+          if (fid) return;
+          const f = ud.folders[x];
+          if (f && f.meta && f.meta.month === month && f.meta.category === category) fid = x;
+        });
+      }catch(_){ fid=''; }
+      if (!fid) {
+        fid = docFolderId();
+        ud.folders[fid] = {
+          name: `${month} • ${DOC_CATEGORIES[category] || DOC_CATEGORIES.other}`,
+          createdAt: new Date().toISOString(),
+          meta: { month, category, smart:true },
+          sharedWithAccountant: true
+        };
+      } else {
+        ud.folders[fid].meta = { ...(ud.folders[fid].meta||{}), month, category, smart:true };
+        if (typeof ud.folders[fid].sharedWithAccountant !== 'boolean') ud.folders[fid].sharedWithAccountant = true;
+      }
+      ud.smart = ud.smart || {};
+      ud.smart[key] = fid;
+      destFolderId = fid;
+    } else {
+      destFolderId = fid;
+    }
+  }
+
+  if (!ud.folders || !ud.folders[destFolderId]) return res.status(404).json({ success:false, error:'Folder not found' });
+  rec.folderId = destFolderId;
+  const f = ud.folders[destFolderId];
+  rec.month = (f && f.meta && f.meta.month) ? f.meta.month : '';
+  rec.category = (f && f.meta && f.meta.category) ? normalizeDocCat(f.meta.category) : '';
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true, file: rec });
+});
+
+
+
+// Bulk move files (client only)
+app.post('/api/docs/files/bulk-move', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const role = (u.role || 'freelance_business');
+  if (role === 'accountant') return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const idsIn = (req.body && (req.body.fileIds || req.body.ids)) || [];
+  const folderIdIn = String((req.body && (req.body.folderId || req.body.toFolderId)) || '').trim();
+  const monthIn = String((req.body && (req.body.month || req.body.period)) || '').trim();
+  const catIn = (req.body && (req.body.category || req.body.cat)) || '';
+
+  if (!Array.isArray(idsIn) || !idsIn.length) return res.status(400).json({ success:false, error:'Missing fileIds' });
+  const fileIds = idsIn.map(x=>String(x||'').trim()).filter(Boolean).slice(0, 120);
+  if (!fileIds.length) return res.status(400).json({ success:false, error:'Missing fileIds' });
+
+  // Validate ownership
+  for (const fid of fileIds){
+    const rec = (documentsStore.files || {})[fid];
+    if (!rec) return res.status(404).json({ success:false, error:'File not found' });
+    if (normalizeEmail(rec.ownerEmail || '') !== email) return res.status(403).json({ success:false, error:'Not allowed' });
+  }
+
+  const ud = ensureUserDocs(email);
+  let destFolderId = folderIdIn;
+
+  if (!destFolderId) {
+    const month = monthIn;
+    const category = normalizeDocCat(catIn);
+    if (!isValidDocMonth(month)) return res.status(400).json({ success:false, error:'Invalid month (YYYY-MM)' });
+
+    const key = smartFolderKey(month, category);
+    let fid = ud.smart && ud.smart[key];
+    if (!fid || !(ud.folders && ud.folders[fid])) {
+      fid = '';
+      try{
+        Object.keys(ud.folders||{}).forEach(x=>{
+          if (fid) return;
+          const f = ud.folders[x];
+          if (f && f.meta && f.meta.month === month && f.meta.category === category) fid = x;
+        });
+      }catch(_){ fid=''; }
+      if (!fid) {
+        fid = docFolderId();
+        ud.folders[fid] = {
+          name: `${month} • ${DOC_CATEGORIES[category] || DOC_CATEGORIES.other}`,
+          createdAt: new Date().toISOString(),
+          meta: { month, category, smart:true },
+          sharedWithAccountant: true
+        };
+      } else {
+        ud.folders[fid].meta = { ...(ud.folders[fid].meta||{}), month, category, smart:true };
+        if (typeof ud.folders[fid].sharedWithAccountant !== 'boolean') ud.folders[fid].sharedWithAccountant = true;
+      }
+      ud.smart = ud.smart || {};
+      ud.smart[key] = fid;
+      destFolderId = fid;
+    } else {
+      destFolderId = fid;
+    }
+  }
+
+  if (!ud.folders || !ud.folders[destFolderId]) return res.status(404).json({ success:false, error:'Folder not found' });
+  const f = ud.folders[destFolderId];
+  const month = (f && f.meta && f.meta.month) ? f.meta.month : '';
+  const category = (f && f.meta && f.meta.category) ? normalizeDocCat(f.meta.category) : '';
+
+  fileIds.forEach(fid=>{
+    const rec = (documentsStore.files || {})[fid];
+    if (!rec) return;
+    rec.folderId = destFolderId;
+    rec.month = month;
+    rec.category = category;
+  });
+
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true, moved: fileIds.length, folderId: destFolderId });
+});
+
+// Bulk delete files (client only)
+app.post('/api/docs/files/bulk-delete', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const role = (u.role || 'freelance_business');
+  if (role === 'accountant') return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const idsIn = (req.body && (req.body.fileIds || req.body.ids)) || [];
+  if (!Array.isArray(idsIn) || !idsIn.length) return res.status(400).json({ success:false, error:'Missing fileIds' });
+  const fileIds = idsIn.map(x=>String(x||'').trim()).filter(Boolean).slice(0, 200);
+  if (!fileIds.length) return res.status(400).json({ success:false, error:'Missing fileIds' });
+
+  // Validate ownership first
+  for (const fid of fileIds){
+    const rec = (documentsStore.files || {})[fid];
+    if (!rec) return res.status(404).json({ success:false, error:'File not found' });
+    if (normalizeEmail(rec.ownerEmail || '') !== email) return res.status(403).json({ success:false, error:'Not allowed' });
+  }
+
+  const ud = ensureUserDocs(email);
+
+  fileIds.forEach(fid=>{
+    const rec = (documentsStore.files || {})[fid];
+    if (!rec) return;
+    try{
+      const abs = path.isAbsolute(rec.filePath) ? rec.filePath : path.join(DATA_ROOT, rec.filePath);
+      if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    }catch(_){ }
+    delete (documentsStore.files || {})[fid];
+  });
+
+  ud.fileIds = (ud.fileIds || []).filter(fid=>!fileIds.includes(String(fid)));
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true, deleted: fileIds.length });
+});
+app.post('/api/docs/files/delete', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const role = (u.role || 'freelance_business');
+  if (role === 'accountant') return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const fileId = String((req.body && (req.body.fileId || req.body.id)) || '').trim();
+  if (!fileId) return res.status(400).json({ success:false, error:'Missing fileId' });
+  const rec = (documentsStore.files || {})[fileId];
+  if (!rec) return res.status(404).json({ success:false, error:'File not found' });
+  if (normalizeEmail(rec.ownerEmail || '') !== email) return res.status(403).json({ success:false, error:'Not allowed' });
+
+  // delete file from disk
+  try{
+    const abs = path.isAbsolute(rec.filePath) ? rec.filePath : path.join(DATA_ROOT, rec.filePath);
+    if (fs.existsSync(abs)) fs.unlinkSync(abs);
+  }catch(_){ }
+
+  // remove meta
+  delete (documentsStore.files || {})[fileId];
+  const ud = ensureUserDocs(email);
+  ud.fileIds = (ud.fileIds || []).filter(fid=>String(fid) !== String(fileId));
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+  return res.json({ success:true });
+});
+
+// Secure doc download (owner or linked accountant)
+app.get('/api/docs/file/:fileId', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const fid = String(req.params && req.params.fileId || '').trim();
+  const rec = (documentsStore.files || {})[fid];
+  if (!rec) return res.status(404).send('Not found');
+
+  const email = normalizeEmail(u.email || '');
+  const role = (u.role || 'freelance_business');
+  const owner = normalizeEmail(rec.ownerEmail || '');
+
+  let allowed = (email === owner);
+  if (!allowed && role === 'accountant') {
+    const key = linkKey(email, owner);
+    const link = (invitesStore.links || {})[key];
+    if (link && link.status === 'active') {
+      const udOwner = ensureUserDocs(owner);
+      const f = (udOwner.folders || {})[String(rec.folderId || '')];
+      if (isFolderShared({ id: String(rec.folderId || ''), ...(f || {}) })) allowed = true;
+    }
+  }
+  if (!allowed) return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const abs = path.isAbsolute(rec.filePath) ? rec.filePath : path.join(DATA_ROOT, rec.filePath);
+  if (!fs.existsSync(abs)) return res.status(404).send('File missing');
+  return res.download(abs, rec.fileName || 'document');
+});
+
+// Export vault docs for a month/category as ZIP (client only)
+app.get('/api/docs/export/month', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const role = (u.role || 'freelance_business');
+  if (role !== 'freelance_business') return res.status(403).send('Forbidden');
+
+  const email = normalizeEmail(u.email || '');
+  const month = String((req.query && req.query.month) || '').trim();
+  const category = String((req.query && req.query.category) || '').trim(); // optional
+
+  if (!/^[0-9]{4}-[0-9]{2}$/.test(month)) return res.status(400).send('Bad month');
+  const cat = category ? category.toLowerCase() : '';
+
+  const ud = ensureUserDocs(email);
+  const files = documentsStore.files || {};
+  const chosen = [];
+
+  Object.keys(files).forEach(fid=>{
+    const f = files[fid];
+    if (!f) return;
+    if (normalizeEmail(f.ownerEmail || '') !== email) return;
+    if (String(f.month || '') !== month) return;
+    if (cat && String(f.category || '').toLowerCase() !== cat) return;
+    const abs = path.isAbsolute(f.filePath) ? f.filePath : path.join(DATA_ROOT, f.filePath);
+    if (!fs.existsSync(abs)) return;
+    chosen.push({ fid, abs, name: String(f.fileName || f.name || 'document').slice(0, 180) });
+  });
+
+  if (!chosen.length) return res.status(404).send('No files for export');
+
+  const exportsDir = path.join(DATA_ROOT, 'exports');
+  try { fs.mkdirSync(exportsDir, { recursive:true }); } catch(e){}
+
+  const exportId = 'exp_' + Date.now().toString(36) + '_' + crypto.randomBytes(4).toString('hex');
+  const tmpDir = path.join(exportsDir, exportId);
+  const zipPath = path.join(exportsDir, `${exportId}.zip`);
+
+  try { fs.mkdirSync(tmpDir, { recursive:true }); } catch(e){
+    return res.status(500).send('Failed to prepare export');
+  }
+
+  // copy files into tmp dir (with stable names)
+  const used = new Set();
+  let i = 0;
+  for (const f of chosen){
+    i += 1;
+    let base = (f.name || 'document').replace(/[\r\n\t]/g,' ').trim();
+    base = base.replace(/[^\w\-. ()]+/g,'_').slice(0, 120) || 'document';
+    if (used.has(base)) base = `${i}_${base}`;
+    used.add(base);
+    const dst = path.join(tmpDir, base);
+    try { fs.copyFileSync(f.abs, dst); } catch(e){}
+  }
+
+  // zip via system zip (Render images usually have it)
+  try {
+    execFileSync('zip', ['-r', zipPath, '.'], { cwd: tmpDir, stdio:'ignore' });
+  } catch(e) {
+    try { execFileSync('tar', ['-czf', zipPath.replace(/\.zip$/i,'.tar.gz'), '.'], { cwd: tmpDir, stdio:'ignore' }); } catch(_e){}
+    // if zip failed, try tar.gz
+    const tgz = zipPath.replace(/\.zip$/i,'.tar.gz');
+    if (fs.existsSync(tgz)) {
+      res.download(tgz, `OneTapDay_${month}${cat ? '_' + cat : ''}.tar.gz`, ()=>{
+        try { fs.rmSync(tmpDir, { recursive:true, force:true }); } catch(e){}
+        try { fs.unlinkSync(tgz); } catch(e){}
+      });
+      return;
+    }
+    return res.status(500).send('Export failed');
+  }
+
+  return res.download(zipPath, `OneTapDay_${month}${cat ? '_' + cat : ''}.zip`, ()=>{
+    try { fs.rmSync(tmpDir, { recursive:true, force:true }); } catch(e){}
+    try { fs.unlinkSync(zipPath); } catch(e){}
+  });
+});
+
+// Export vault docs for a month as ZIP (accountant, shared docs only)
+app.get('/api/accountant/docs/export/month', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+
+  const accEmail = normalizeEmail(u.email || '');
+  const clientEmail = normalizeEmail(String((req.query && req.query.clientEmail) || '').trim());
+  const month = String((req.query && req.query.month) || '').trim();
+  const category = String((req.query && req.query.category) || '').trim(); // optional
+
+  if (!clientEmail) return res.status(400).send('Missing clientEmail');
+  if (!/^[0-9]{4}-[0-9]{2}$/.test(month)) return res.status(400).send('Bad month');
+
+  // must have an active accountant<->client link
+  const key = linkKey(accEmail, clientEmail);
+  const link = (invitesStore.links || {})[key];
+  if (!link) return res.status(403).send('No active link');
+  const linkStatus = String(link.status || '').toLowerCase();
+  if (linkStatus !== 'active' && linkStatus !== 'accepted') return res.status(403).send('No active link');
+
+  const cat = category ? normalizeDocCat(category) : '';
+
+  // allowed: only shared folders
+  const allowed = listDocsFor(clientEmail, { isAccountant:true, sharedOnly:true }).files || [];
+  const allowedIds = new Set(allowed.map(f=>f.id));
+
+  const files = documentsStore.files || {};
+  const chosen = [];
+  for (const fid of allowedIds){
+    const f = files[fid];
+    if (!f) continue;
+    if (normalizeEmail(f.ownerEmail || '') !== clientEmail) continue;
+    if (String(f.month || '') !== month) continue;
+    if (cat && String(normalizeDocCat(f.category)) !== cat) continue;
+    const abs = path.isAbsolute(f.filePath) ? f.filePath : path.join(DATA_ROOT, f.filePath);
+    if (!fs.existsSync(abs)) continue;
+    const fcat = normalizeDocCat(f.category);
+    chosen.push({
+      fid,
+      abs,
+      fileName: String(f.fileName || f.name || 'document').slice(0, 180),
+      cat: fcat,
+      catLabel: DOC_CATEGORIES[fcat] || DOC_CATEGORIES.other
+    });
+  }
+
+  if (!chosen.length) return res.status(404).send('No files for export');
+
+  const exportsDir = path.join(DATA_ROOT, 'exports');
+  try { fs.mkdirSync(exportsDir, { recursive:true }); } catch(e){}
+
+  const exportId = 'exp_acc_' + Date.now().toString(36) + '_' + crypto.randomBytes(4).toString('hex');
+  const tmpDir = path.join(exportsDir, exportId);
+  const zipPath = path.join(exportsDir, `${exportId}.zip`);
+
+  try { fs.mkdirSync(tmpDir, { recursive:true }); } catch(e){
+    return res.status(500).send('Failed to prepare export');
+  }
+
+  function safeSeg(s){
+    return String(s||'')
+      .replace(/[\r\n\t]/g,' ')
+      .replace(/[\\/]+/g,'_')
+      .replace(/[^\w\-. ()]+/g,'_')
+      .trim();
+  }
+
+  const used = new Set();
+  let i = 0;
+  for (const f of chosen){
+    i += 1;
+    const catFolder = (safeSeg(f.catLabel || f.cat || 'other').slice(0, 80) || 'other');
+    const dir = path.join(tmpDir, catFolder);
+    try { fs.mkdirSync(dir, { recursive:true }); } catch(e){}
+
+    let base = safeSeg(f.fileName).slice(0, 120) || 'document';
+    const key2 = catFolder + '/' + base;
+    if (used.has(key2)) base = `${i}_${base}`;
+    used.add(catFolder + '/' + base);
+    const dst = path.join(dir, base);
+    try { fs.copyFileSync(f.abs, dst); } catch(e){}
+  }
+
+  const safeClient = clientEmail.replace(/[^a-z0-9]+/gi,'_').slice(0, 40) || 'client';
+  const nameBase = `OneTapDay_${safeClient}_${month}${cat ? '_' + cat : ''}`;
+
+  try {
+    execFileSync('zip', ['-r', zipPath, '.'], { cwd: tmpDir, stdio:'ignore' });
+  } catch(e) {
+    try { execFileSync('tar', ['-czf', zipPath.replace(/\.zip$/i,'.tar.gz'), '.'], { cwd: tmpDir, stdio:'ignore' }); } catch(_e){}
+    const tgz = zipPath.replace(/\.zip$/i,'.tar.gz');
+    if (fs.existsSync(tgz)) {
+      res.download(tgz, `${nameBase}.tar.gz`, ()=>{
+        try { fs.rmSync(tmpDir, { recursive:true, force:true }); } catch(e){}
+        try { fs.unlinkSync(tgz); } catch(e){}
+      });
+      return;
+    }
+    return res.status(500).send('Export failed');
+  }
+
+  return res.download(zipPath, `${nameBase}.zip`, ()=>{
+    try { fs.rmSync(tmpDir, { recursive:true, force:true }); } catch(e){}
+    try { fs.unlinkSync(zipPath); } catch(e){}
+  });
+});
+
+
+
+// Accountant: list client vault docs (read-only)
+app.get('/api/accountant/docs', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+  const accEmail = normalizeEmail(u.email || '');
+  const clientEmail = normalizeEmail(String((req.query && req.query.clientEmail) || '').trim());
+  if (!clientEmail) return res.status(400).json({ success:false, error:'Missing clientEmail' });
+
+  const key = linkKey(accEmail, clientEmail);
+  const link = (invitesStore.links || {})[key];
+  if (!link || link.status !== 'active') return res.status(403).json({ success:false, error:'Client not active' });
+
+  return res.json({ success:true, ...listDocsFor(clientEmail, { sharedOnly:true }) });
+});
+function listClientsFor(accEmail){
+  const out = [];
+  const links = invitesStore.links || {};
+  Object.keys(links).forEach(k=>{
+    const it = links[k];
+    if (!it || it.accountantEmail !== accEmail) return;
+    out.push({
+      clientEmail: it.clientEmail,
+      clientName: it.clientName || '',
+      company: it.company || '',
+      status: it.status || 'pending',
+      createdAt: it.createdAt || null,
+      acceptedAt: it.acceptedAt || null
+    });
+  });
+  out.sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  return out;
+}
+
+// Accountant: list clients
+app.get('/api/accountant/clients', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+  const accEmail = normalizeEmail(u.email || '');
+  return res.json({ success:true, clients: listClientsFor(accEmail) });
+});
+
+// Accountant: add/invite client
+app.post('/api/accountant/clients/add', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+  const accEmail = normalizeEmail(u.email || '');
+  const clientEmail = normalizeEmail(req.body && (req.body.clientEmail || req.body.email || '') || '');
+  const clientName = String((req.body && (req.body.clientName || req.body.name || '')) || '').trim();
+  const company = String((req.body && (req.body.company || '')) || '').trim();
+
+  if (!clientEmail) return res.status(400).json({ success:false, error:'Missing clientEmail' });
+  if (clientEmail === accEmail) return res.status(400).json({ success:false, error:'Client email cannot be same as accountant' });
+
+  const key = linkKey(accEmail, clientEmail);
+  invitesStore.links = invitesStore.links || {};
+  const now = new Date().toISOString();
+
+  if (!invitesStore.links[key]) {
+    invitesStore.links[key] = { accountantEmail: accEmail, clientEmail, clientName, company, status:'pending', createdAt: now, acceptedAt: null };
+  } else {
+    // if previously removed/declined, revive to pending
+    invitesStore.links[key].status = 'pending';
+    invitesStore.links[key].clientName = clientName || invitesStore.links[key].clientName || '';
+    invitesStore.links[key].company = company || invitesStore.links[key].company || '';
+    invitesStore.links[key].createdAt = now;
+    invitesStore.links[key].acceptedAt = null;
+  }
+
+  saveJsonFile(INVITES_FILE, invitesStore);
+  return res.json({ success:true, clients: listClientsFor(accEmail) });
+});
+
+// Accountant: remove client link (soft)
+app.post('/api/accountant/clients/remove', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+  const accEmail = normalizeEmail(u.email || '');
+  const clientEmail = normalizeEmail(req.body && (req.body.clientEmail || req.body.email || '') || '');
+  if (!clientEmail) return res.status(400).json({ success:false, error:'Missing clientEmail' });
+
+  const key = linkKey(accEmail, clientEmail);
+  invitesStore.links = invitesStore.links || {};
+  if (invitesStore.links[key]) {
+    invitesStore.links[key].status = 'removed';
+    invitesStore.links[key].removedAt = new Date().toISOString();
+    saveJsonFile(INVITES_FILE, invitesStore);
+  }
+  return res.json({ success:true, clients: listClientsFor(accEmail) });
+});
+
+// Client: list invites
+app.get('/api/client/invites', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const clientEmail = normalizeEmail(u.email || '');
+  const links = invitesStore.links || {};
+  const out = [];
+  Object.keys(links).forEach(k=>{
+    const it = links[k];
+    if (!it || it.clientEmail !== clientEmail) return;
+    if (it.status !== 'pending') return;
+    out.push({ accountantEmail: it.accountantEmail, clientName: it.clientName || '', company: it.company || '', createdAt: it.createdAt || null });
+  });
+  out.sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  return res.json({ success:true, invites: out });
+});
+
+// Client: accept/decline invite
+app.post('/api/client/invites/respond', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const clientEmail = normalizeEmail(u.email || '');
+  const accountantEmail = normalizeEmail(req.body && (req.body.accountantEmail || req.body.email || '') || '');
+  const action = String((req.body && req.body.action) || '').toLowerCase();
+
+  if (!accountantEmail) return res.status(400).json({ success:false, error:'Missing accountantEmail' });
+  if (!['accept','decline'].includes(action)) return res.status(400).json({ success:false, error:'Invalid action' });
+
+  const key = linkKey(accountantEmail, clientEmail);
+  invitesStore.links = invitesStore.links || {};
+  if (!invitesStore.links[key]) return res.status(404).json({ success:false, error:'Invite not found' });
+
+  const it = invitesStore.links[key];
+  if (it.status !== 'pending') return res.status(409).json({ success:false, error:'Invite not pending' });
+
+  if (action === 'accept') {
+    it.status = 'active';
+    it.acceptedAt = new Date().toISOString();
+  } else {
+    it.status = 'declined';
+    it.declinedAt = new Date().toISOString();
+  }
+  saveJsonFile(INVITES_FILE, invitesStore);
+  return res.json({ success:true });
+});
+
+// Accountant: create document request (no uploads yet, just checklist)
+app.post('/api/accountant/requests/create', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+  const accEmail = normalizeEmail(u.email || '');
+  const clientEmail = normalizeEmail(req.body && (req.body.clientEmail || '') || '');
+  if (!clientEmail) return res.status(400).json({ success:false, error:'Missing clientEmail' });
+
+  const key = linkKey(accEmail, clientEmail);
+  const link = (invitesStore.links || {})[key];
+  if (!link || link.status !== 'active') return res.status(409).json({ success:false, error:'Client not active' });
+
+  const month = String((req.body && req.body.month) || '').trim(); // YYYY-MM
+  const items = req.body && req.body.items ? req.body.items : {};
+  const note = String((req.body && req.body.note) || '').trim();
+  const dueDateRaw = String((req.body && req.body.dueDate) || '').trim(); // optional: YYYY-MM-DD or ISO
+  let dueAt = '';
+  if (dueDateRaw) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dueDateRaw)) {
+      const dt = new Date(dueDateRaw + 'T23:59:59.999Z');
+      if (!isNaN(dt.getTime())) dueAt = dt.toISOString();
+    } else {
+      const dt = new Date(dueDateRaw);
+      if (!isNaN(dt.getTime())) dueAt = dt.toISOString();
+    }
+  }
+
+  const id = 'req_' + crypto.randomBytes(8).toString('hex');
+  const now = new Date().toISOString();
+  requestsStore.items = requestsStore.items || {};
+  requestsStore.items[id] = { id, accountantEmail: accEmail, clientEmail, month, dueAt, items, note, status:'open', createdAt: now, updatedAt: now };
+
+  saveJsonFile(REQUESTS_FILE, requestsStore);
+    // notify client
+  const dueMsg = dueAt ? ` (до ${dueAt.slice(0,10)})` : '';
+  addNotification(clientEmail, 'request_created', `Новый запрос документов от бухгалтера${dueMsg}`, { requestId: id, fromEmail: accEmail, clientEmail, accountantEmail: accEmail, dueAt });
+
+  return res.json({ success:true, requestId: id });
+});
+
+function listRequests(filterFn){
+  const items = requestsStore.items || {};
+  const out = [];
+  Object.keys(items).forEach(id=>{
+    const it = items[id];
+    if (!it) return;
+    if (filterFn && !filterFn(it)) return;
+    out.push(it);
+  });
+  out.sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  return out;
+}
+
+// Accountant: list requests
+app.get('/api/accountant/requests', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+  const accEmail = normalizeEmail(u.email || '');
+  const clientEmailQ = normalizeEmail(req.query && req.query.clientEmail || '');
+  const out = listRequests(it=> it.accountantEmail === accEmail && (!clientEmailQ || it.clientEmail === clientEmailQ));
+  return res.json({ success:true, requests: out });
+});
+
+// Accountant: decide on uploaded documents (approve/reject)
+app.post('/api/accountant/requests/decide', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+  const accEmail = normalizeEmail(u.email || '');
+  const requestId = String(req.body && req.body.requestId || '').trim();
+  const action = String(req.body && req.body.action || '').toLowerCase();
+  const note = String(req.body && req.body.note || '').trim();
+
+  if (!requestId) return res.status(400).json({ success:false, error:'Missing requestId' });
+  if (!['approve','reject'].includes(action)) return res.status(400).json({ success:false, error:'Invalid action' });
+
+  const it = (requestsStore.items || {})[requestId];
+  if (!it) return res.status(404).json({ success:false, error:'Request not found' });
+  if (normalizeEmail(it.accountantEmail || '') !== accEmail) return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const st = String(it.status || 'open');
+  if (st !== 'received') return res.status(409).json({ success:false, error:'Nothing to decide' });
+  if (action === 'reject' && !note) return res.status(400).json({ success:false, error:'Missing note' });
+
+  const now = new Date().toISOString();
+  it.status = (action === 'approve') ? 'approved' : 'rejected';
+  it.decision = action;
+  it.decisionNote = note;
+  it.decidedAt = now;
+  it.updatedAt = now;
+  requestsStore.items = requestsStore.items || {};
+  requestsStore.items[requestId] = it;
+  saveJsonFile(REQUESTS_FILE, requestsStore);
+
+  const m = it.month ? ` ${it.month}` : '';
+  if (action === 'approve') {
+    addNotification(it.clientEmail, 'request_approved', `Бухгалтер принял документы по запросу${m}`, { requestId, fromEmail: accEmail, clientEmail: it.clientEmail, accountantEmail: accEmail });
+  } else {
+    const short = note.slice(0, 160);
+    addNotification(it.clientEmail, 'request_rejected', `Бухгалтер отклонил документы по запросу${m}: ${short}`, { requestId, fromEmail: accEmail, clientEmail: it.clientEmail, accountantEmail: accEmail, note });
+  }
+
+  return res.json({ success:true });
+});
+
+// Accountant: send reminder to client
+app.post('/api/accountant/requests/remind', (req, res)=>{
+  const u = mustAccountant(req, res);
+  if (!u) return;
+  const accEmail = normalizeEmail(u.email || '');
+  const requestId = String(req.body && req.body.requestId || '').trim();
+  const custom = String(req.body && req.body.message || '').trim();
+
+  if (!requestId) return res.status(400).json({ success:false, error:'Missing requestId' });
+
+  const it = (requestsStore.items || {})[requestId];
+  if (!it) return res.status(404).json({ success:false, error:'Request not found' });
+  if (normalizeEmail(it.accountantEmail || '') !== accEmail) return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const st = String(it.status || 'open');
+  if (st === 'approved') return res.status(409).json({ success:false, error:'Request already approved' });
+
+  const now = new Date().toISOString();
+  it.lastRemindedAt = now;
+  it.updatedAt = now;
+  requestsStore.items = requestsStore.items || {};
+  requestsStore.items[requestId] = it;
+  saveJsonFile(REQUESTS_FILE, requestsStore);
+
+  const due = it.dueAt ? ` до ${String(it.dueAt).slice(0,10)}` : '';
+  const m = it.month ? ` ${it.month}` : '';
+  const msg = custom ? custom.slice(0, 220) : `Напоминание: отправьте документы по запросу${m}${due}.`;
+  addNotification(it.clientEmail, 'request_reminder', msg, { requestId, fromEmail: accEmail, clientEmail: it.clientEmail, accountantEmail: accEmail, dueAt: it.dueAt || '' });
+
+  return res.json({ success:true });
+});
+
+
+// Client: list requests
+app.get('/api/client/requests', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const clientEmail = normalizeEmail(u.email || '');
+  const out = listRequests(it=> it.clientEmail === clientEmail && (['open','received','rejected','approved'].includes(String(it.status||'open'))));
+  return res.json({ success:true, requests: out });
+});
+
+// Client: upload attachment for a request (jpg/png/pdf) — stored securely, served via /api/files/:requestId
+app.post('/api/client/requests/upload', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+
+  const clientEmail = normalizeEmail(u.email || '');
+  const requestId = String(req.body && req.body.requestId || '').trim();
+  const fileNameRaw = String(req.body && req.body.fileName || '').trim();
+  const dataUrl = String(req.body && req.body.dataUrl || '').trim();
+
+  if (!requestId) return res.status(400).json({ success:false, error:'Missing requestId' });
+  if (!fileNameRaw) return res.status(400).json({ success:false, error:'Missing fileName' });
+  if (!dataUrl.startsWith('data:') || dataUrl.indexOf('base64,') === -1) {
+    return res.status(400).json({ success:false, error:'Invalid dataUrl' });
+  }
+
+  // validate request ownership
+  const it = (requestsStore.items || {})[requestId];
+  if (!it) return res.status(404).json({ success:false, error:'Request not found' });
+  if (normalizeEmail(it.clientEmail || '') !== clientEmail) return res.status(403).json({ success:false, error:'Not allowed' });
+
+  // allow only open/received/rejected (approved is final)
+  const st = (it.status || 'open');
+  if (st !== 'open' && st !== 'received' && st !== 'rejected') return res.status(409).json({ success:false, error:'Request closed' });
+
+  // parse mime + base64
+  const head = dataUrl.slice(0, dataUrl.indexOf('base64,'));
+  const mimeMatch = head.match(/^data:([^;]+);/i);
+  const mime = (mimeMatch && mimeMatch[1]) ? String(mimeMatch[1]).toLowerCase() : '';
+  const ALLOW = ['image/jpeg','image/png','application/pdf'];
+  if (!ALLOW.includes(mime)) return res.status(415).json({ success:false, error:'Only jpg/png/pdf allowed' });
+
+  const b64 = dataUrl.slice(dataUrl.indexOf('base64,') + 7);
+  let buf;
+  try { buf = Buffer.from(b64, 'base64'); } catch(e) { return res.status(400).json({ success:false, error:'Bad base64' }); }
+
+  const MAX = 10 * 1024 * 1024; // 10MB
+  if (!buf || !buf.length) return res.status(400).json({ success:false, error:'Empty file' });
+  if (buf.length > MAX) return res.status(413).json({ success:false, error:'File too large (max 10MB)' });
+
+  const safeBase = fileNameRaw.replace(/[^\w.\-()]+/g,'_').slice(0, 120) || 'file';
+  const ext = (mime === 'application/pdf') ? '.pdf' : (mime === 'image/png') ? '.png' : '.jpg';
+  const fileName = safeBase.endsWith(ext) ? safeBase : (safeBase + ext);
+  const fileId = 'f_' + crypto.randomBytes(6).toString('hex') + '_' + Date.now().toString(36);
+  const relPath = `${requestId}_${fileId}${ext}`; // stored directly in secureUploadsDir
+  const absPath = path.resolve(secureUploadsDir, relPath);
+
+  // ensure stays within secureUploadsDir
+  const rootAbs = path.resolve(secureUploadsDir);
+  if (!absPath.startsWith(rootAbs)) return res.status(400).json({ success:false, error:'Bad path' });
+
+  try {
+    fs.writeFileSync(absPath, buf);
+  } catch(e) {
+    console.warn('[UPLOAD] write failed', e && e.message);
+    return res.status(500).json({ success:false, error:'Failed to store file' });
+  }
+
+  const now = new Date().toISOString();
+  it.status = 'received';
+  // new upload resets prior decision
+  it.decision = '';
+  it.decisionNote = '';
+  it.decidedAt = '';
+  it.files = Array.isArray(it.files) ? it.files : [];
+  const rec = {
+    id: fileId,
+    fileName,
+    fileMime: mime,
+    fileSize: buf.length,
+    filePath: relPath,
+    fileUrl: `/api/files/${requestId}/${fileId}`,
+    uploadedAt: now
+  };
+  it.files.push(rec);
+
+  // legacy fields (keep compatibility)
+  it.fileName = fileName;
+  it.fileMime = mime;
+  it.fileSize = buf.length;
+  it.filePath = relPath;
+  it.fileUrl = `/api/files/${requestId}`; // always points to latest
+  it.uploadedAt = now;
+  it.updatedAt = now;
+
+  requestsStore.items[requestId] = it;
+  saveJsonFile(REQUESTS_FILE, requestsStore);
+  // notify accountant
+  addNotification(it.accountantEmail, 'file_uploaded', `Клиент загрузил документ: ${rec.fileName}`, { requestId, fromEmail: it.clientEmail, clientEmail: it.clientEmail, accountantEmail: it.accountantEmail, fileId: rec.id, fileName: rec.fileName, fileUrl: rec.fileUrl, totalFiles: (Array.isArray(it.files)?it.files.length:1) });
+
+  return res.json({ success:true });
+});
+
+
+// Attach existing vault files to a request (copy into secureUploadsDir)
+app.post('/api/client/requests/attach-vault', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const clientEmail = normalizeEmail(u.email || '');
+  const requestId = String(req.body && req.body.requestId || '').trim();
+  const fileIds = (req.body && req.body.fileIds) ? req.body.fileIds : [];
+
+  if (!requestId) return res.status(400).json({ success:false, error:'Missing requestId' });
+  if (!Array.isArray(fileIds) || !fileIds.length) return res.status(400).json({ success:false, error:'Missing fileIds' });
+  if (fileIds.length > 20) return res.status(400).json({ success:false, error:'Too many files (max 20)' });
+
+  const it = (requestsStore.items || {})[requestId];
+  if (!it) return res.status(404).json({ success:false, error:'Request not found' });
+  if (normalizeEmail(it.clientEmail || '') !== clientEmail) return res.status(403).json({ success:false, error:'Not allowed' });
+
+  const st = (it.status || 'open');
+  if (st !== 'open' && st !== 'received' && st !== 'rejected') return res.status(409).json({ success:false, error:'Request closed' });
+
+  const docs = documentsStore.files || {};
+  const now = new Date().toISOString();
+  it.files = Array.isArray(it.files) ? it.files : [];
+
+  const attached = [];
+  for (const fid of fileIds){
+    const id = String(fid || '').trim();
+    if (!id) continue;
+    const src = docs[id];
+    if (!src) continue;
+    if (normalizeEmail(src.ownerEmail || '') !== clientEmail) continue;
+
+    const srcRel = String(src.filePath || '').trim();
+    const srcAbs = path.isAbsolute(srcRel) ? srcRel : path.join(DATA_ROOT, srcRel);
+    if (!fs.existsSync(srcAbs)) continue;
+
+    const mime = String(src.mime || '').toLowerCase();
+    const ALLOW = ['image/jpeg','image/png','application/pdf'];
+    const safeMime = ALLOW.includes(mime) ? mime : '';
+    const ext = (safeMime === 'application/pdf') ? '.pdf' : (safeMime === 'image/png') ? '.png' : '.jpg';
+
+    const fileId = 'f_' + crypto.randomBytes(6).toString('hex') + '_' + Date.now().toString(36);
+    const relPath = `${requestId}_${fileId}${ext}`;
+    const absPath = path.resolve(secureUploadsDir, relPath);
+    const rootAbs = path.resolve(secureUploadsDir);
+    if (!absPath.startsWith(rootAbs)) continue;
+
+    try {
+      fs.copyFileSync(srcAbs, absPath);
+    } catch(e){
+      console.warn('[ATTACH] copy failed', e && e.message ? e.message : e);
+      continue;
+    }
+
+    const fileNameRaw = String(src.name || src.fileName || ('document' + ext)).slice(0, 180);
+    const fileName = fileNameRaw.toLowerCase().endsWith(ext) ? fileNameRaw : (fileNameRaw + ext);
+    const size = Number(src.size || 0) || (fs.existsSync(absPath) ? fs.statSync(absPath).size : 0);
+
+    const rec = { id: fileId, fileName, fileMime: safeMime || mime || '', fileSize: size, filePath: relPath, fileUrl: `/api/files/${requestId}/${fileId}`, uploadedAt: now };
+    it.files.push(rec);
+    attached.push(rec);
+  }
+
+  if (!attached.length) return res.status(400).json({ success:false, error:'No files attached (permission or missing files)' });
+
+  it.status = 'received';
+  it.decision = '';
+  it.decisionNote = '';
+  it.decidedAt = '';
+  it.fileName = attached[attached.length - 1].fileName;
+  it.fileMime = attached[attached.length - 1].fileMime;
+  it.fileSize = attached[attached.length - 1].fileSize;
+  it.filePath = attached[attached.length - 1].filePath;
+  it.fileUrl = `/api/files/${requestId}`;
+  it.uploadedAt = now;
+  it.updatedAt = now;
+
+  requestsStore.items[requestId] = it;
+  saveJsonFile(REQUESTS_FILE, requestsStore);
+
+  addNotification(it.accountantEmail, 'file_uploaded', `Клиент прикрепил из “Мои документы”: ${attached.length} файл(ов)`, { requestId, fromEmail: it.clientEmail, clientEmail: it.clientEmail, accountantEmail: it.accountantEmail, attachedCount: attached.length });
+
+  return res.json({ success:true, attachedCount: attached.length });
+});
+
+
+// Secure file access (client or accountant only)
+
+// Serve a specific file attached to a request (multi-file)
+app.get('/api/files/:requestId/:fileId', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const rid = String(req.params && req.params.requestId || '').trim();
+  const fileId = String(req.params && req.params.fileId || '').trim();
+  const it = (requestsStore.items || {})[rid];
+  if (!it) return res.status(404).send('Not found');
+
+  const email = normalizeEmail(u.email || '');
+  const isClient = normalizeEmail(it.clientEmail || '') === email;
+  const isAccountant = normalizeEmail(it.accountantEmail || '') === email;
+  if (!isClient && !isAccountant) return res.status(403).send('Forbidden');
+
+  let rec = null;
+  if (Array.isArray(it.files) && it.files.length) {
+    rec = it.files.find(f=> String(f && f.id) === fileId) || null;
+  }
+  if (!rec) return res.status(404).send('File not found');
+
+  const rel = String(rec.filePath || '').trim();
+  if (!rel) return res.status(404).send('No file');
+
+  const abs = path.resolve(secureUploadsDir, rel);
+  // Ensure within secureUploadsDir
+  if (!abs.startsWith(path.resolve(secureUploadsDir))) return res.status(400).send('Bad path');
+  if (!fs.existsSync(abs)) return res.status(404).send('Missing');
+
+  return res.sendFile(abs);
+});
+
+app.get('/api/files/:requestId', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const rid = String(req.params && req.params.requestId || '').trim();
+  const it = (requestsStore.items || {})[rid];
+  if (!it) return res.status(404).send('Not found');
+
+  const email = normalizeEmail(u.email || '');
+  const isClient = normalizeEmail(it.clientEmail || '') === email;
+  const isAccountant = normalizeEmail(it.accountantEmail || '') === email;
+  if (!isClient && !isAccountant) return res.status(403).send('Forbidden');
+
+  const latest = (Array.isArray(it.files) && it.files.length) ? it.files[it.files.length - 1] : null;
+  const rel = String((latest && latest.filePath) || it.filePath || '').trim();
+  if (!rel) return res.status(404).send('No file');
+
+  const abs = path.resolve(secureUploadsDir, rel);
+  const rootAbs = path.resolve(secureUploadsDir);
+  if (!abs.startsWith(rootAbs)) return res.status(400).send('Bad path');
+  if (!fs.existsSync(abs)) return res.status(404).send('Missing');
+
+  // send inline if possible
+  return res.sendFile(abs);
+});
+
+
 
 
 // get user by email (used by frontend)
@@ -680,14 +2059,12 @@ app.post('/create-checkout-session', async (req, res) => {
   try {
     expireStatuses(user);
 
-    user.role = normalizeRole(user.role);
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'subscription',
      line_items: [
   {
-    price: (user.role === 'accountant' && STRIPE_PRICE_ID_ACCOUNTANT ? STRIPE_PRICE_ID_ACCOUNTANT : STRIPE_PRICE_ID),
+    price: STRIPE_PRICE_ID,
     quantity: 1
   }
 ],

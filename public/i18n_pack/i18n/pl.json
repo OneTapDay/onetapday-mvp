@@ -269,7 +269,13 @@
     "btn_start_demo": "Uruchom demo (24h)",
     "btn_pay_sub": "Opłać subskrypcję",
     "btn_end_demo": "Zakończ demo",
-    "sub_hint": "Płatności tylko przez ustawienia. Stripe-link wkładasz do localStorage."
+    "sub_hint": "Płatności tylko przez ustawienia. Stripe-link wkładasz do localStorage.",
+    "clients_title": "Klienci",
+    "clients_desc": "Każdy klient = osobny zestaw danych. W Trial do 3 klientów.",
+    "btn_add_client": "+ Klient",
+    "btn_remove_client": "Usuń",
+    "clients_hint_trial": "Trial: {n}/3 klientów.",
+    "clients_hint_pro": "PRO: bez limitu klientów."
   },
   "buttons": {
     "sync": "Synchronizacja",

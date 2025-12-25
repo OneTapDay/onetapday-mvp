@@ -1,0 +1,514 @@
+/* OneTapDay Premium UI Layer
+   цель: сделать "дороже" без переписывания логики
+   включается классом: <body class="premium-ui">
+   v2025-12-23
+*/
+
+:root{
+  /* keep your canonical accent */
+  --premium-accent: var(--accent, #47b500);
+  --premium-accent2: #7CFF2E;
+  --premium-bg0: #070A0F;
+  --premium-bg1: #0B1020;
+  --premium-stroke: rgba(255,255,255,.10);
+  --premium-cardA: rgba(255,255,255,.085);
+  --premium-cardB: rgba(255,255,255,.055);
+  --premium-text: var(--text, #EAF0FF);
+  --premium-muted: rgba(234,240,255,.70);
+}
+
+body.premium-ui{
+  background:
+    radial-gradient(1200px 700px at 15% 0%, rgba(71,181,0,.18), transparent 55%),
+    radial-gradient(900px 600px at 95% 10%, rgba(124,255,46,.10), transparent 55%),
+    linear-gradient(180deg, var(--premium-bg0), var(--premium-bg1));
+  color: var(--premium-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+body.premium-ui .wrap{
+  max-width: 560px;
+  padding: 18px 14px 44px;
+}
+
+body.premium-ui .card,
+body.premium-ui .trendCard{
+  background: linear-gradient(180deg, var(--premium-cardA), var(--premium-cardB)) !important;
+  border: 1px solid var(--premium-stroke) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 14px 44px rgba(0,0,0,.42) !important;
+  backdrop-filter: blur(10px);
+}
+
+body.premium-ui .homeScreen{
+  padding: 22px 14px 34px;
+}
+
+body.premium-ui .homeLogo{
+  font-size: 30px;
+  letter-spacing: -0.02em;
+  text-shadow: 0 10px 28px rgba(71,181,0,.18);
+}
+
+body.premium-ui .homeSub{
+  color: var(--premium-muted);
+  font-size: 13px;
+  margin-bottom: 18px;
+}
+
+body.premium-ui .homeGrid{
+  gap: 14px;
+}
+
+body.premium-ui .homeTile{
+  background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.04)) !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 14px 40px rgba(0,0,0,.40) !important;
+  transition: transform .12s ease, filter .12s ease, border-color .12s ease;
+}
+
+body.premium-ui .homeTile:active{
+  transform: scale(.985);
+  border-color: rgba(71,181,0,.55) !important;
+  filter: brightness(1.03);
+}
+
+body.premium-ui .homeTileTitle{
+  color: var(--premium-text) !important;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+body.premium-ui .homeTileDesc{
+  color: var(--premium-muted) !important;
+  font-size: 11.5px;
+}
+
+body.premium-ui .trendHeader{
+  color: var(--premium-muted);
+}
+
+body.premium-ui .trendChip{
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.06);
+}
+
+body.premium-ui .kpi{
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+body.premium-ui .amt-pos,
+body.premium-ui .amt-neg{
+  font-variant-numeric: tabular-nums;
+}
+
+body.premium-ui .tab{
+  border-radius: 14px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+}
+
+body.premium-ui .tab.active{
+  background: linear-gradient(180deg, var(--premium-accent2), var(--premium-accent));
+  color: #071108;
+  border-color: rgba(71,181,0,.55);
+}
+
+body.premium-ui input[type=file],
+body.premium-ui input[type=text],
+body.premium-ui input[type=number],
+body.premium-ui input[type=email],
+body.premium-ui input[type=password],
+body.premium-ui select{
+  border-radius: 14px !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  background: rgba(0,0,0,.28) !important;
+}
+
+body.premium-ui input:focus,
+body.premium-ui select:focus{
+  outline: none;
+  border-color: rgba(71,181,0,.55) !important;
+  box-shadow: 0 0 0 4px rgba(71,181,0,.12);
+}
+
+body.premium-ui .btn{
+  border-radius: 16px;
+  padding: 12px 14px;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  box-shadow: 0 12px 28px rgba(71,181,0,.16);
+}
+
+body.premium-ui .btn.secondary{
+  box-shadow: 0 12px 28px rgba(0,0,0,.28);
+  background: rgba(255,255,255,.06) !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+}
+
+body.premium-ui .btn.ghost{
+  border: 1px dashed rgba(255,255,255,.18) !important;
+  background: rgba(255,255,255,.03) !important;
+}
+
+body.premium-ui table th{
+  color: rgba(234,240,255,.60);
+}
+
+body.premium-ui th, body.premium-ui td{
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+
+body.premium-ui .pill{
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+}
+
+/* ===========================
+   Premium Cash (Kasa) screen
+   цель: история сверху, 3 кнопки снизу (как у Qalta по ощущению)
+   =========================== */
+
+.premium-ui #kasa{
+  padding-bottom: 120px; /* место под нижнюю панель */
+}
+
+.premium-ui #kasa .cashTop{
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  gap: 14px;
+  margin: 6px 0 12px 0;
+}
+
+.premium-ui #kasa .cashTitle{
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  margin:0;
+}
+
+.premium-ui #kasa .cashHistoryCard{
+  border-radius: var(--premium-r20);
+  background: linear-gradient(180deg, rgba(255,255,255,.085), rgba(255,255,255,.06));
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: var(--premium-shadow1);
+  padding: 14px;
+}
+
+.premium-ui #kasaHistoryList{
+  display:flex;
+  flex-direction:column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.premium-ui .cash-item{
+  display:flex;
+  gap: 14px;
+  align-items:flex-start;
+  justify-content:center;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.20);
+}
+
+.premium-ui .cash-item-main{
+  min-width: 0;
+  flex: 1;
+}
+
+.premium-ui .cash-item-top{
+  display:flex;
+  flex-wrap:wrap;
+  gap: 8px;
+  align-items:center;
+  margin-bottom: 6px;
+}
+
+.premium-ui .cash-item-date{
+  color: rgba(234,240,255,.70);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.premium-ui .cash-item-pill{
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(234,240,255,.90);
+}
+
+.premium-ui .cash-item-pill.ghost{
+  color: rgba(234,240,255,.75);
+  background: rgba(255,255,255,.04);
+}
+
+.premium-ui .cash-item-note{
+  color: rgba(234,240,255,.85);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow:hidden;
+  text-overflow: ellipsis;
+  display:-webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.premium-ui .cash-item-note-muted{
+  color: rgba(234,240,255,.55);
+}
+
+.premium-ui .cash-item-side{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.premium-ui .cash-item-amount{
+  font-size: 18px;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.premium-ui .cash-item-actions{
+  display:flex;
+  gap: 8px;
+}
+
+.premium-ui .cash-icon-btn{
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  color: rgba(234,240,255,.90);
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  transition: transform .14s ease, background .14s ease, filter .14s ease;
+  user-select:none;
+}
+.premium-ui .cash-icon-btn:active{ transform: scale(.98); }
+.premium-ui .cash-icon-btn:hover{ background: rgba(255,255,255,.085); }
+
+.premium-ui #kasaTable{
+  display:none; /* таблица остаётся как fallback, но UI ведём через список */
+}
+
+/* Нижняя панель действий */
+.premium-ui #kasa .cashActions{
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  width: min(520px, calc(100% - 24px));
+  display:none;
+  align-items:center;
+  justify-content:center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.35);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--premium-shadow2);
+  z-index: 999;
+}
+
+.premium-ui #kasa.active .cashActions{ display:flex; }
+
+.premium-ui .cashActionBtn{
+  flex: 1;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  border-radius: 18px;
+  padding: 10px 12px;
+  color: rgba(234,240,255,.92);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap: 10px;
+  font-weight: 800;
+  transition: transform .14s ease, background .14s ease;
+}
+.premium-ui .cashActionBtn:active{ transform: scale(.98); }
+.premium-ui .cashActionBtn:hover{ background: rgba(255,255,255,.085); }
+
+.premium-ui .cashActionBtn .lbl{
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(234,240,255,.80);
+}
+
+.premium-ui .cashActionMain{
+  width: 56px;
+  height: 56px;
+  border-radius: 20px;
+  border: 0;
+  background: linear-gradient(180deg, var(--premium-accent2), var(--premium-accent));
+  color: #071108;
+  font-size: 30px;
+  font-weight: 900;
+  cursor:pointer;
+  box-shadow: 0 10px 30px rgba(71,181,0,.25);
+  transition: transform .14s ease, filter .14s ease;
+}
+.premium-ui .cashActionMain:active{ transform: scale(.98); }
+.premium-ui .cashActionMain:hover{ filter: brightness(1.03); }
+
+/* Иконки (камера/голос) как круглые кнопки */
+.premium-ui .cashActionIcon,
+.premium-ui .cashActionVoice{
+  width: 52px;
+  height: 52px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  color: rgba(234,240,255,.92);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transition: transform .14s ease, background .14s ease, filter .14s ease;
+  user-select:none;
+}
+.premium-ui .cashActionIcon:active,
+.premium-ui .cashActionVoice:active{ transform: scale(.98); }
+.premium-ui .cashActionIcon:hover,
+.premium-ui .cashActionVoice:hover{ background: rgba(255,255,255,.085); }
+
+.premium-ui .cashActionVoice{
+  background: rgba(0,0,0,.42);
+  border: 1px solid rgba(255,255,255,.16);
+}
+
+/* Волна (анимация только в режиме listen) */
+.premium-ui .voiceWave{
+  width: 28px;
+  height: 18px;
+  display:flex;
+  gap: 2px;
+  align-items:center;
+  justify-content:center;
+}
+.premium-ui .voiceWave i{
+  width: 2px;
+  height: 8px;
+  background: rgba(234,240,255,.92);
+  border-radius: 2px;
+  opacity: .9;
+}
+.premium-ui #micBtn.on .voiceWave i{
+  animation: otdWave .9s infinite ease-in-out;
+}
+.premium-ui #micBtn.on .voiceWave i:nth-child(1){ animation-delay: 0.00s; }
+.premium-ui #micBtn.on .voiceWave i:nth-child(2){ animation-delay: 0.08s; }
+.premium-ui #micBtn.on .voiceWave i:nth-child(3){ animation-delay: 0.16s; }
+.premium-ui #micBtn.on .voiceWave i:nth-child(4){ animation-delay: 0.24s; }
+.premium-ui #micBtn.on .voiceWave i:nth-child(5){ animation-delay: 0.16s; }
+.premium-ui #micBtn.on .voiceWave i:nth-child(6){ animation-delay: 0.08s; }
+.premium-ui #micBtn.on .voiceWave i:nth-child(7){ animation-delay: 0.00s; }
+
+@keyframes otdWave{
+  0%,100%{ height: 6px; opacity:.55; }
+  50%{ height: 18px; opacity: 1; }
+}
+
+/* Превью чека */
+.premium-ui .cash-receipt-overlay{
+  align-items:center;
+  padding: 16px;
+}
+.premium-ui .cash-receipt{
+  width: min(520px, 100%);
+  max-height: 82vh;
+  overflow:auto;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(255,255,255,.085), rgba(255,255,255,.06));
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: var(--premium-shadow2);
+}
+
+/* Модалка-боттомшит для добавления */
+.premium-ui .cash-sheet-overlay{
+  align-items:flex-end;
+  padding: 16px;
+}
+
+.premium-ui .cash-sheet{
+  width: min(520px, 100%);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(255,255,255,.085), rgba(255,255,255,.06));
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: var(--premium-shadow2);
+}
+
+.premium-ui .cash-sheet .sheet-head{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.premium-ui .cash-sheet .sheet-title{
+  font-size: 16px;
+  font-weight: 850;
+  margin:0;
+}
+
+.premium-ui .cash-kind{
+  display:flex;
+  gap: 8px;
+  margin: 10px 0 12px 0;
+}
+
+.premium-ui .cash-kind button{
+  flex:1;
+  border-radius: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  color: rgba(234,240,255,.92);
+  font-weight: 850;
+  cursor:pointer;
+  transition: background .14s ease, transform .14s ease;
+}
+.premium-ui .cash-kind button:active{ transform: scale(.99); }
+.premium-ui .cash-kind button.active{
+  border-color: rgba(71,181,0,.55);
+  background: rgba(71,181,0,.14);
+}
+
+.premium-ui .cash-sheet .sheet-grid{
+  display:flex;
+  flex-direction:column;
+  gap: 10px;
+}
+
+.premium-ui .cash-sheet .sheet-row{
+  display:flex;
+  gap: 10px;
+}
+
+.premium-ui .cash-sheet .sheet-row > *{ flex:1; }
+
+.premium-ui .cash-photo-status{
+  font-size: 12px;
+  color: rgba(234,240,255,.70);
+}

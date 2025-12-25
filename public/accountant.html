@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OneTapDay • Accountant</title>
+  <link rel="stylesheet" href="/css/scrollbar-premium.css">
+
+  <style>
+    :root{
+      --bg:#0b0e10;
+      --card:rgba(255,255,255,.04);
+      --line:rgba(255,255,255,.10);
+      --txt:rgba(255,255,255,.92);
+      --mut:rgba(255,255,255,.65);
+      --accent:#47b500;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background:
+        radial-gradient(900px 600px at 15% 0%, rgba(71,181,0,.22), transparent 60%),
+        radial-gradient(900px 600px at 90% 10%, rgba(71,181,0,.12), transparent 65%),
+        var(--bg);
+      color:var(--txt);
+    }
+    .wrap{max-width:1180px;margin:0 auto;padding:18px 14px 40px}
+    .top{
+      display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+      margin-bottom:14px;
+    }
+    .brand{display:flex;align-items:center;gap:10px;font-weight:900;letter-spacing:.2px}
+    .badge{
+      font-size:11px;
+      padding:4px 8px;
+      border-radius:999px;
+      background:rgba(71,181,0,.15);
+      border:1px solid rgba(71,181,0,.45);
+      color:rgba(255,255,255,.92);
+      font-weight:800;
+    }
+    .btn{
+      background:var(--accent);
+      color:#071108;
+      border:none;
+      border-radius:12px;
+      padding:10px 12px;
+      font-weight:900;
+      cursor:pointer;
+    }
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .btn.ghost{
+      background:transparent;
+      color:var(--txt);
+      border:1px solid var(--line);
+      font-weight:800;
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap:12px;
+    }
+    @media (max-width: 900px){ .grid{grid-template-columns:1fr;} }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:14px;
+      backdrop-filter: blur(6px);
+    }
+    .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .row.between{justify-content:space-between}
+    h2{margin:0;font-size:16px}
+    .muted{color:var(--mut);font-size:12px;line-height:1.4}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,.08);font-size:13px;text-align:left;vertical-align:top}
+    th{font-size:11px;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:.6px}
+    tr.sel{background:rgba(71,181,0,.08)}
+    .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 8px;font-size:11px;border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.85)}
+    .pill.pending{border-color:rgba(255,255,255,.18)}
+    .pill.active{border-color:rgba(71,181,0,.55)}
+    .pill.declined,.pill.removed{opacity:.7}
+    .smallBtn{
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+      color: rgba(255,255,255,.92);
+      font-weight:900;
+      cursor:pointer;
+      font-size:12.5px;
+      letter-spacing:-.01em;
+      box-shadow: 0 12px 28px rgba(0,0,0,.40), inset 0 1px 0 rgba(255,255,255,.08);
+      transition: transform .08s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease, opacity .2s ease;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .smallBtn:hover{
+      border-color: rgba(255,255,255,.22);
+      box-shadow: 0 16px 36px rgba(0,0,0,.46), 0 0 0 4px rgba(71,181,0,.10), inset 0 1px 0 rgba(255,255,255,.10);
+    }
+    .smallBtn:active{
+      transform: translateY(1px) scale(.99);
+      box-shadow: 0 10px 24px rgba(0,0,0,.46), inset 0 1px 0 rgba(255,255,255,.06);
+    }
+    .smallBtn:disabled{
+      opacity:.42;
+      cursor:not-allowed;
+      filter:saturate(.7);
+      box-shadow:none;
+    }
+    .smallBtn.primary{
+      background: linear-gradient(180deg, rgba(71,181,0,.95), rgba(40,110,0,.90));
+      border-color: rgba(124,255,46,.35);
+      color:#071108;
+      box-shadow: 0 16px 40px rgba(71,181,0,.22);
+    }
+    .smallBtn.primary:hover{
+      box-shadow: 0 18px 46px rgba(71,181,0,.28), 0 0 0 4px rgba(71,181,0,.12);
+    }
+    .smallBtn.success{
+      background: linear-gradient(180deg, rgba(71,181,0,.22), rgba(71,181,0,.08));
+      border-color: rgba(71,181,0,.28);
+      color: rgba(220,255,220,.95);
+    }
+    .smallBtn.ghost{
+      background: rgba(255,255,255,.03);
+      border-color: rgba(255,255,255,.10);
+      box-shadow:none;
+    }
+    .smallBtn.danger{
+      background: linear-gradient(180deg, rgba(255,90,90,.22), rgba(255,90,90,.10));
+      border-color: rgba(255,90,90,.28);
+      color: rgba(255,220,220,.95);
+    }
+    .smallBtn.danger:hover{
+      border-color: rgba(255,90,90,.40);
+      box-shadow: 0 16px 36px rgba(0,0,0,.46), 0 0 0 4px rgba(255,90,90,.10);
+    }
+    .hintBox{
+      margin-top:10px;padding:10px;border-radius:14px;border:1px dashed rgba(255,255,255,.16);color:rgba(255,255,255,.75);font-size:12px;
+    }
+
+    /* Modals */
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:14px;z-index:9999}
+    .modal{width:min(520px, 96vw);background:#0f1214;border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:14px;box-shadow:0 18px 70px rgba(0,0,0,.55)}
+    .field{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+    label{font-size:11px;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:.6px}
+    input,textarea{
+      width:100%;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.14);
+      background:#0b0e10;
+      color:var(--txt);
+      outline:none;
+      font-size:13px;
+    }
+    textarea{min-height:90px;resize:vertical}
+    .err{color:rgba(255,140,140,.95);font-size:12px;margin-top:8px;display:none}
+    .ok{color:rgba(170,255,170,.95);font-size:12px;margin-top:8px;display:none}
+    .checkRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+    .check{display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:8px 10px;background:rgba(255,255,255,.03)}
+    .check input{width:auto}
+  
+
+    /* === OneTapDay shared background (copied from app.html) === */
+    :root{
+      --accent:#47b500;--bg:#0d0f10;--card:#15181a;--muted:#9aa3a9;--text:#e6edf3;
+      --danger:#ff7070;--warn:#f4d06f;--pos:#a8e8c7;--neg:#ff8a8a
+    
+      --txt: var(--text);
+      --mut: var(--muted);
+    }
+
+    html, body{
+    background:#050708;
+    color: var(--text);
+  }
+
+  
+    
+
+  body{
+    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    position:relative;
+    min-height:100vh;
+    background:
+      radial-gradient(1200px 800px at 10% 0%, rgba(71,181,0,0.20), transparent 60%),
+      radial-gradient(900px 700px at 90% 100%, rgba(71,181,0,0.14), transparent 62%),
+      radial-gradient(700px 600px at 50% 40%, rgba(71,181,0,0.06), transparent 65%),
+      linear-gradient(180deg, rgba(5,7,8,0.00) 0%, rgba(5,7,8,0.20) 55%, rgba(5,7,8,0.00) 100%),
+      #050708;
+    background-attachment:fixed;
+    color: var(--text);
+  }
+
+  
+    body::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:0;
+    background-image:url('data:image/svg+xml,%3Csvg%20xmlns%3D%22http://www.w3.org/2000/svg%22%20viewBox%3D%220%200%202600%201500%22%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%2347b500%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M-115.0%2080.1%20L115.0%2080.1%20L0.0%20-80.1%20Z%22%20transform%3D%22translate%28546.2%201180.6%29%20rotate%28258.6%29%22%20stroke-width%3D%221.11%22%20stroke-opacity%3D%220.222%22/%3E%3Cpath%20d%3D%22M-70.2%2041.0%20L70.2%2041.0%20L0.0%20-41.0%20Z%22%20transform%3D%22translate%281258.8%20396.6%29%20rotate%28129.2%29%22%20stroke-width%3D%221.49%22%20stroke-opacity%3D%220.137%22/%3E%3Cpath%20d%3D%22M-99.8%2066.0%20L99.8%2066.0%20L0.0%20-66.0%20Z%22%20transform%3D%22translate%281763.1%201138.9%29%20rotate%2840.0%29%22%20stroke-width%3D%221.02%22%20stroke-opacity%3D%220.217%22/%3E%3Cpath%20d%3D%22M-82.2%2072.3%20L82.2%2072.3%20L0.0%20-72.3%20Z%22%20transform%3D%22translate%281829.3%20903.0%29%20rotate%28262.8%29%22%20stroke-width%3D%221.30%22%20stroke-opacity%3D%220.283%22/%3E%3Cpath%20d%3D%22M-78.9%2062.4%20L78.9%2062.4%20L0.0%20-62.4%20Z%22%20transform%3D%22translate%282348.4%20457.6%29%20rotate%28109.5%29%22%20stroke-width%3D%221.07%22%20stroke-opacity%3D%220.274%22/%3E%3Cpath%20d%3D%22M-99.7%2056.9%20L99.7%2056.9%20L0.0%20-56.9%20Z%22%20transform%3D%22translate%282232.0%201621.2%29%20rotate%2874.3%29%22%20stroke-width%3D%221.44%22%20stroke-opacity%3D%220.251%22/%3E%3Cpath%20d%3D%22M-43.1%2031.4%20L43.1%2031.4%20L0.0%20-31.4%20Z%22%20transform%3D%22translate%282612.3%20-119.0%29%20rotate%28355.8%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.155%22/%3E%3Cpath%20d%3D%22M-58.7%2041.9%20L58.7%2041.9%20L0.0%20-41.9%20Z%22%20transform%3D%22translate%281760.8%20995.9%29%20rotate%28294.7%29%22%20stroke-width%3D%221.55%22%20stroke-opacity%3D%220.296%22/%3E%3Cpath%20d%3D%22M-82.5%2068.3%20L82.5%2068.3%20L0.0%20-68.3%20Z%22%20transform%3D%22translate%281549.7%201035.2%29%20rotate%2857.1%29%22%20stroke-width%3D%220.91%22%20stroke-opacity%3D%220.185%22/%3E%3Cpath%20d%3D%22M-117.8%2070.9%20L117.8%2070.9%20L0.0%20-70.9%20Z%22%20transform%3D%22translate%281295.0%201410.2%29%20rotate%2849.8%29%22%20stroke-width%3D%221.17%22%20stroke-opacity%3D%220.152%22/%3E%3Cpath%20d%3D%22M-61.5%2037.7%20L61.5%2037.7%20L0.0%20-37.7%20Z%22%20transform%3D%22translate%28565.4%20-140.0%29%20rotate%28283.6%29%22%20stroke-width%3D%220.91%22%20stroke-opacity%3D%220.168%22/%3E%3Cpath%20d%3D%22M-115.0%2088.8%20L115.0%2088.8%20L0.0%20-88.8%20Z%22%20transform%3D%22translate%281006.5%20803.6%29%20rotate%28155.2%29%22%20stroke-width%3D%221.46%22%20stroke-opacity%3D%220.134%22/%3E%3Cpath%20d%3D%22M-59.7%2034.7%20L59.7%2034.7%20L0.0%20-34.7%20Z%22%20transform%3D%22translate%281300.2%20778.4%29%20rotate%28359.2%29%22%20stroke-width%3D%221.48%22%20stroke-opacity%3D%220.196%22/%3E%3Cpath%20d%3D%22M-56.0%2044.4%20L56.0%2044.4%20L0.0%20-44.4%20Z%22%20transform%3D%22translate%281677.4%2051.6%29%20rotate%28335.6%29%22%20stroke-width%3D%221.00%22%20stroke-opacity%3D%220.132%22/%3E%3Cpath%20d%3D%22M-103.5%2088.3%20L103.5%2088.3%20L0.0%20-88.3%20Z%22%20transform%3D%22translate%281049.0%201408.2%29%20rotate%28165.1%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.320%22/%3E%3Cpath%20d%3D%22M-90.1%2049.9%20L90.1%2049.9%20L0.0%20-49.9%20Z%22%20transform%3D%22translate%282616.9%20-47.2%29%20rotate%2863.8%29%22%20stroke-width%3D%221.24%22%20stroke-opacity%3D%220.128%22/%3E%3Cpath%20d%3D%22M-59.4%2044.6%20L59.4%2044.6%20L0.0%20-44.6%20Z%22%20transform%3D%22translate%282222.4%201623.6%29%20rotate%28288.7%29%22%20stroke-width%3D%221.19%22%20stroke-opacity%3D%220.112%22/%3E%3Cpath%20d%3D%22M-110.9%2069.0%20L110.9%2069.0%20L0.0%20-69.0%20Z%22%20transform%3D%22translate%282689.6%2011.0%29%20rotate%28333.3%29%22%20stroke-width%3D%221.48%22%20stroke-opacity%3D%220.262%22/%3E%3Cpath%20d%3D%22M-70.1%2047.3%20L70.1%2047.3%20L0.0%20-47.3%20Z%22%20transform%3D%22translate%282118.5%20719.3%29%20rotate%28331.1%29%22%20stroke-width%3D%221.26%22%20stroke-opacity%3D%220.125%22/%3E%3Cpath%20d%3D%22M-87.3%2050.4%20L87.3%2050.4%20L0.0%20-50.4%20Z%22%20transform%3D%22translate%28-71.9%201293.5%29%20rotate%28126.8%29%22%20stroke-width%3D%221.11%22%20stroke-opacity%3D%220.145%22/%3E%3Cpath%20d%3D%22M-104.3%2079.3%20L104.3%2079.3%20L0.0%20-79.3%20Z%22%20transform%3D%22translate%28311.1%20588.7%29%20rotate%28136.1%29%22%20stroke-width%3D%221.17%22%20stroke-opacity%3D%220.285%22/%3E%3Cpath%20d%3D%22M-87.8%2050.6%20L87.8%2050.6%20L0.0%20-50.6%20Z%22%20transform%3D%22translate%28-165.9%20299.8%29%20rotate%28191.1%29%22%20stroke-width%3D%221.19%22%20stroke-opacity%3D%220.264%22/%3E%3Cpath%20d%3D%22M-32.9%2021.0%20L32.9%2021.0%20L0.0%20-21.0%20Z%22%20transform%3D%22translate%28398.4%201586.2%29%20rotate%2863.1%29%22%20stroke-width%3D%221.00%22%20stroke-opacity%3D%220.198%22/%3E%3Cpath%20d%3D%22M-40.4%2029.3%20L40.4%2029.3%20L0.0%20-29.3%20Z%22%20transform%3D%22translate%281259.8%20931.1%29%20rotate%28155.7%29%22%20stroke-width%3D%221.37%22%20stroke-opacity%3D%220.228%22/%3E%3Cpath%20d%3D%22M-103.8%2068.8%20L103.8%2068.8%20L0.0%20-68.8%20Z%22%20transform%3D%22translate%2833.8%20374.3%29%20rotate%28128.8%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.126%22/%3E%3Cpath%20d%3D%22M-52.8%2029.3%20L52.8%2029.3%20L0.0%20-29.3%20Z%22%20transform%3D%22translate%28446.7%201455.9%29%20rotate%28252.9%29%22%20stroke-width%3D%221.03%22%20stroke-opacity%3D%220.139%22/%3E%3Cpath%20d%3D%22M-64.6%2054.7%20L64.6%2054.7%20L0.0%20-54.7%20Z%22%20transform%3D%22translate%28888.4%20860.8%29%20rotate%28165.7%29%22%20stroke-width%3D%221.47%22%20stroke-opacity%3D%220.162%22/%3E%3Cpath%20d%3D%22M-106.1%2078.3%20L106.1%2078.3%20L0.0%20-78.3%20Z%22%20transform%3D%22translate%28290.4%20529.5%29%20rotate%28194.9%29%22%20stroke-width%3D%221.42%22%20stroke-opacity%3D%220.135%22/%3E%3Cpath%20d%3D%22M-40.5%2026.6%20L40.5%2026.6%20L0.0%20-26.6%20Z%22%20transform%3D%22translate%282332.4%201311.7%29%20rotate%2858.4%29%22%20stroke-width%3D%220.95%22%20stroke-opacity%3D%220.312%22/%3E%3Cpath%20d%3D%22M-53.4%2035.5%20L53.4%2035.5%20L0.0%20-35.5%20Z%22%20transform%3D%22translate%281232.4%20790.1%29%20rotate%28292.5%29%22%20stroke-width%3D%221.34%22%20stroke-opacity%3D%220.143%22/%3E%3Cpath%20d%3D%22M-34.4%2025.8%20L34.4%2025.8%20L0.0%20-25.8%20Z%22%20transform%3D%22translate%28973.2%201302.7%29%20rotate%2898.6%29%22%20stroke-width%3D%221.01%22%20stroke-opacity%3D%220.300%22/%3E%3Cpath%20d%3D%22M-38.0%2032.6%20L38.0%2032.6%20L0.0%20-32.6%20Z%22%20transform%3D%22translate%28642.5%20-176.7%29%20rotate%28265.9%29%22%20stroke-width%3D%221.44%22%20stroke-opacity%3D%220.101%22/%3E%3Cpath%20d%3D%22M-63.8%2054.4%20L63.8%2054.4%20L0.0%20-54.4%20Z%22%20transform%3D%22translate%281530.2%20-87.3%29%20rotate%2812.7%29%22%20stroke-width%3D%221.38%22%20stroke-opacity%3D%220.306%22/%3E%3Cpath%20d%3D%22M-88.1%2064.6%20L88.1%2064.6%20L0.0%20-64.6%20Z%22%20transform%3D%22translate%282213.8%20-139.0%29%20rotate%28269.6%29%22%20stroke-width%3D%221.39%22%20stroke-opacity%3D%220.204%22/%3E%3Cpath%20d%3D%22M-63.6%2048.6%20L63.6%2048.6%20L0.0%20-48.6%20Z%22%20transform%3D%22translate%28893.8%20297.3%29%20rotate%28251.7%29%22%20stroke-width%3D%221.15%22%20stroke-opacity%3D%220.121%22/%3E%3Cpath%20d%3D%22M-116.3%2097.2%20L116.3%2097.2%20L0.0%20-97.2%20Z%22%20transform%3D%22translate%2877.7%201159.1%29%20rotate%28198.8%29%22%20stroke-width%3D%220.93%22%20stroke-opacity%3D%220.294%22/%3E%3Cpath%20d%3D%22M-98.8%2088.1%20L98.8%2088.1%20L0.0%20-88.1%20Z%22%20transform%3D%22translate%282016.5%20463.9%29%20rotate%28169.0%29%22%20stroke-width%3D%221.44%22%20stroke-opacity%3D%220.204%22/%3E%3Cpath%20d%3D%22M-34.0%2021.3%20L34.0%2021.3%20L0.0%20-21.3%20Z%22%20transform%3D%22translate%281579.7%20-124.4%29%20rotate%289.7%29%22%20stroke-width%3D%221.33%22%20stroke-opacity%3D%220.219%22/%3E%3Cpath%20d%3D%22M-46.9%2040.6%20L46.9%2040.6%20L0.0%20-40.6%20Z%22%20transform%3D%22translate%282309.9%20-130.0%29%20rotate%28271.4%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.163%22/%3E%3Cpath%20d%3D%22M-42.5%2033.2%20L42.5%2033.2%20L0.0%20-33.2%20Z%22%20transform%3D%22translate%28824.3%201499.7%29%20rotate%2810.8%29%22%20stroke-width%3D%221.34%22%20stroke-opacity%3D%220.249%22/%3E%3Cpath%20d%3D%22M-99.3%2071.9%20L99.3%2071.9%20L0.0%20-71.9%20Z%22%20transform%3D%22translate%282141.4%20361.1%29%20rotate%28246.0%29%22%20stroke-width%3D%221.13%22%20stroke-opacity%3D%220.180%22/%3E%3Cpath%20d%3D%22M-111.0%2081.2%20L111.0%2081.2%20L0.0%20-81.2%20Z%22%20transform%3D%22translate%28128.8%201189.9%29%20rotate%28349.6%29%22%20stroke-width%3D%221.31%22%20stroke-opacity%3D%220.169%22/%3E%3Cpath%20d%3D%22M-48.1%2039.3%20L48.1%2039.3%20L0.0%20-39.3%20Z%22%20transform%3D%22translate%28712.3%201130.6%29%20rotate%28104.7%29%22%20stroke-width%3D%221.18%22%20stroke-opacity%3D%220.126%22/%3E%3Cpath%20d%3D%22M-79.2%2068.5%20L79.2%2068.5%20L0.0%20-68.5%20Z%22%20transform%3D%22translate%281058.0%20712.4%29%20rotate%28179.4%29%22%20stroke-width%3D%221.33%22%20stroke-opacity%3D%220.285%22/%3E%3Cpath%20d%3D%22M-115.7%2089.6%20L115.7%2089.6%20L0.0%20-89.6%20Z%22%20transform%3D%22translate%28755.9%20251.3%29%20rotate%2838.9%29%22%20stroke-width%3D%221.58%22%20stroke-opacity%3D%220.258%22/%3E%3Cpath%20d%3D%22M-58.8%2048.1%20L58.8%2048.1%20L0.0%20-48.1%20Z%22%20transform%3D%22translate%281736.4%20896.7%29%20rotate%28167.3%29%22%20stroke-width%3D%221.04%22%20stroke-opacity%3D%220.245%22/%3E%3Cpath%20d%3D%22M-46.6%2027.3%20L46.6%2027.3%20L0.0%20-27.3%20Z%22%20transform%3D%22translate%28762.4%20903.6%29%20rotate%2853.4%29%22%20stroke-width%3D%221.28%22%20stroke-opacity%3D%220.162%22/%3E%3Cpath%20d%3D%22M-106.5%2062.5%20L106.5%2062.5%20L0.0%20-62.5%20Z%22%20transform%3D%22translate%281818.1%20409.5%29%20rotate%28350.5%29%22%20stroke-width%3D%221.49%22%20stroke-opacity%3D%220.259%22/%3E%3Cpath%20d%3D%22M-91.0%2051.4%20L91.0%2051.4%20L0.0%20-51.4%20Z%22%20transform%3D%22translate%281681.2%201097.1%29%20rotate%28248.8%29%22%20stroke-width%3D%220.93%22%20stroke-opacity%3D%220.318%22/%3E%3Cpath%20d%3D%22M-85.9%2072.4%20L85.9%2072.4%20L0.0%20-72.4%20Z%22%20transform%3D%22translate%282687.2%201628.9%29%20rotate%28220.2%29%22%20stroke-width%3D%221.38%22%20stroke-opacity%3D%220.309%22/%3E%3Cpath%20d%3D%22M-93.1%2067.1%20L93.1%2067.1%20L0.0%20-67.1%20Z%22%20transform%3D%22translate%281491.6%201210.8%29%20rotate%28195.7%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.259%22/%3E%3Cpath%20d%3D%22M-103.9%2082.8%20L103.9%2082.8%20L0.0%20-82.8%20Z%22%20transform%3D%22translate%28889.2%20737.2%29%20rotate%28283.3%29%22%20stroke-width%3D%221.08%22%20stroke-opacity%3D%220.145%22/%3E%3Cpath%20d%3D%22M-116.5%20103.1%20L116.5%20103.1%20L0.0%20-103.1%20Z%22%20transform%3D%22translate%282328.9%20726.9%29%20rotate%28260.6%29%22%20stroke-width%3D%221.20%22%20stroke-opacity%3D%220.110%22/%3E%3Cpath%20d%3D%22M-34.7%2021.0%20L34.7%2021.0%20L0.0%20-21.0%20Z%22%20transform%3D%22translate%282583.5%20891.6%29%20rotate%2855.3%29%22%20stroke-width%3D%221.23%22%20stroke-opacity%3D%220.277%22/%3E%3Cpath%20d%3D%22M-59.5%2034.2%20L59.5%2034.2%20L0.0%20-34.2%20Z%22%20transform%3D%22translate%281197.3%20199.0%29%20rotate%2885.8%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.220%22/%3E%3Cpath%20d%3D%22M-102.1%2060.0%20L102.1%2060.0%20L0.0%20-60.0%20Z%22%20transform%3D%22translate%281264.7%20774.0%29%20rotate%28294.4%29%22%20stroke-width%3D%221.00%22%20stroke-opacity%3D%220.238%22/%3E%3Cpath%20d%3D%22M-68.4%2052.3%20L68.4%2052.3%20L0.0%20-52.3%20Z%22%20transform%3D%22translate%28-51.6%201044.6%29%20rotate%28210.5%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.202%22/%3E%3Cpath%20d%3D%22M-49.1%2031.5%20L49.1%2031.5%20L0.0%20-31.5%20Z%22%20transform%3D%22translate%28-194.3%201380.2%29%20rotate%28179.9%29%22%20stroke-width%3D%221.45%22%20stroke-opacity%3D%220.114%22/%3E%3Cpath%20d%3D%22M-83.4%2072.8%20L83.4%2072.8%20L0.0%20-72.8%20Z%22%20transform%3D%22translate%28509.9%20332.2%29%20rotate%2855.5%29%22%20stroke-width%3D%221.10%22%20stroke-opacity%3D%220.279%22/%3E%3Cpath%20d%3D%22M-65.6%2048.6%20L65.6%2048.6%20L0.0%20-48.6%20Z%22%20transform%3D%22translate%281490.1%20-180.2%29%20rotate%2886.8%29%22%20stroke-width%3D%220.96%22%20stroke-opacity%3D%220.249%22/%3E%3Cpath%20d%3D%22M-87.0%2073.7%20L87.0%2073.7%20L0.0%20-73.7%20Z%22%20transform%3D%22translate%281933.5%201693.4%29%20rotate%28273.8%29%22%20stroke-width%3D%221.35%22%20stroke-opacity%3D%220.309%22/%3E%3Cpath%20d%3D%22M-86.2%2072.5%20L86.2%2072.5%20L0.0%20-72.5%20Z%22%20transform%3D%22translate%281470.1%20476.8%29%20rotate%28189.0%29%22%20stroke-width%3D%221.48%22%20stroke-opacity%3D%220.291%22/%3E%3Cpath%20d%3D%22M-90.0%2073.1%20L90.0%2073.1%20L0.0%20-73.1%20Z%22%20transform%3D%22translate%281371.4%201541.2%29%20rotate%28290.3%29%22%20stroke-width%3D%220.96%22%20stroke-opacity%3D%220.275%22/%3E%3Cpath%20d%3D%22M-77.3%2054.7%20L77.3%2054.7%20L0.0%20-54.7%20Z%22%20transform%3D%22translate%281113.3%2036.5%29%20rotate%2865.8%29%22%20stroke-width%3D%221.49%22%20stroke-opacity%3D%220.254%22/%3E%3Cpath%20d%3D%22M-52.4%2035.5%20L52.4%2035.5%20L0.0%20-35.5%20Z%22%20transform%3D%22translate%28140.1%201581.4%29%20rotate%28132.6%29%22%20stroke-width%3D%220.95%22%20stroke-opacity%3D%220.117%22/%3E%3Cpath%20d%3D%22M-31.8%2021.3%20L31.8%2021.3%20L0.0%20-21.3%20Z%22%20transform%3D%22translate%282396.6%201533.4%29%20rotate%2892.6%29%22%20stroke-width%3D%221.10%22%20stroke-opacity%3D%220.288%22/%3E%3Cpath%20d%3D%22M-42.5%2030.1%20L42.5%2030.1%20L0.0%20-30.1%20Z%22%20transform%3D%22translate%28476.8%20189.6%29%20rotate%2893.6%29%22%20stroke-width%3D%221.13%22%20stroke-opacity%3D%220.219%22/%3E%3Cpath%20d%3D%22M-55.9%2049.8%20L55.9%2049.8%20L0.0%20-49.8%20Z%22%20transform%3D%22translate%2820.1%20-25.0%29%20rotate%28328.5%29%22%20stroke-width%3D%221.56%22%20stroke-opacity%3D%220.190%22/%3E%3Cpath%20d%3D%22M-96.0%2064.5%20L96.0%2064.5%20L0.0%20-64.5%20Z%22%20transform%3D%22translate%28731.0%20216.0%29%20rotate%2820.7%29%22%20stroke-width%3D%221.52%22%20stroke-opacity%3D%220.178%22/%3E%3Cpath%20d%3D%22M-37.6%2021.2%20L37.6%2021.2%20L0.0%20-21.2%20Z%22%20transform%3D%22translate%281182.5%20164.1%29%20rotate%28132.3%29%22%20stroke-width%3D%220.94%22%20stroke-opacity%3D%220.311%22/%3E%3Cpath%20d%3D%22M-115.6%2095.2%20L115.6%2095.2%20L0.0%20-95.2%20Z%22%20transform%3D%22translate%28458.4%20337.8%29%20rotate%28224.8%29%22%20stroke-width%3D%221.01%22%20stroke-opacity%3D%220.248%22/%3E%3Cpath%20d%3D%22M-110.4%2087.3%20L110.4%2087.3%20L0.0%20-87.3%20Z%22%20transform%3D%22translate%28-36.0%20997.4%29%20rotate%2862.5%29%22%20stroke-width%3D%221.43%22%20stroke-opacity%3D%220.125%22/%3E%3Cpath%20d%3D%22M-117.5%2071.3%20L117.5%2071.3%20L0.0%20-71.3%20Z%22%20transform%3D%22translate%28565.0%201539.9%29%20rotate%28341.9%29%22%20stroke-width%3D%221.08%22%20stroke-opacity%3D%220.297%22/%3E%3Cpath%20d%3D%22M-48.9%2035.5%20L48.9%2035.5%20L0.0%20-35.5%20Z%22%20transform%3D%22translate%28681.7%20439.2%29%20rotate%2831.2%29%22%20stroke-width%3D%221.22%22%20stroke-opacity%3D%220.228%22/%3E%3Cpath%20d%3D%22M-85.2%2062.3%20L85.2%2062.3%20L0.0%20-62.3%20Z%22%20transform%3D%22translate%281746.4%201563.8%29%20rotate%28188.2%29%22%20stroke-width%3D%221.29%22%20stroke-opacity%3D%220.289%22/%3E%3Cpath%20d%3D%22M-55.9%2049.2%20L55.9%2049.2%20L0.0%20-49.2%20Z%22%20transform%3D%22translate%281863.9%2041.0%29%20rotate%2859.0%29%22%20stroke-width%3D%221.28%22%20stroke-opacity%3D%220.254%22/%3E%3Cpath%20d%3D%22M-80.3%2058.0%20L80.3%2058.0%20L0.0%20-58.0%20Z%22%20transform%3D%22translate%28-6.9%20-147.5%29%20rotate%28302.7%29%22%20stroke-width%3D%221.51%22%20stroke-opacity%3D%220.176%22/%3E%3Cpath%20d%3D%22M-109.7%2085.0%20L109.7%2085.0%20L0.0%20-85.0%20Z%22%20transform%3D%22translate%28191.7%201659.4%29%20rotate%28106.5%29%22%20stroke-width%3D%221.17%22%20stroke-opacity%3D%220.177%22/%3E%3Cpath%20d%3D%22M-31.3%2018.8%20L31.3%2018.8%20L0.0%20-18.8%20Z%22%20transform%3D%22translate%282693.5%20294.7%29%20rotate%28262.3%29%22%20stroke-width%3D%221.25%22%20stroke-opacity%3D%220.133%22/%3E%3Cpath%20d%3D%22M-115.9%2082.8%20L115.9%2082.8%20L0.0%20-82.8%20Z%22%20transform%3D%22translate%28-146.5%201287.9%29%20rotate%28351.7%29%22%20stroke-width%3D%221.16%22%20stroke-opacity%3D%220.194%22/%3E%3Cpath%20d%3D%22M-119.5%2079.7%20L119.5%2079.7%20L0.0%20-79.7%20Z%22%20transform%3D%22translate%282485.2%201322.3%29%20rotate%28257.1%29%22%20stroke-width%3D%221.24%22%20stroke-opacity%3D%220.163%22/%3E%3Cpath%20d%3D%22M-99.2%2083.6%20L99.2%2083.6%20L0.0%20-83.6%20Z%22%20transform%3D%22translate%28254.9%20537.1%29%20rotate%28173.8%29%22%20stroke-width%3D%221.42%22%20stroke-opacity%3D%220.270%22/%3E%3Cpath%20d%3D%22M-58.0%2048.7%20L58.0%2048.7%20L0.0%20-48.7%20Z%22%20transform%3D%22translate%281988.0%2061.6%29%20rotate%2884.5%29%22%20stroke-width%3D%221.26%22%20stroke-opacity%3D%220.178%22/%3E%3Cpath%20d%3D%22M-78.2%2047.0%20L78.2%2047.0%20L0.0%20-47.0%20Z%22%20transform%3D%22translate%281237.8%201646.1%29%20rotate%28281.6%29%22%20stroke-width%3D%221.56%22%20stroke-opacity%3D%220.142%22/%3E%3Cpath%20d%3D%22M-65.2%2039.9%20L65.2%2039.9%20L0.0%20-39.9%20Z%22%20transform%3D%22translate%282642.9%201031.8%29%20rotate%2817.5%29%22%20stroke-width%3D%221.56%22%20stroke-opacity%3D%220.134%22/%3E%3Cpath%20d%3D%22M-90.1%2076.1%20L90.1%2076.1%20L0.0%20-76.1%20Z%22%20transform%3D%22translate%281943.5%20195.6%29%20rotate%28113.2%29%22%20stroke-width%3D%221.10%22%20stroke-opacity%3D%220.264%22/%3E%3Cpath%20d%3D%22M-67.4%2053.9%20L67.4%2053.9%20L0.0%20-53.9%20Z%22%20transform%3D%22translate%281722.7%201213.7%29%20rotate%2888.9%29%22%20stroke-width%3D%220.92%22%20stroke-opacity%3D%220.251%22/%3E%3Cpath%20d%3D%22M-56.3%2049.3%20L56.3%2049.3%20L0.0%20-49.3%20Z%22%20transform%3D%22translate%28610.4%20512.9%29%20rotate%28123.6%29%22%20stroke-width%3D%221.25%22%20stroke-opacity%3D%220.287%22/%3E%3Cpath%20d%3D%22M-118.4%2085.5%20L118.4%2085.5%20L0.0%20-85.5%20Z%22%20transform%3D%22translate%282064.2%201579.3%29%20rotate%28179.2%29%22%20stroke-width%3D%221.21%22%20stroke-opacity%3D%220.218%22/%3E%3Cpath%20d%3D%22M-59.9%2039.5%20L59.9%2039.5%20L0.0%20-39.5%20Z%22%20transform%3D%22translate%281565.0%20615.9%29%20rotate%2828.1%29%22%20stroke-width%3D%221.39%22%20stroke-opacity%3D%220.165%22/%3E%3Cpath%20d%3D%22M-98.9%2070.8%20L98.9%2070.8%20L0.0%20-70.8%20Z%22%20transform%3D%22translate%281690.0%20111.8%29%20rotate%28349.9%29%22%20stroke-width%3D%221.00%22%20stroke-opacity%3D%220.212%22/%3E%3Cpath%20d%3D%22M-59.4%2033.8%20L59.4%2033.8%20L0.0%20-33.8%20Z%22%20transform%3D%22translate%28605.8%20446.7%29%20rotate%2866.4%29%22%20stroke-width%3D%221.21%22%20stroke-opacity%3D%220.291%22/%3E%3Cpath%20d%3D%22M-81.0%2071.2%20L81.0%2071.2%20L0.0%20-71.2%20Z%22%20transform%3D%22translate%28720.6%20798.8%29%20rotate%28236.8%29%22%20stroke-width%3D%221.46%22%20stroke-opacity%3D%220.174%22/%3E%3Cpath%20d%3D%22M-59.0%2038.0%20L59.0%2038.0%20L0.0%20-38.0%20Z%22%20transform%3D%22translate%28252.5%2097.5%29%20rotate%28262.4%29%22%20stroke-width%3D%221.57%22%20stroke-opacity%3D%220.207%22/%3E%3Cpath%20d%3D%22M-74.4%2066.4%20L74.4%2066.4%20L0.0%20-66.4%20Z%22%20transform%3D%22translate%28-146.7%20-152.5%29%20rotate%28153.2%29%22%20stroke-width%3D%221.18%22%20stroke-opacity%3D%220.197%22/%3E%3Cpath%20d%3D%22M-39.5%2022.8%20L39.5%2022.8%20L0.0%20-22.8%20Z%22%20transform%3D%22translate%282653.5%20969.0%29%20rotate%28198.7%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.258%22/%3E%3Cpath%20d%3D%22M-109.3%2061.0%20L109.3%2061.0%20L0.0%20-61.0%20Z%22%20transform%3D%22translate%282006.7%20704.9%29%20rotate%28216.2%29%22%20stroke-width%3D%221.10%22%20stroke-opacity%3D%220.232%22/%3E%3Cpath%20d%3D%22M-46.6%2027.5%20L46.6%2027.5%20L0.0%20-27.5%20Z%22%20transform%3D%22translate%281999.0%201362.8%29%20rotate%28194.7%29%22%20stroke-width%3D%221.58%22%20stroke-opacity%3D%220.205%22/%3E%3Cpath%20d%3D%22M-54.8%2031.8%20L54.8%2031.8%20L0.0%20-31.8%20Z%22%20transform%3D%22translate%28-87.9%20784.1%29%20rotate%28200.7%29%22%20stroke-width%3D%221.11%22%20stroke-opacity%3D%220.101%22/%3E%3Cpath%20d%3D%22M-55.9%2035.9%20L55.9%2035.9%20L0.0%20-35.9%20Z%22%20transform%3D%22translate%282413.2%20271.1%29%20rotate%28287.6%29%22%20stroke-width%3D%221.41%22%20stroke-opacity%3D%220.299%22/%3E%3Cpath%20d%3D%22M-49.2%2027.2%20L49.2%2027.2%20L0.0%20-27.2%20Z%22%20transform%3D%22translate%282691.9%201207.0%29%20rotate%28176.8%29%22%20stroke-width%3D%221.15%22%20stroke-opacity%3D%220.197%22/%3E%3Cpath%20d%3D%22M-79.9%2050.1%20L79.9%2050.1%20L0.0%20-50.1%20Z%22%20transform%3D%22translate%28620.9%20842.0%29%20rotate%28266.9%29%22%20stroke-width%3D%221.60%22%20stroke-opacity%3D%220.154%22/%3E%3Cpath%20d%3D%22M-98.3%2081.3%20L98.3%2081.3%20L0.0%20-81.3%20Z%22%20transform%3D%22translate%281031.4%201645.2%29%20rotate%2897.2%29%22%20stroke-width%3D%221.40%22%20stroke-opacity%3D%220.190%22/%3E%3Cpath%20d%3D%22M-112.4%2091.0%20L112.4%2091.0%20L0.0%20-91.0%20Z%22%20transform%3D%22translate%28361.3%2073.3%29%20rotate%28241.5%29%22%20stroke-width%3D%221.01%22%20stroke-opacity%3D%220.264%22/%3E%3Cpath%20d%3D%22M-33.2%2025.8%20L33.2%2025.8%20L0.0%20-25.8%20Z%22%20transform%3D%22translate%28116.0%201577.4%29%20rotate%28251.9%29%22%20stroke-width%3D%221.46%22%20stroke-opacity%3D%220.300%22/%3E%3Cpath%20d%3D%22M-119.7%2083.6%20L119.7%2083.6%20L0.0%20-83.6%20Z%22%20transform%3D%22translate%2817.5%201488.4%29%20rotate%28203.5%29%22%20stroke-width%3D%221.58%22%20stroke-opacity%3D%220.245%22/%3E%3Cpath%20d%3D%22M-54.6%2043.0%20L54.6%2043.0%20L0.0%20-43.0%20Z%22%20transform%3D%22translate%28474.5%20183.5%29%20rotate%28288.2%29%22%20stroke-width%3D%221.44%22%20stroke-opacity%3D%220.240%22/%3E%3Cpath%20d%3D%22M-95.6%2075.2%20L95.6%2075.2%20L0.0%20-75.2%20Z%22%20transform%3D%22translate%28672.3%20601.5%29%20rotate%28244.7%29%22%20stroke-width%3D%221.05%22%20stroke-opacity%3D%220.162%22/%3E%3Cpath%20d%3D%22M-115.1%2088.7%20L115.1%2088.7%20L0.0%20-88.7%20Z%22%20transform%3D%22translate%28880.6%201436.2%29%20rotate%28192.1%29%22%20stroke-width%3D%221.54%22%20stroke-opacity%3D%220.155%22/%3E%3Cpath%20d%3D%22M-95.0%2053.1%20L95.0%2053.1%20L0.0%20-53.1%20Z%22%20transform%3D%22translate%281043.9%201053.0%29%20rotate%28179.9%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.150%22/%3E%3Cpath%20d%3D%22M-97.4%2075.2%20L97.4%2075.2%20L0.0%20-75.2%20Z%22%20transform%3D%22translate%281643.6%201571.7%29%20rotate%2884.9%29%22%20stroke-width%3D%220.94%22%20stroke-opacity%3D%220.279%22/%3E%3Cpath%20d%3D%22M-83.2%2064.1%20L83.2%2064.1%20L0.0%20-64.1%20Z%22%20transform%3D%22translate%28365.6%20409.7%29%20rotate%28296.2%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.119%22/%3E%3Cpath%20d%3D%22M-76.2%2062.1%20L76.2%2062.1%20L0.0%20-62.1%20Z%22%20transform%3D%22translate%2820.5%20885.0%29%20rotate%28345.9%29%22%20stroke-width%3D%221.36%22%20stroke-opacity%3D%220.137%22/%3E%3Cpath%20d%3D%22M-94.6%2083.0%20L94.6%2083.0%20L0.0%20-83.0%20Z%22%20transform%3D%22translate%282226.8%20-92.2%29%20rotate%28317.1%29%22%20stroke-width%3D%221.35%22%20stroke-opacity%3D%220.131%22/%3E%3Cpath%20d%3D%22M-76.5%2052.6%20L76.5%2052.6%20L0.0%20-52.6%20Z%22%20transform%3D%22translate%282430.4%201336.6%29%20rotate%28155.1%29%22%20stroke-width%3D%221.40%22%20stroke-opacity%3D%220.309%22/%3E%3Cpath%20d%3D%22M-98.4%2071.8%20L98.4%2071.8%20L0.0%20-71.8%20Z%22%20transform%3D%22translate%282590.1%201631.7%29%20rotate%28349.6%29%22%20stroke-width%3D%220.92%22%20stroke-opacity%3D%220.272%22/%3E%3Cpath%20d%3D%22M-33.7%2030.1%20L33.7%2030.1%20L0.0%20-30.1%20Z%22%20transform%3D%22translate%28164.9%20766.2%29%20rotate%28260.7%29%22%20stroke-width%3D%220.96%22%20stroke-opacity%3D%220.119%22/%3E%3Cpath%20d%3D%22M-95.5%2063.2%20L95.5%2063.2%20L0.0%20-63.2%20Z%22%20transform%3D%22translate%28177.0%20617.8%29%20rotate%2810.3%29%22%20stroke-width%3D%220.96%22%20stroke-opacity%3D%220.121%22/%3E%3Cpath%20d%3D%22M-110.5%2077.7%20L110.5%2077.7%20L0.0%20-77.7%20Z%22%20transform%3D%22translate%282080.3%20798.2%29%20rotate%28154.3%29%22%20stroke-width%3D%221.31%22%20stroke-opacity%3D%220.121%22/%3E%3Cpath%20d%3D%22M-96.8%2061.7%20L96.8%2061.7%20L0.0%20-61.7%20Z%22%20transform%3D%22translate%28512.3%201199.6%29%20rotate%28137.9%29%22%20stroke-width%3D%221.05%22%20stroke-opacity%3D%220.125%22/%3E%3Cpath%20d%3D%22M-75.1%2049.5%20L75.1%2049.5%20L0.0%20-49.5%20Z%22%20transform%3D%22translate%281585.0%201440.2%29%20rotate%2835.6%29%22%20stroke-width%3D%221.51%22%20stroke-opacity%3D%220.303%22/%3E%3Cpath%20d%3D%22M-104.5%2079.5%20L104.5%2079.5%20L0.0%20-79.5%20Z%22%20transform%3D%22translate%281791.0%201227.9%29%20rotate%28316.2%29%22%20stroke-width%3D%221.09%22%20stroke-opacity%3D%220.121%22/%3E%3Cpath%20d%3D%22M-48.7%2027.4%20L48.7%2027.4%20L0.0%20-27.4%20Z%22%20transform%3D%22translate%281361.4%201466.8%29%20rotate%28355.6%29%22%20stroke-width%3D%221.30%22%20stroke-opacity%3D%220.156%22/%3E%3Cpath%20d%3D%22M-117.3%2090.4%20L117.3%2090.4%20L0.0%20-90.4%20Z%22%20transform%3D%22translate%282747.4%201395.8%29%20rotate%28328.1%29%22%20stroke-width%3D%221.19%22%20stroke-opacity%3D%220.306%22/%3E%3Cpath%20d%3D%22M-72.2%2053.9%20L72.2%2053.9%20L0.0%20-53.9%20Z%22%20transform%3D%22translate%281155.1%201130.6%29%20rotate%28142.9%29%22%20stroke-width%3D%221.28%22%20stroke-opacity%3D%220.185%22/%3E%3Cpath%20d%3D%22M-62.9%2036.6%20L62.9%2036.6%20L0.0%20-36.6%20Z%22%20transform%3D%22translate%28-61.4%201310.7%29%20rotate%28271.0%29%22%20stroke-width%3D%221.35%22%20stroke-opacity%3D%220.289%22/%3E%3Cpath%20d%3D%22M-108.4%2072.9%20L108.4%2072.9%20L0.0%20-72.9%20Z%22%20transform%3D%22translate%281683.0%201092.5%29%20rotate%28198.2%29%22%20stroke-width%3D%221.24%22%20stroke-opacity%3D%220.170%22/%3E%3Cpath%20d%3D%22M-57.4%2045.6%20L57.4%2045.6%20L0.0%20-45.6%20Z%22%20transform%3D%22translate%281760.9%20166.4%29%20rotate%28163.9%29%22%20stroke-width%3D%221.08%22%20stroke-opacity%3D%220.294%22/%3E%3Cpath%20d%3D%22M-49.9%2036.9%20L49.9%2036.9%20L0.0%20-36.9%20Z%22%20transform%3D%22translate%281534.4%20-130.3%29%20rotate%28270.9%29%22%20stroke-width%3D%221.02%22%20stroke-opacity%3D%220.300%22/%3E%3Cpath%20d%3D%22M-76.4%2053.4%20L76.4%2053.4%20L0.0%20-53.4%20Z%22%20transform%3D%22translate%28403.6%20981.6%29%20rotate%2867.9%29%22%20stroke-width%3D%221.39%22%20stroke-opacity%3D%220.151%22/%3E%3Cpath%20d%3D%22M-90.3%2080.3%20L90.3%2080.3%20L0.0%20-80.3%20Z%22%20transform%3D%22translate%28865.9%20-14.6%29%20rotate%2813.3%29%22%20stroke-width%3D%221.36%22%20stroke-opacity%3D%220.150%22/%3E%3Cpath%20d%3D%22M-114.2%2095.3%20L114.2%2095.3%20L0.0%20-95.3%20Z%22%20transform%3D%22translate%281506.6%20166.5%29%20rotate%28110.9%29%22%20stroke-width%3D%221.45%22%20stroke-opacity%3D%220.231%22/%3E%3Cpath%20d%3D%22M-107.1%2090.0%20L107.1%2090.0%20L0.0%20-90.0%20Z%22%20transform%3D%22translate%28815.7%201218.4%29%20rotate%2876.6%29%22%20stroke-width%3D%221.09%22%20stroke-opacity%3D%220.313%22/%3E%3Cpath%20d%3D%22M-101.2%2063.7%20L101.2%2063.7%20L0.0%20-63.7%20Z%22%20transform%3D%22translate%281986.3%20868.1%29%20rotate%289.6%29%22%20stroke-width%3D%221.46%22%20stroke-opacity%3D%220.125%22/%3E%3Cpath%20d%3D%22M-104.1%2086.2%20L104.1%2086.2%20L0.0%20-86.2%20Z%22%20transform%3D%22translate%2840.6%201075.2%29%20rotate%28329.1%29%22%20stroke-width%3D%221.37%22%20stroke-opacity%3D%220.139%22/%3E%3Cpath%20d%3D%22M-111.2%2082.7%20L111.2%2082.7%20L0.0%20-82.7%20Z%22%20transform%3D%22translate%282762.4%20652.8%29%20rotate%28203.4%29%22%20stroke-width%3D%221.48%22%20stroke-opacity%3D%220.320%22/%3E%3Cpath%20d%3D%22M-49.5%2039.1%20L49.5%2039.1%20L0.0%20-39.1%20Z%22%20transform%3D%22translate%28150.6%201575.5%29%20rotate%2827.8%29%22%20stroke-width%3D%221.06%22%20stroke-opacity%3D%220.223%22/%3E%3Cpath%20d%3D%22M-102.2%2072.1%20L102.2%2072.1%20L0.0%20-72.1%20Z%22%20transform%3D%22translate%281606.2%20576.6%29%20rotate%28332.7%29%22%20stroke-width%3D%221.20%22%20stroke-opacity%3D%220.165%22/%3E%3Cpath%20d%3D%22M-81.0%2059.6%20L81.0%2059.6%20L0.0%20-59.6%20Z%22%20transform%3D%22translate%282030.6%201476.6%29%20rotate%28205.7%29%22%20stroke-width%3D%221.05%22%20stroke-opacity%3D%220.208%22/%3E%3Cpath%20d%3D%22M-58.2%2047.2%20L58.2%2047.2%20L0.0%20-47.2%20Z%22%20transform%3D%22translate%282523.0%201133.0%29%20rotate%28317.9%29%22%20stroke-width%3D%221.42%22%20stroke-opacity%3D%220.222%22/%3E%3Cpath%20d%3D%22M-19.5%2015.1%20L19.5%2015.1%20L0.0%20-15.1%20Z%22%20transform%3D%22translate%281053.8%20264.1%29%20rotate%28169.9%29%22%20stroke-width%3D%220.81%22%20stroke-opacity%3D%220.193%22/%3E%3Cpath%20d%3D%22M-23.3%2015.6%20L23.3%2015.6%20L0.0%20-15.6%20Z%22%20transform%3D%22translate%28553.3%2051.9%29%20rotate%28216.3%29%22%20stroke-width%3D%220.71%22%20stroke-opacity%3D%220.184%22/%3E%3Cpath%20d%3D%22M-18.5%2015.2%20L18.5%2015.2%20L0.0%20-15.2%20Z%22%20transform%3D%22translate%282577.7%201263.6%29%20rotate%2895.9%29%22%20stroke-width%3D%221.19%22%20stroke-opacity%3D%220.083%22/%3E%3Cpath%20d%3D%22M-9.7%206.7%20L9.7%206.7%20L0.0%20-6.7%20Z%22%20transform%3D%22translate%28324.4%20582.7%29%20rotate%28266.3%29%22%20stroke-width%3D%220.64%22%20stroke-opacity%3D%220.142%22/%3E%3Cpath%20d%3D%22M-12.3%206.8%20L12.3%206.8%20L0.0%20-6.8%20Z%22%20transform%3D%22translate%28196.9%201400.7%29%20rotate%28264.7%29%22%20stroke-width%3D%220.72%22%20stroke-opacity%3D%220.095%22/%3E%3Cpath%20d%3D%22M-12.0%206.9%20L12.0%206.9%20L0.0%20-6.9%20Z%22%20transform%3D%22translate%281995.4%2016.6%29%20rotate%28260.7%29%22%20stroke-width%3D%220.70%22%20stroke-opacity%3D%220.217%22/%3E%3Cpath%20d%3D%22M-26.0%2016.1%20L26.0%2016.1%20L0.0%20-16.1%20Z%22%20transform%3D%22translate%28672.4%20122.2%29%20rotate%28308.3%29%22%20stroke-width%3D%221.04%22%20stroke-opacity%3D%220.095%22/%3E%3Cpath%20d%3D%22M-23.0%2020.2%20L23.0%2020.2%20L0.0%20-20.2%20Z%22%20transform%3D%22translate%281932.2%20488.7%29%20rotate%28197.4%29%22%20stroke-width%3D%220.85%22%20stroke-opacity%3D%220.157%22/%3E%3Cpath%20d%3D%22M-14.4%2010.6%20L14.4%2010.6%20L0.0%20-10.6%20Z%22%20transform%3D%22translate%281017.8%20747.0%29%20rotate%2852.3%29%22%20stroke-width%3D%220.77%22%20stroke-opacity%3D%220.087%22/%3E%3Cpath%20d%3D%22M-9.6%206.1%20L9.6%206.1%20L0.0%20-6.1%20Z%22%20transform%3D%22translate%28733.4%20667.3%29%20rotate%28181.1%29%22%20stroke-width%3D%220.93%22%20stroke-opacity%3D%220.089%22/%3E%3Cpath%20d%3D%22M-28.8%2024.9%20L28.8%2024.9%20L0.0%20-24.9%20Z%22%20transform%3D%22translate%281047.2%201248.3%29%20rotate%2842.1%29%22%20stroke-width%3D%220.87%22%20stroke-opacity%3D%220.169%22/%3E%3Cpath%20d%3D%22M-22.7%2017.3%20L22.7%2017.3%20L0.0%20-17.3%20Z%22%20transform%3D%22translate%28149.8%20509.0%29%20rotate%2869.3%29%22%20stroke-width%3D%221.03%22%20stroke-opacity%3D%220.210%22/%3E%3Cpath%20d%3D%22M-14.1%2011.1%20L14.1%2011.1%20L0.0%20-11.1%20Z%22%20transform%3D%22translate%28484.2%20477.0%29%20rotate%28199.7%29%22%20stroke-width%3D%220.93%22%20stroke-opacity%3D%220.097%22/%3E%3Cpath%20d%3D%22M-19.0%2017.0%20L19.0%2017.0%20L0.0%20-17.0%20Z%22%20transform%3D%22translate%281513.1%20651.7%29%20rotate%28291.4%29%22%20stroke-width%3D%220.65%22%20stroke-opacity%3D%220.122%22/%3E%3Cpath%20d%3D%22M-17.9%2014.5%20L17.9%2014.5%20L0.0%20-14.5%20Z%22%20transform%3D%22translate%282288.4%20570.7%29%20rotate%28298.8%29%22%20stroke-width%3D%220.61%22%20stroke-opacity%3D%220.195%22/%3E%3Cpath%20d%3D%22M-14.1%2011.6%20L14.1%2011.6%20L0.0%20-11.6%20Z%22%20transform%3D%22translate%28449.6%20782.1%29%20rotate%28349.9%29%22%20stroke-width%3D%220.63%22%20stroke-opacity%3D%220.087%22/%3E%3Cpath%20d%3D%22M-21.4%2018.4%20L21.4%2018.4%20L0.0%20-18.4%20Z%22%20transform%3D%22translate%281931.2%201247.9%29%20rotate%2828.9%29%22%20stroke-width%3D%220.61%22%20stroke-opacity%3D%220.205%22/%3E%3Cpath%20d%3D%22M-10.4%206.3%20L10.4%206.3%20L0.0%20-6.3%20Z%22%20transform%3D%22translate%281766.5%20441.4%29%20rotate%2855.2%29%22%20stroke-width%3D%221.02%22%20stroke-opacity%3D%220.095%22/%3E%3Cpath%20d%3D%22M-16.8%2013.5%20L16.8%2013.5%20L0.0%20-13.5%20Z%22%20transform%3D%22translate%28154.4%20736.2%29%20rotate%2835.8%29%22%20stroke-width%3D%221.07%22%20stroke-opacity%3D%220.102%22/%3E%3Cpath%20d%3D%22M-12.9%2010.4%20L12.9%2010.4%20L0.0%20-10.4%20Z%22%20transform%3D%22translate%28557.2%20736.4%29%20rotate%2816.7%29%22%20stroke-width%3D%220.83%22%20stroke-opacity%3D%220.129%22/%3E%3Cpath%20d%3D%22M-12.4%2010.4%20L12.4%2010.4%20L0.0%20-10.4%20Z%22%20transform%3D%22translate%281588.2%201188.6%29%20rotate%28242.9%29%22%20stroke-width%3D%220.94%22%20stroke-opacity%3D%220.205%22/%3E%3Cpath%20d%3D%22M-19.0%2014.8%20L19.0%2014.8%20L0.0%20-14.8%20Z%22%20transform%3D%22translate%28102.9%20986.8%29%20rotate%28255.7%29%22%20stroke-width%3D%220.73%22%20stroke-opacity%3D%220.061%22/%3E%3Cpath%20d%3D%22M-22.4%2014.9%20L22.4%2014.9%20L0.0%20-14.9%20Z%22%20transform%3D%22translate%282386.1%20144.3%29%20rotate%2814.0%29%22%20stroke-width%3D%220.75%22%20stroke-opacity%3D%220.137%22/%3E%3Cpath%20d%3D%22M-26.6%2015.5%20L26.6%2015.5%20L0.0%20-15.5%20Z%22%20transform%3D%22translate%28439.3%20566.2%29%20rotate%2853.9%29%22%20stroke-width%3D%221.18%22%20stroke-opacity%3D%220.176%22/%3E%3Cpath%20d%3D%22M-24.2%2020.5%20L24.2%2020.5%20L0.0%20-20.5%20Z%22%20transform%3D%22translate%281416.9%20703.1%29%20rotate%28276.5%29%22%20stroke-width%3D%220.82%22%20stroke-opacity%3D%220.149%22/%3E%3Cpath%20d%3D%22M-22.2%2019.6%20L22.2%2019.6%20L0.0%20-19.6%20Z%22%20transform%3D%22translate%281075.9%201443.5%29%20rotate%28297.7%29%22%20stroke-width%3D%220.87%22%20stroke-opacity%3D%220.117%22/%3E%3Cpath%20d%3D%22M-18.6%2014.4%20L18.6%2014.4%20L0.0%20-14.4%20Z%22%20transform%3D%22translate%28275.5%201035.2%29%20rotate%2827.7%29%22%20stroke-width%3D%220.95%22%20stroke-opacity%3D%220.104%22/%3E%3Cpath%20d%3D%22M-19.4%2011.1%20L19.4%2011.1%20L0.0%20-11.1%20Z%22%20transform%3D%22translate%281909.1%201306.6%29%20rotate%283.8%29%22%20stroke-width%3D%221.07%22%20stroke-opacity%3D%220.159%22/%3E%3Cpath%20d%3D%22M-24.7%2017.1%20L24.7%2017.1%20L0.0%20-17.1%20Z%22%20transform%3D%22translate%282138.5%201114.5%29%20rotate%28114.2%29%22%20stroke-width%3D%221.17%22%20stroke-opacity%3D%220.097%22/%3E%3Cpath%20d%3D%22M-13.1%2010.8%20L13.1%2010.8%20L0.0%20-10.8%20Z%22%20transform%3D%22translate%28481.8%20457.3%29%20rotate%2856.2%29%22%20stroke-width%3D%220.81%22%20stroke-opacity%3D%220.115%22/%3E%3Cpath%20d%3D%22M-14.9%2011.1%20L14.9%2011.1%20L0.0%20-11.1%20Z%22%20transform%3D%22translate%282215.4%201383.0%29%20rotate%2813.7%29%22%20stroke-width%3D%220.83%22%20stroke-opacity%3D%220.105%22/%3E%3Cpath%20d%3D%22M-25.3%2015.6%20L25.3%2015.6%20L0.0%20-15.6%20Z%22%20transform%3D%22translate%281151.3%20975.5%29%20rotate%28243.8%29%22%20stroke-width%3D%221.18%22%20stroke-opacity%3D%220.195%22/%3E%3Cpath%20d%3D%22M-14.2%209.9%20L14.2%209.9%20L0.0%20-9.9%20Z%22%20transform%3D%22translate%282193.7%20815.9%29%20rotate%28248.0%29%22%20stroke-width%3D%220.73%22%20stroke-opacity%3D%220.208%22/%3E%3Cpath%20d%3D%22M-12.9%2010.0%20L12.9%2010.0%20L0.0%20-10.0%20Z%22%20transform%3D%22translate%281885.8%20536.1%29%20rotate%28130.7%29%22%20stroke-width%3D%221.07%22%20stroke-opacity%3D%220.181%22/%3E%3Cpath%20d%3D%22M-16.1%2012.0%20L16.1%2012.0%20L0.0%20-12.0%20Z%22%20transform%3D%22translate%281889.8%201285.6%29%20rotate%28286.3%29%22%20stroke-width%3D%220.80%22%20stroke-opacity%3D%220.064%22/%3E%3Cpath%20d%3D%22M-27.1%2017.2%20L27.1%2017.2%20L0.0%20-17.2%20Z%22%20transform%3D%22translate%281718.7%20201.7%29%20rotate%2884.9%29%22%20stroke-width%3D%220.61%22%20stroke-opacity%3D%220.197%22/%3E%3Cpath%20d%3D%22M-27.9%2022.4%20L27.9%2022.4%20L0.0%20-22.4%20Z%22%20transform%3D%22translate%282100.0%2054.0%29%20rotate%2871.7%29%22%20stroke-width%3D%220.79%22%20stroke-opacity%3D%220.141%22/%3E%3Cpath%20d%3D%22M-10.1%208.5%20L10.1%208.5%20L0.0%20-8.5%20Z%22%20transform%3D%22translate%28748.7%20405.5%29%20rotate%28215.6%29%22%20stroke-width%3D%221.06%22%20stroke-opacity%3D%220.089%22/%3E%3Cpath%20d%3D%22M-26.6%2021.7%20L26.6%2021.7%20L0.0%20-21.7%20Z%22%20transform%3D%22translate%282522.8%20399.9%29%20rotate%28188.1%29%22%20stroke-width%3D%221.05%22%20stroke-opacity%3D%220.151%22/%3E%3Cpath%20d%3D%22M-14.1%2011.3%20L14.1%2011.3%20L0.0%20-11.3%20Z%22%20transform%3D%22translate%281251.0%20180.1%29%20rotate%28308.0%29%22%20stroke-width%3D%221.15%22%20stroke-opacity%3D%220.090%22/%3E%3C/g%3E%3C/svg%3E');
+    background-size:cover;
+    background-repeat:no-repeat;
+    background-position:center;
+    opacity:0.22;
+    filter:drop-shadow(0 0 8px rgba(71,181,0,0.12));
+  }
+
+  
+    body::after{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:0;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(71,181,0,0.10), transparent 55%),
+      radial-gradient(circle at 50% 120%, rgba(0,0,0,0.55), transparent 60%),
+      url('data:image/svg+xml,%3Csvg%20xmlns="http://www.w3.org/2000/svg"%20width="180"%20height="180"%3E%0A%20%20%3Cfilter%20id="n"%3E%0A%20%20%20%20%3CfeTurbulence%20type="fractalNoise"%20baseFrequency="0.8"%20numOctaves="3"%20stitchTiles="stitch"/%3E%0A%20%20%20%20%3CfeColorMatrix%20type="matrix"%20values="%0A%20%20%20%20%20%201%200%200%200%200%0A%20%20%20%20%20%200%201%200%200%200%0A%20%20%20%20%20%200%200%201%200%200%0A%20%20%20%20%20%200%200%200%200.18%200"/%3E%0A%20%20%3C/filter%3E%0A%20%20%3Crect%20width="180"%20height="180"%20filter="url(#n)"/%3E%0A%3C/svg%3E');
+    background-size:auto, auto, 180px 180px;
+    background-repeat:no-repeat, no-repeat, repeat;
+    opacity:0.22;
+    mix-blend-mode:overlay;
+  }
+
+
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">OneTapDay <span class="badge">ACCOUNTANT</span></div>
+      <div class="row">
+        <button class="btn ghost" id="logoutBtn">Выйти</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <div class="row between">
+          <div>
+            <h2>Клиенты</h2>
+            <div class="muted">Добавляешь email клиента → он видит приглашение в приложении → принимает → статус становится “Активен”.</div>
+          </div>
+          <button class="btn" id="addClientBtn">+ Добавить клиента</button>
+        </div>
+
+        <div class="hintBox" id="clientsHint">Нажми “Добавить клиента”. Это и есть вход. Никаких “вычинок”, кассы и фактур тут не будет.</div>
+
+        <table id="clientsTable" style="display:none">
+          <thead>
+            <tr>
+              <th>Клиент</th>
+              <th>Статус</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody id="clientsTbody"></tbody>
+        </table>
+      </section>
+
+      <section class="card">
+        <div class="row between">
+          <div>
+            <h2>Запросы документов</h2>
+            <div class="muted">Пока объясняем ценность чеклистом (без загрузок). Это достаточно, чтобы продать пилот.</div>
+          </div>
+          <button class="btn secondary" id="openClientDocsBtn" disabled>Документы</button>
+          <button class="btn" id="newReqBtn" disabled>+ Новый запрос</button>
+        </div>
+
+        <div class="hintBox" id="reqHint">Выбери клиента слева, чтобы создать запрос.</div>
+        <div id="reqDeadlineBar" style="display:none;margin-top:10px"></div>
+        <div id="reqList" style="margin-top:10px"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Add client modal -->
+  <div class="modalBack" id="clientModalBack">
+    <div class="modal">
+      <div class="row between">
+        <div style="font-weight:900">Добавить клиента</div>
+        <button class="smallBtn" id="closeClientModal">Закрыть</button>
+      </div>
+      <div class="field">
+        <label>Email клиента</label>
+        <input id="clientEmail" type="email" placeholder="client@email.com" />
+      </div>
+      <div class="field">
+        <label>Имя (опционально)</label>
+        <input id="clientName" type="text" placeholder="Иван / Anna / …" />
+      </div>
+      <div class="field">
+        <label>Компания (опционально)</label>
+        <input id="clientCompany" type="text" placeholder="ООО / JDG / …" />
+      </div>
+      <div class="err" id="clientErr"></div>
+      <div class="ok" id="clientOk"></div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end">
+        <button class="btn" id="saveClientBtn">Отправить приглашение</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request modal -->
+  <div class="modalBack" id="reqModalBack">
+    <div class="modal">
+      <div class="row between">
+        <div style="font-weight:900">Новый запрос документов</div>
+        <button class="smallBtn" id="closeReqModal">Закрыть</button>
+      </div>
+      <div class="muted" id="reqClientLine" style="margin-top:6px"></div>
+
+      <div class="field">
+        <label>Месяц</label>
+        <select id="reqMonth"></select>
+        <div class="muted small" style="margin-top:6px">Список начинается с 2025 года (YYYY-MM).</div>
+      </div>
+
+      <div class="field">
+        <label>Срок (до) (опционально)</label>
+        <input id="reqDue" type="date" />
+      </div>
+
+      <div class="checkRow">
+        <label class="check"><input id="itBank" type="checkbox" checked /> Выписка банка</label>
+        <label class="check"><input id="itInvoices" type="checkbox" checked /> Фактуры</label>
+        <label class="check"><input id="itReceipts" type="checkbox" /> Чеки</label>
+      </div>
+
+      <div class="field">
+        <label>Другое (опционально)</label>
+        <input id="itOther" type="text" placeholder="Например: договоры, акты, Z-raport" />
+      </div>
+
+      <div class="field">
+        <label>Комментарий (опционально)</label>
+        <textarea id="reqNote" placeholder="Коротко: что именно нужно, крайний срок, формат…"></textarea>
+      </div>
+
+      <div class="err" id="reqErr"></div>
+      <div class="ok" id="reqOk"></div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end">
+        <button class="btn" id="createReqBtn">Создать запрос</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/accountant.js" defer></script>
+</body>
+</html>

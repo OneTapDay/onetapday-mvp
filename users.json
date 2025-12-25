@@ -9,7 +9,8 @@
     "discountUntil": null,
     "demoUsed": false,
     "appState": {},
-    "isAdmin": false
+    "isAdmin": false,
+    "role": "freelance_business"
   },
   "legunlegun@gmail.com": {
     "email": "legunlegun@gmail.com",
@@ -21,7 +22,8 @@
     "discountUntil": null,
     "demoUsed": false,
     "appState": {},
-    "isAdmin": false
+    "isAdmin": false,
+    "role": "freelance_business"
   },
   "1tapday@gmail.com": {
     "email": "1tapday@gmail.com",
@@ -33,12 +35,40 @@
     "discountUntil": null,
     "demoUsed": true,
     "appState": {},
-    "isAdmin": true
+    "isAdmin": true,
+    "role": "freelance_business"
   },
   "aisoulinc@gmail.com": {
     "email": "aisoulinc@gmail.com",
     "salt": "bb6d9720aa3cd30ff6babfbbb880b990",
     "hash": "8dac4d4c1ec3b32a1049e7b6ea7685f955e31edac2c801917501b883c79ca7cf4db3b2447e35d0d0e7641bafe1164a403125250fc5617666f9b35b4dc4d82814:100000:64:sha512",
+    "status": "active",
+    "startAt": "2025-12-23T17:14:09.016Z",
+    "endAt": "2025-12-24T17:14:09.016Z",
+    "discountUntil": null,
+    "demoUsed": true,
+    "appState": {},
+    "isAdmin": false,
+    "role": "freelance_business"
+  },
+  "korean.cosmetics.pl1@gmail.com": {
+    "email": "korean.cosmetics.pl1@gmail.com",
+    "salt": "d69932a67e76f61a621c8b5e4057643c",
+    "hash": "de7ad66ac33184d5a775522ae404faa6957ee3679313c26eea3d58443f2dcac76e4f81279fa7c212589ee00c21facc2513f309b6f5ec8b0fcc2a92966a864755:100000:64:sha512",
+    "status": "none",
+    "startAt": null,
+    "endAt": null,
+    "discountUntil": null,
+    "demoUsed": false,
+    "appState": {},
+    "isAdmin": false,
+    "role": "freelance_business"
+  },
+  "natalisuhodolia68@gmail.com": {
+    "email": "natalisuhodolia68@gmail.com",
+    "role": "freelance_business",
+    "salt": "3e05d0cbec657a8f17f826a5c63b0ea3",
+    "hash": "a3d3efc2418964492c8c76101f544f92243c989dea2a75bf4aed7887e6ad4145796018b3ca34cbfad65a175e677b083d92fd517942d73c3a5948a1f403542103:100000:64:sha512",
     "status": "none",
     "startAt": null,
     "endAt": null,
@@ -47,18 +77,67 @@
     "appState": {},
     "isAdmin": false
   },
-  "korean.cosmetics.pl1@gmail.com": {
-    "email": "korean.cosmetics.pl1@gmail.com",
+  "test1@example.com": {
+    "email": "test1@example.com",
     "role": "freelance_business",
-    "salt": "5f9afaa5c1e533103ec5325ac845d391",
-    "hash": "db27ec0c0327dadfb09ab523b53aad659bbf21de22a04fb9e734058aa2a3e3c78aceb33ae4686b96ad4917f0ea794ca53e87a83c071718f5d33e949a50c16d4e:100000:64:sha512",
+    "salt": "cd381851baed8f066b9134956a587159",
+    "hash": "3c5fd497bd4fe3a3224fc54697b776c42830cbf2038c0b78b1f4b4ada9a29bfacb7e232dbff0f65198fc611c8b87009b465bbb8307806f5213dc84f9ed2777d7:100000:64:sha512",
     "status": "none",
     "startAt": null,
     "endAt": null,
     "discountUntil": null,
     "demoUsed": false,
-    "acctTrialUsed": false,
-    "acctProTrialUsed": false,
+    "appState": {},
+    "isAdmin": false
+  },
+  "test23@gmail.com": {
+    "email": "test23@gmail.com",
+    "salt": "1acaaeaa2da5cdc31542e234fe38bc4c",
+    "hash": "3fd42689de29b0b45d815aad4f285f9fbe3367b4a209b334c159dd12fadedbc04d0fcab7e8d5dc7ac80ac7276b5ae3bae42f619dcb7f568c3dd76973106b7191:100000:64:sha512",
+    "status": "none",
+    "startAt": null,
+    "endAt": null,
+    "discountUntil": null,
+    "demoUsed": false,
+    "appState": {},
+    "isAdmin": false,
+    "role": "business"
+  },
+  "test223@gmail.com": {
+    "email": "test223@gmail.com",
+    "salt": "8e2cb996d5d4516a6c0a77a0d409c72b",
+    "hash": "d53c7042f07bd7f523773a6af6c2ba0cef48328cb12c6ff0e955d3e04e60d28212d968a9ec1f5cf0448f4c0e6424ac97abdff2ba1620853c8c4fafc4bc6f742b:100000:64:sha512",
+    "role": "accountant",
+    "status": "none",
+    "startAt": null,
+    "endAt": null,
+    "discountUntil": null,
+    "demoUsed": false,
+    "appState": {},
+    "isAdmin": false
+  },
+  "12tapday@gmail.com": {
+    "email": "12tapday@gmail.com",
+    "role": "accountant",
+    "salt": "747c621420572551248f6964812ece46",
+    "hash": "83f51d6e9ffdc7a3caaa5b2f6c01c88d655da3b225ba3d1a3e20b81c686b44780c75a3eebe2d65f527d8ff876d55267c165d1d9e2437164b1a097a810d1da8e7:100000:64:sha512",
+    "status": "ended",
+    "startAt": "2025-12-23T22:20:25.846Z",
+    "endAt": "2025-12-24T22:20:25.846Z",
+    "discountUntil": null,
+    "demoUsed": true,
+    "appState": {},
+    "isAdmin": false
+  },
+  "amina.samarets@gmail.com": {
+    "email": "amina.samarets@gmail.com",
+    "salt": "4e12cf9d4c679100d2bf675b2d8765b6",
+    "hash": "ae07227e691ce875f14f3f2fb17590b366e4b9af9db27819e057083034f1a84e5257319080fa432e5d3ca8a104961a3a088d9bd472f551101f05aea2f5e0c8e5:100000:64:sha512",
+    "status": "active",
+    "startAt": "2025-12-24T09:50:41.346Z",
+    "endAt": "2025-12-25T09:50:41.346Z",
+    "discountUntil": null,
+    "demoUsed": true,
     "appState": {},
     "isAdmin": false
   }

@@ -1,0 +1,297 @@
+{
+  "users": {
+    "1tapday@gmail.com": {
+      "folders": {
+        "df_801cb156392b": {
+          "name": "zopa",
+          "createdAt": "2025-12-24T12:30:43.468Z"
+        },
+        "df_33e45baf996a": {
+          "name": "2025-12 • Входящие фактуры / закупы",
+          "createdAt": "2025-12-24T14:45:44.925Z",
+          "meta": {
+            "month": "2025-12",
+            "category": "incoming",
+            "smart": true
+          }
+        },
+        "df_b723ddfe6dee": {
+          "name": "2025-12 • Податки / ZUS / PIT",
+          "createdAt": "2025-12-24T14:45:46.537Z",
+          "meta": {
+            "month": "2025-12",
+            "category": "tax",
+            "smart": true
+          },
+          "sharedWithAccountant": false
+        },
+        "df_cc05c46d9ac6": {
+          "name": "2025-12 • Выставленные фактуры / доход",
+          "createdAt": "2025-12-24T14:45:47.313Z",
+          "meta": {
+            "month": "2025-12",
+            "category": "outgoing",
+            "smart": true
+          }
+        },
+        "df_d959ac92ac9e": {
+          "name": "2025-12 • Подтверждения платежей",
+          "createdAt": "2025-12-24T14:45:48.528Z",
+          "meta": {
+            "month": "2025-12",
+            "category": "proof",
+            "smart": true
+          },
+          "sharedWithAccountant": true
+        },
+        "df_dc6a3311054d": {
+          "name": "2025-09 • Подтверждения платежей",
+          "createdAt": "2025-12-24T14:47:34.957Z",
+          "meta": {
+            "month": "2025-09",
+            "category": "proof",
+            "smart": true
+          }
+        },
+        "df_7221fa1c124b": {
+          "name": "2025-12 • Другое",
+          "createdAt": "2025-12-24T14:49:00.347Z",
+          "meta": {
+            "month": "2025-12",
+            "category": "other",
+            "smart": true
+          }
+        },
+        "df_dbe848239eaf": {
+          "name": "2026-01 • Податки / ZUS / PIT",
+          "createdAt": "2025-12-24T19:09:35.524Z",
+          "meta": {
+            "month": "2026-01",
+            "category": "tax",
+            "smart": true
+          },
+          "sharedWithAccountant": true
+        },
+        "df_6056ebdff5c6": {
+          "name": "2026-01 • Подтверждения платежей",
+          "createdAt": "2025-12-24T19:09:37.505Z",
+          "meta": {
+            "month": "2026-01",
+            "category": "proof",
+            "smart": true
+          },
+          "sharedWithAccountant": true
+        },
+        "df_7f6eb6525a81": {
+          "name": "mhfsns",
+          "createdAt": "2025-12-25T00:24:34.279Z",
+          "sharedWithAccountant": true
+        }
+      },
+      "fileIds": [
+        "dfile_26593da298efb160",
+        "dfile_1e38096d59d428d2",
+        "dfile_32926708572429c8",
+        "dfile_d721f2b5957889e3",
+        "dfile_aa29f50efb5278e1",
+        "dfile_06d2487cc876a29a",
+        "dfile_be038fdfca7f47f9",
+        "dfile_7eff5870b7439b46",
+        "dfile_4b7b488f2d2eb311",
+        "dfile_953b5947e86881ec",
+        "dfile_1972d5d17a3be4ce",
+        "dfile_f355c5c2cfa3219f",
+        "dfile_bfa6ad8ec11be858",
+        "dfile_a0df283fe8646889"
+      ],
+      "smart": {
+        "2025-12:incoming": "df_33e45baf996a",
+        "2025-12:tax": "df_b723ddfe6dee",
+        "2025-12:outgoing": "df_cc05c46d9ac6",
+        "2025-12:proof": "df_d959ac92ac9e",
+        "2025-09:proof": "df_dc6a3311054d",
+        "2025-12:other": "df_7221fa1c124b",
+        "2026-01:tax": "df_dbe848239eaf",
+        "2026-01:proof": "df_6056ebdff5c6"
+      }
+    }
+  },
+  "files": {
+    "dfile_26593da298efb160": {
+      "id": "dfile_26593da298efb160",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_801cb156392b",
+      "fileName": "icon-512.png",
+      "fileMime": "image/png",
+      "fileSize": 31645,
+      "filePath": "vault_uploads/dfile_26593da298efb160_icon-512.png.png",
+      "fileUrl": "/api/docs/file/dfile_26593da298efb160",
+      "uploadedAt": "2025-12-24T12:30:58.410Z"
+    },
+    "dfile_1e38096d59d428d2": {
+      "id": "dfile_1e38096d59d428d2",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_801cb156392b",
+      "fileName": "Invoice-CAQCJH65-0001.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 24486,
+      "filePath": "vault_uploads/dfile_1e38096d59d428d2_Invoice-CAQCJH65-0001.pdf.pdf",
+      "fileUrl": "/api/docs/file/dfile_1e38096d59d428d2",
+      "uploadedAt": "2025-12-24T12:30:58.423Z"
+    },
+    "dfile_32926708572429c8": {
+      "id": "dfile_32926708572429c8",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_801cb156392b",
+      "fileName": "OneTapDay_IntroDeck_Pre-Seed___Exit-appendix.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 8442637,
+      "filePath": "vault_uploads/dfile_32926708572429c8_OneTapDay_IntroDeck_Pre-Seed___Exit-appendix.pdf.pdf",
+      "fileUrl": "/api/docs/file/dfile_32926708572429c8",
+      "uploadedAt": "2025-12-24T12:30:58.659Z"
+    },
+    "dfile_d721f2b5957889e3": {
+      "id": "dfile_d721f2b5957889e3",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "apple-touch-icon.png",
+      "fileMime": "image/png",
+      "fileSize": 31645,
+      "filePath": "vault_uploads/dfile_d721f2b5957889e3_apple-touch-icon.png.png",
+      "fileUrl": "/api/docs/file/dfile_d721f2b5957889e3",
+      "uploadedAt": "2025-12-24T14:47:28.917Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_aa29f50efb5278e1": {
+      "id": "dfile_aa29f50efb5278e1",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "arkusz-spisu-z-natury-160-pozycji.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 393708,
+      "filePath": "vault_uploads/dfile_aa29f50efb5278e1_arkusz-spisu-z-natury-160-pozycji.pdf.pdf",
+      "fileUrl": "/api/docs/file/dfile_aa29f50efb5278e1",
+      "uploadedAt": "2025-12-24T14:47:28.945Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_06d2487cc876a29a": {
+      "id": "dfile_06d2487cc876a29a",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "icon-192.png",
+      "fileMime": "image/png",
+      "fileSize": 31645,
+      "filePath": "vault_uploads/dfile_06d2487cc876a29a_icon-192.png.png",
+      "fileUrl": "/api/docs/file/dfile_06d2487cc876a29a",
+      "uploadedAt": "2025-12-24T14:47:28.954Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_be038fdfca7f47f9": {
+      "id": "dfile_be038fdfca7f47f9",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "icon-512.png",
+      "fileMime": "image/png",
+      "fileSize": 31645,
+      "filePath": "vault_uploads/dfile_be038fdfca7f47f9_icon-512.png.png",
+      "fileUrl": "/api/docs/file/dfile_be038fdfca7f47f9",
+      "uploadedAt": "2025-12-24T14:47:28.967Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_7eff5870b7439b46": {
+      "id": "dfile_7eff5870b7439b46",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "Invoice-CAQCJH65-0001.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 24486,
+      "filePath": "vault_uploads/dfile_7eff5870b7439b46_Invoice-CAQCJH65-0001.pdf.pdf",
+      "fileUrl": "/api/docs/file/dfile_7eff5870b7439b46",
+      "uploadedAt": "2025-12-24T14:47:28.976Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_4b7b488f2d2eb311": {
+      "id": "dfile_4b7b488f2d2eb311",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "OneTapDay_IntroDeck_Pre-Seed___Exit-appendix.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 8442637,
+      "filePath": "vault_uploads/dfile_4b7b488f2d2eb311_OneTapDay_IntroDeck_Pre-Seed___Exit-appendix.pdf.pdf",
+      "fileUrl": "/api/docs/file/dfile_4b7b488f2d2eb311",
+      "uploadedAt": "2025-12-24T14:47:29.171Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_953b5947e86881ec": {
+      "id": "dfile_953b5947e86881ec",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "OneTapDay_IntroDeck_Pre-Seed.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 7572448,
+      "filePath": "vault_uploads/dfile_953b5947e86881ec_OneTapDay_IntroDeck_Pre-Seed.pdf.pdf",
+      "fileUrl": "/api/docs/file/dfile_953b5947e86881ec",
+      "uploadedAt": "2025-12-24T14:47:29.354Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_1972d5d17a3be4ce": {
+      "id": "dfile_1972d5d17a3be4ce",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "photo_2025-12-05_18-55-03.jpg",
+      "fileMime": "image/jpeg",
+      "fileSize": 113180,
+      "filePath": "vault_uploads/dfile_1972d5d17a3be4ce_photo_2025-12-05_18-55-03.jpg.jpg",
+      "fileUrl": "/api/docs/file/dfile_1972d5d17a3be4ce",
+      "uploadedAt": "2025-12-24T14:47:29.380Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_f355c5c2cfa3219f": {
+      "id": "dfile_f355c5c2cfa3219f",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "photo_2025-12-05_18-55-09.jpg",
+      "fileMime": "image/jpeg",
+      "fileSize": 102870,
+      "filePath": "vault_uploads/dfile_f355c5c2cfa3219f_photo_2025-12-05_18-55-09.jpg.jpg",
+      "fileUrl": "/api/docs/file/dfile_f355c5c2cfa3219f",
+      "uploadedAt": "2025-12-24T14:47:29.400Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_bfa6ad8ec11be858": {
+      "id": "dfile_bfa6ad8ec11be858",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_d959ac92ac9e",
+      "fileName": "photo_2025-12-06_18-59-25.jpg",
+      "fileMime": "image/jpeg",
+      "fileSize": 69406,
+      "filePath": "vault_uploads/dfile_bfa6ad8ec11be858_photo_2025-12-06_18-59-25.jpg.jpg",
+      "fileUrl": "/api/docs/file/dfile_bfa6ad8ec11be858",
+      "uploadedAt": "2025-12-24T14:47:29.411Z",
+      "month": "2025-12",
+      "category": "proof"
+    },
+    "dfile_a0df283fe8646889": {
+      "id": "dfile_a0df283fe8646889",
+      "ownerEmail": "1tapday@gmail.com",
+      "folderId": "df_b723ddfe6dee",
+      "fileName": "_______________06.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 79184,
+      "filePath": "vault_uploads/dfile_a0df283fe8646889________________06.pdf.pdf",
+      "fileUrl": "/api/docs/file/dfile_a0df283fe8646889",
+      "uploadedAt": "2025-12-25T00:24:02.977Z",
+      "month": "2025-12",
+      "category": "tax"
+    }
+  }
+}

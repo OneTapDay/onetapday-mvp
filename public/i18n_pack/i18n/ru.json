@@ -269,7 +269,13 @@
     "btn_start_demo": "Запустить демо (24ч)",
     "btn_pay_sub": "Оплатить подписку",
     "btn_end_demo": "Закончить демо",
-    "sub_hint": "Оплата только через настройки. Если есть Stripe-ссылка — положи в localStorage."
+    "sub_hint": "Оплата только через настройки. Если есть Stripe-ссылка — положи в localStorage.",
+    "clients_title": "Клиенты",
+    "clients_desc": "Каждый клиент = отдельный набор данных. В Trial можно вести до 3 клиентов.",
+    "btn_add_client": "+ Клиент",
+    "btn_remove_client": "Удалить",
+    "clients_hint_trial": "Trial: {n}/3 клиентов.",
+    "clients_hint_pro": "PRO: клиентов без лимита."
   },
   "buttons": {
     "sync": "Синхронизация",

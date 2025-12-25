@@ -680,7 +680,8 @@ function getVal(obj,keys){
 // ==== TREND & SPENDING PANELS ====
 
 // Build daily net movement (bank + cash) for last 30 days
-function buildTrendSeries(){
+function buildTrendSeries(days){
+  days = (days && isFinite(days)) ? Math.max(1, Math.floor(days)) : 30;
   const map = {};
   const txArr = Array.isArray(tx) ? tx : [];
   const kasaArr = Array.isArray(kasa) ? kasa : [];
@@ -703,7 +704,7 @@ function buildTrendSeries(){
 
   const dates = Object.keys(map).sort();
   if(!dates.length) return [];
-  const last = dates.slice(-30);
+  const last = dates.slice(-days);
   return last.map(d=>({date:d, value:map[d]}));
 }
 
@@ -812,6 +813,426 @@ function initTrendInteractions(){
   }, {passive:true});
   wrap.addEventListener('touchend', clearTrendHover);
 }
+
+// ===== Analytics (full trend) =====
+let __analyticsDays = 365;
+
+function setAnalyticsDays(d){
+  const v = parseInt(d, 10);
+  if (!v || !isFinite(v)) return;
+  __analyticsDays = v;
+  try { localStorage.setItem('otd_analytics_days', String(v)); } catch(e){}
+}
+function getAnalyticsDays(){
+  try {
+    const raw = localStorage.getItem('otd_analytics_days');
+    const v = parseInt(raw, 10);
+    if (v && isFinite(v)) return v;
+  } catch(e){}
+  return __analyticsDays || 365;
+}
+function analyticsLabel(days){
+  if (days <= 30) return 'Ostatnie 30 dni';
+  if (days <= 90) return 'Ostatnie 90 dni';
+  return 'Ostatnie 12 miesięcy';
+}
+function setAnalyticsButtons(days){
+  const b30 = document.getElementById('analyticsRange30');
+  const b90 = document.getElementById('analyticsRange90');
+  const b365 = document.getElementById('analyticsRange365');
+
+  [b30,b90,b365].forEach(b=>{
+    if(!b) return;
+    b.classList.remove('on');
+    b.setAttribute('aria-selected','false');
+  });
+
+  let active = null;
+  if(days <= 30) active = b30;
+  else if(days <= 90) active = b90;
+  else active = b365;
+
+  if(active){
+    active.classList.add('on');
+    active.setAttribute('aria-selected','true');
+  }
+
+  const badge = document.getElementById('analyticsLineBadge');
+  if (badge) badge.textContent = analyticsLabel(days);
+  const hint = document.getElementById('analyticsRangeLabel');
+  if (hint) hint.textContent = analyticsLabel(days);
+}
+
+function fmtPLN2(n){
+  const v = Number(n||0);
+  const sign = v < 0 ? '-' : '';
+  const abs = Math.abs(v);
+  const s = abs.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+  return `${sign}${s} PLN`;
+}
+
+function buildAnalyticsSeries(days){
+  const d = Math.max(1, Math.floor(Number(days||30)));
+  const now = new Date();
+  const end = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const start = new Date(end.getTime() - (d-1)*86400000);
+
+  const map = {};
+  for(let i=0;i<d;i++){
+    const dt = new Date(start.getTime() + i*86400000);
+    const iso = dt.toISOString().slice(0,10);
+    map[iso] = 0;
+  }
+
+  (tx||[]).forEach(r=>{
+    const iso = toISO(getVal(r,["Data księgowania","Data","date","Дата"])) || '';
+    if(!iso || !(iso in map)) return;
+    const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])) || 0;
+    if(!amt) return;
+    map[iso] += amt;
+  });
+
+  (kasa||[]).forEach(k=>{
+    const iso = String(k.date||'').slice(0,10);
+    if(!iso || !(iso in map)) return;
+    let amt = Number(k.amount||0);
+    if(!amt) return;
+    const t = String(k.type||'').toLowerCase();
+    if(t.includes('wyd')) amt = -Math.abs(amt);
+    else if(t.includes('przy')) amt = Math.abs(amt);
+    else amt = 0;
+    map[iso] += amt;
+  });
+
+  return Object.keys(map).sort().map(d=>({date:d, value: map[d]}));
+}
+
+function computeAnalyticsSummary(days){
+  const d = Math.max(1, Math.floor(Number(days||30)));
+  const now = new Date();
+  const end = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const endIso = end.toISOString().slice(0,10);
+  const start = new Date(end.getTime() - (d-1)*86400000);
+  const startIso = start.toISOString().slice(0,10);
+
+  const inRange = (iso)=> iso && iso >= startIso && iso <= endIso;
+
+  let income = 0;
+  let expense = 0;
+  let net = 0;
+  const cat = {};
+
+  // bank tx
+  (tx||[]).forEach(r=>{
+    const iso = toISO(getVal(r,["Data księgowania","Data","date","Дата"])) || '';
+    if(!inRange(iso)) return;
+
+    const amt = asNum(getVal(r,["Kwota","Kwota","Kwота","amount","Kwota_raw"])) || 0;
+    if(!amt) return;
+
+    net += amt;
+    if(amt > 0) income += amt;
+    else expense += Math.abs(amt);
+
+    if(amt < 0){
+      const cidRaw = getVal(r,["Kategoria","Category","категория","Категория","KategoriaId","cat","categoryId"]);
+      const key = cidRaw && String(cidRaw).trim() ? String(cidRaw).trim() : '__uncat__';
+      cat[key] = (cat[key]||0) + Math.abs(amt);
+    }
+  });
+
+  // cash
+  (kasa||[]).forEach(k=>{
+    const iso = String(k.date||'').slice(0,10);
+    if(!inRange(iso)) return;
+
+    let amt = Number(k.amount||0);
+    if(!amt) return;
+
+    const t = String(k.type||'').toLowerCase();
+    if(t.includes('wyd')){
+      const v = Math.abs(amt);
+      net -= v; expense += v;
+      const cidRaw = (k.category||k.cat||'');
+      const key = cidRaw && String(cidRaw).trim() ? String(cidRaw).trim() : '__uncat__';
+      cat[key] = (cat[key]||0) + v;
+    }else if(t.includes('przy')){
+      const v = Math.abs(amt);
+      net += v; income += v;
+    }
+  });
+
+  const totalExpense = expense || 0;
+
+  // labels
+  const cats = (typeof getAllSpCats === 'function') ? getAllSpCats() : [];
+  const labelForKey = (k)=>{
+    if(k === '__uncat__') return 'Без категории';
+    if(k === '__other__') return '📦 Inne';
+    const found = cats.find(c=>String(c.id)===String(k));
+    if(found) return (found.emoji ? (found.emoji+' '+found.label) : found.label);
+    return String(k);
+  };
+
+  let items = Object.entries(cat).map(([key,val])=>({key, val}));
+  items.sort((a,b)=>b.val-a.val);
+
+  const top = items.slice(0,6);
+  const rest = items.slice(6).reduce((s,x)=>s+x.val,0);
+  if(rest > 0) top.push({key:'__other__', val: rest});
+
+  const rows = top.map((x, idx)=>{
+    const pct = totalExpense ? (x.val/totalExpense) : 0;
+    const alpha = Math.max(0.25, 0.95 - idx*0.12);
+    return { key: x.key, label: labelForKey(x.key), value: x.val, pct, alpha };
+  });
+
+  return { income, expense, net, rows, totalExpense, startIso, endIso };
+}
+
+function renderLineSvg(series, fillId){
+  if(!series || !series.length) return '<div class="muted small">Brak danych.</div>';
+
+  const values = series.map(p=>p.value);
+  const max = Math.max.apply(null, values);
+  const min = Math.min.apply(null, values);
+  const range = (max - min) || 1;
+
+  const pts = series.map((p, idx)=>{
+    const x = series.length === 1 ? 50 : (idx/(series.length-1))*100;
+    const norm = (p.value - min)/range;
+    const y = 92 - norm*72;
+    return x.toFixed(2)+','+y.toFixed(2);
+  }).join(' ');
+
+  return `
+<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Trend">
+  <defs>
+    <linearGradient id="${fillId}" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35"></stop>
+      <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"></stop>
+    </linearGradient>
+  </defs>
+  <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+  <polyline points="${pts} 100,100 0,100" fill="url(#${fillId})" stroke="none"></polyline>
+</svg>`.trim();
+}
+
+function renderAnalyticsDonut(rows, total){
+  const host = document.getElementById('analyticsDonut');
+  const center = document.getElementById('analyticsDonutTotal');
+  const sub = document.querySelector('.donutSub');
+  const hint = document.getElementById('analyticsCatsHint');
+  if(center) center.textContent = total ? fmtPLN2(total) : '—';
+  if(sub) sub.textContent = 'wydatki';
+  if(hint) hint.textContent = rows && rows.length ? ('Top ' + rows.length) : 'Top';
+
+  if(!host) return;
+
+  if(!rows || !rows.length || !total){
+    host.innerHTML = '<div class="muted small" style="padding:32px 0">Brak danych.</div>';
+    return;
+  }
+
+  const r = 46;
+  const c = 2*Math.PI*r;
+  const gap = 2.2;
+
+  let acc = 0;
+  const segs = rows.map((row, idx)=>{
+    const rawLen = row.pct * c;
+    const len = Math.max(0, rawLen - gap);
+    const dash = `${len.toFixed(2)} ${(c-len).toFixed(2)}`;
+    const off = (-acc).toFixed(2);
+    acc += (len + gap);
+    const alpha = row.alpha != null ? row.alpha : 0.7;
+    return `<circle data-key="${escapeHtml(String(row.key))}"
+      cx="60" cy="60" r="${r}" fill="none"
+      stroke="rgba(71,181,0,${alpha.toFixed(2)})"
+      stroke-width="10" stroke-linecap="round"
+      stroke-dasharray="${dash}" stroke-dashoffset="${off}"></circle>`;
+  }).join('');
+
+  host.innerHTML = `
+<svg viewBox="0 0 120 120" width="220" height="220" aria-label="Wydatki po kategoriach">
+  <g transform="rotate(-90 60 60)">
+    <circle cx="60" cy="60" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="10"></circle>
+    ${segs}
+  </g>
+</svg>`.trim();
+}
+
+function renderAnalyticsCatList(rows, total){
+  const list = document.getElementById('analyticsCatList');
+  if(!list) return;
+  if(!rows || !rows.length || !total){
+    list.innerHTML = '<div class="muted small">Brak danych do kategorii.</div>';
+    return;
+  }
+  list.innerHTML = rows.map((r, idx)=>{
+    const pct = Math.round((r.pct||0)*100);
+    const w = Math.max(0, Math.min(100, (r.pct||0)*100));
+    const alpha = r.alpha != null ? r.alpha : 0.7;
+    return `
+<div class="catItem" data-key="${escapeHtml(String(r.key))}" style="cursor:pointer">
+  <div class="catRow">
+    <span class="catDot" style="background:rgba(71,181,0,${alpha.toFixed(2)});box-shadow:0 0 0 4px rgba(71,181,0,${Math.min(0.18, alpha*0.18).toFixed(2)})"></span>
+    <div class="catName">${escapeHtml(String(r.label))}</div>
+    <div class="catAmt">${escapeHtml(fmtPLN2(r.value))}</div>
+  </div>
+  <div class="catBar" aria-label="${pct}%">
+    <i style="width:${w.toFixed(1)}%"></i>
+  </div>
+</div>`.trim();
+  }).join('');
+
+  // click = focus donut center
+  list.querySelectorAll('.catItem').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const key = el.getAttribute('data-key');
+      const row = (rows||[]).find(x=>String(x.key)===String(key));
+      const center = document.getElementById('analyticsDonutTotal');
+      const sub = document.querySelector('.donutSub');
+      if(row && center){
+        center.textContent = fmtPLN2(row.value);
+        if(sub) sub.textContent = row.label;
+      }else{
+        if(center) center.textContent = fmtPLN2(total);
+        if(sub) sub.textContent = 'wydatki';
+      }
+    });
+  });
+}
+
+function openAnalyticsModal(){
+  const modal = document.getElementById('analyticsFullModal');
+  if(!modal) return;
+  modal.classList.add('show');
+  modal.setAttribute('aria-hidden','false');
+
+  // render full chart
+  const days = getAnalyticsDays();
+  const full = document.getElementById('analyticsFullChart');
+  const lbl = document.getElementById('analyticsFullLabel');
+  if(lbl) lbl.textContent = analyticsLabel(days);
+  if(full){
+    const series = buildAnalyticsSeries(days);
+    full.innerHTML = renderLineSvg(series, 'aFillFull');
+  }
+}
+function closeAnalyticsModal(){
+  const modal = document.getElementById('analyticsFullModal');
+  if(!modal) return;
+  modal.classList.remove('show');
+  modal.setAttribute('aria-hidden','true');
+}
+
+function exportAnalyticsCSV(){
+  const days = getAnalyticsDays();
+  const series = buildAnalyticsSeries(days);
+  if(!series || !series.length) return;
+
+  const rows = ['date,value'];
+  series.forEach(p=> rows.push(`${p.date},${Number(p.value||0)}`));
+  const blob = new Blob([rows.join('\\n')], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `onetapday-analytics-${days}d.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1500);
+}
+
+function renderAnalyticsChart(){
+  const wrap = document.getElementById('analyticsChart');
+  if (!wrap) return;
+
+  const days = getAnalyticsDays();
+  setAnalyticsButtons(days);
+
+  const labelEl = document.getElementById('analyticsRangeLabel');
+  if (labelEl) labelEl.textContent = analyticsLabel(days);
+
+  const s = computeAnalyticsSummary(days);
+  const inEl = document.getElementById('analyticsIn');
+  const outEl = document.getElementById('analyticsOut');
+  const netEl = document.getElementById('analyticsNet');
+  if(inEl) inEl.textContent = fmtPLN2(s.income);
+  if(outEl) outEl.textContent = fmtPLN2(s.expense);
+  if(netEl) netEl.textContent = fmtPLN2(s.net);
+
+  // line chart
+  const series = buildAnalyticsSeries(days);
+  wrap.innerHTML = renderLineSvg(series, 'aFill');
+  // donut + list
+  renderAnalyticsDonut(s.rows, s.totalExpense);
+  renderAnalyticsCatList(s.rows, s.totalExpense);
+
+  const fullBtn = document.getElementById('analyticsFullBtn');
+  if(fullBtn) fullBtn.onclick = openAnalyticsModal;
+}
+
+function initAnalyticsUI(){
+  const b30 = document.getElementById('analyticsRange30');
+  const b90 = document.getElementById('analyticsRange90');
+  const b365 = document.getElementById('analyticsRange365');
+
+  if (b30) b30.addEventListener('click', ()=>{ setAnalyticsDays(30); renderAnalyticsChart(); });
+  if (b90) b90.addEventListener('click', ()=>{ setAnalyticsDays(90); renderAnalyticsChart(); });
+  if (b365) b365.addEventListener('click', ()=>{ setAnalyticsDays(365); renderAnalyticsChart(); });
+
+  // open modal
+  const fullBtn = document.getElementById('analyticsFullBtn');
+  if(fullBtn) fullBtn.addEventListener('click', openAnalyticsModal);
+
+  const close1 = document.getElementById('analyticsFullClose');
+  const close2 = document.getElementById('analyticsFullClose2');
+  if(close1) close1.addEventListener('click', closeAnalyticsModal);
+  if(close2) close2.addEventListener('click', closeAnalyticsModal);
+
+  const modal = document.getElementById('analyticsFullModal');
+  if(modal){
+    modal.addEventListener('click', (e)=>{
+      if(e.target === modal) closeAnalyticsModal();
+    });
+  }
+
+  const exportBtn = document.getElementById('analyticsExportCSV');
+  if(exportBtn) exportBtn.addEventListener('click', exportAnalyticsCSV);
+
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape') closeAnalyticsModal();
+  });
+
+  const chart = document.getElementById('analyticsChart');
+  if(chart){
+    chart.addEventListener('click', openAnalyticsModal);
+    chart.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        openAnalyticsModal();
+      }
+    });
+  }
+
+  // click on home chart -> analytics
+  const card = document.getElementById('trendCard') || document.getElementById('trendChart');
+  if (card){
+    try { card.style.cursor = 'pointer'; } catch(e){}
+    card.addEventListener('click', ()=>{
+      try { if (window.appGoSection) window.appGoSection('analytics'); } catch(e){}
+    });
+    card.addEventListener('keydown', (e)=>{
+      if (e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        try { if (window.appGoSection) window.appGoSection('analytics'); } catch(err){}
+      }
+    });
+  }
+}
+
 // ===== Categories & spending breakdown =====
 
 const DEFAULT_SP_CATS = [
@@ -2368,6 +2789,14 @@ if(btn.id==='spOpenListBtn'){
 }
 
   }, true);
+
+  // Default screen: Panel (pulpit)
+  window.addEventListener('load', () => {
+    try {
+      if (window.appGoSection) window.appGoSection('pulpit');
+    } catch (_) {}
+  }, { once: true });
+
 })();
 
 /* ==== STATE ==== */
@@ -3482,26 +3911,66 @@ function _otdSetWorkspaces(list){
 function _otdEnsureWorkspaces(){
   const role = localStorage.getItem(ROLE_KEY) || 'freelance_business';
   let list = _otdGetWorkspaces();
-  if (!Array.isArray(list) || list.length === 0) {
-    if (role === 'accountant') {
-      list = [{ id: 'c1', name: 'Клиент 1', type: 'client' }];
+  if (!Array.isArray(list)) list = [];
+
+  // Only accountants have multiple client workspaces.
+  if (role !== 'accountant') {
+    // Collapse any legacy multi-workspace setup into a single workspace "main"
+    const email = localStorage.getItem(USER_KEY) || '';
+    const safe = _otdSafeEmailKey(email);
+    const wsKeys = ['kasa','tx_manual_import','bills_manual_import','accMeta','invoice_templates','inventory_templates'];
+
+    const makeWsKey = (baseKey, wsId)=>{
+      if (!safe) return baseKey;
+      return baseKey + '::' + safe + '::' + wsId;
+    };
+
+    const copyIfEmpty = (fromId, toId)=>{
+      if (!safe) return;
+      wsKeys.forEach(k=>{
+        const fromK = makeWsKey(k, fromId);
+        const toK = makeWsKey(k, toId);
+        const fromV = localStorage.getItem(fromK);
+        if (fromV == null) return;
+        const toV = localStorage.getItem(toK);
+        if (toV == null || toV === '' || toV === 'null' || toV === '[]' || toV === '{}') {
+          try { localStorage.setItem(toK, fromV); } catch(e){}
+        }
+      });
+    };
+
+    const existingIds = (list || []).map(w=>w && w.id).filter(Boolean);
+    if (!existingIds.includes('main')) {
+      // best-effort migration from the earlier accidental "personal/business" split
+      copyIfEmpty('personal', 'main');
+      copyIfEmpty('business', 'main');
+      list = [{ id: 'main', name: 'Основной', type: 'freelance_business' }];
+      _otdSetWorkspaces(list);
     } else {
-      list = [
-        { id: 'personal', name: 'Личный бизнес', type: 'freelance_business' },
-        { id: 'business', name: 'OneTapDay.ai / Бизнес', type: 'freelance_business' }
-      ];
+      const main = (list || []).find(w=>w && w.id==='main') || { id:'main', name:'Основной', type:'freelance_business' };
+      list = [{ id: 'main', name: (main.name || 'Основной'), type: 'freelance_business' }];
+      _otdSetWorkspaces(list);
     }
+
+    _otdSetWsId('main');
+    return { list, current: 'main', role };
+  }
+
+  // Accountant: client workspaces
+  if (list.length === 0) {
+    list = [{ id: 'c1', name: 'Клиент 1', type: 'client' }];
     _otdSetWorkspaces(list);
   }
 
   let cur = _otdGetWsId();
   if (!cur || !list.find(w => w && w.id === cur)) {
-    cur = (list[0] && list[0].id) ? list[0].id : 'personal';
+    cur = (list[0] && list[0].id) ? list[0].id : 'c1';
     _otdSetWsId(cur);
   }
 
   return { list, current: cur, role };
 }
+
 
 function renderWorkspaceControls(){
   const card = $id('workspaceCard');
@@ -3516,6 +3985,23 @@ function renderWorkspaceControls(){
 
   const { list, current, role } = _otdEnsureWorkspaces();
 
+  // Only accountants should see/select workspaces (clients)
+  if (role !== 'accountant') {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+
+  const T = (key, fallback)=>{
+    try{
+      if (window.i18n && typeof window.i18n.t === 'function') {
+        const v = window.i18n.t(key);
+        if (v && v !== key) return String(v);
+      }
+    }catch(e){}
+    return fallback;
+  };
+
   // Fill select
   sel.innerHTML = '';
   (list || []).forEach(w => {
@@ -3527,24 +4013,21 @@ function renderWorkspaceControls(){
     sel.appendChild(opt);
   });
 
-  if (role === 'accountant') {
-    title.textContent = 'Клиенты';
-    if (desc) desc.textContent = 'Каждый клиент = отдельный набор данных. В Trial можно вести до 3 клиентов.';
-    if (addBtn) { addBtn.style.display = ''; addBtn.textContent = '+ Клиент'; }
-    if (rmBtn) { rmBtn.style.display = ''; rmBtn.textContent = 'Удалить'; rmBtn.disabled = list.length <= 1; }
-    if (hint) {
-      hint.textContent = _otdIsAccountantPro()
-        ? 'PRO: клиентов без лимита.'
-        : `Trial: ${list.length}/3 клиентов.`;
+  title.textContent = T('settings.clients_title', 'Клиенты');
+  if (desc) desc.textContent = T('settings.clients_desc', 'Каждый клиент = отдельный набор данных. В Trial можно вести до 3 клиентов.');
+  if (addBtn) { addBtn.style.display = ''; addBtn.textContent = T('settings.btn_add_client', '+ Клиент'); }
+  if (rmBtn) { rmBtn.style.display = ''; rmBtn.textContent = T('settings.btn_remove_client', 'Удалить'); rmBtn.disabled = (list || []).length <= 1; }
+
+  if (hint) {
+    if (_otdIsAccountantPro()) {
+      hint.textContent = T('settings.clients_hint_pro', 'PRO: клиентов без лимита.');
+    } else {
+      const tmpl = T('settings.clients_hint_trial', 'Trial: {n}/3 клиентов.');
+      hint.textContent = tmpl.replace('{n}', String((list || []).length));
     }
-  } else {
-    title.textContent = 'Аккаунт';
-    if (desc) desc.textContent = 'Два аккаунта: личный и бизнес. Данные не смешиваются.';
-    if (addBtn) addBtn.style.display = 'none';
-    if (rmBtn) rmBtn.style.display = 'none';
-    if (hint) hint.textContent = '';
   }
 }
+
 
 function _otdClearWorkspaceData(wsId){
   const email = localStorage.getItem(USER_KEY) || '';
@@ -3936,6 +4419,9 @@ function renderKasa(){
       </td>`;
     tb.appendChild(tr);
   });
+  // Qalta-style feed + big numbers (doesn't affect legacy table)
+  try{ renderKasaQalta(listKasa); }catch(e){ console.warn('renderKasaQalta', e); }
+
 }
 function renderAccounts(){
   const tb=document.querySelector('#autoAcc tbody'); if(!tb) return; tb.innerHTML='';
@@ -4568,7 +5054,7 @@ window.appShowHome = function () {
 
     // Верхняя панель прячется
     if (topBar) {
-      topBar.classList.add('hidden');
+      topBar.classList.remove('hidden');
     }
   } catch (e) {
     console.warn('appShowHome error', e);
@@ -4588,7 +5074,7 @@ window.appGoSection = function (secId) {
     if (!sec) {
       console.warn('appGoSection: section not found:', secId);
       if (homeEl) homeEl.style.display = 'block';
-      if (topBar) topBar.classList.add('hidden');
+      if (topBar) topBar.classList.remove('hidden');
       return;
     }
 
@@ -4612,6 +5098,11 @@ window.appGoSection = function (secId) {
     sec.classList.add('active');
     sec.style.display = 'block';
 
+    // Analytics: render full chart on open
+    if (secId === 'analytics') {
+      try { renderAnalyticsChart(); } catch(e){ console.warn('analytics', e); }
+    }
+
     // Если есть таб под этот раздел — подсветим его, если нет — просто игнорим
     const tab = document.querySelector('.tabs .tab[data-sec="' + secId + '"]');
     if (tab) {
@@ -4621,7 +5112,7 @@ window.appGoSection = function (secId) {
   } catch (e) {
     console.warn('appGoSection fatal error', e);
     if (homeEl) homeEl.style.display = 'block';
-    if (topBar) topBar.classList.add('hidden');
+    if (topBar) topBar.classList.remove('hidden');
   }
 };
 
@@ -4649,7 +5140,326 @@ async function syncUserStatus(){
     }
 
     const role = (user.role || localStorage.getItem(ROLE_KEY) || 'freelance_business');
+
+    // Enforce accountant landing (different UI)
+    try {
+      if (role === 'accountant' && !/\/accountant\.html$/.test(window.location.pathname)) {
+        window.location.replace('/accountant.html');
+        return;
+      }
+    } catch(e){}
+
     const status = (user.status || '');
+    // Client-side invite banner (so you don't have to "guess" where it is)
+    try {
+      const r2 = (role || 'freelance_business');
+      if (r2 !== 'accountant' && !window.__otdInvitesChecked) {
+        window.__otdInvitesChecked = true;
+        fetch('/api/client/invites', { credentials:'include' })
+          .then(r=> r.ok ? r.json() : null)
+          .then(j=>{
+            const invs = j && j.invites;
+            if (!Array.isArray(invs) || !invs.length) return;
+
+            // Only show first invite for MVP
+            const inv = invs[0];
+            const bar = document.createElement('div');
+            bar.id = 'otdInviteBar';
+            bar.style.position = 'fixed';
+            bar.style.left = '12px';
+            bar.style.right = '12px';
+            bar.style.top = '12px';
+            bar.style.zIndex = '9999';
+            bar.style.background = 'rgba(15,18,20,.94)';
+            bar.style.border = '1px solid rgba(71,181,0,.45)';
+            bar.style.borderRadius = '14px';
+            bar.style.padding = '12px';
+            bar.style.boxShadow = '0 12px 40px rgba(0,0,0,.35)';
+            bar.innerHTML = `
+              <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
+                <div style="min-width:220px">
+                  <div style="font-weight:800">Приглашение от бухгалтера</div>
+                  <div style="opacity:.8;font-size:12px;margin-top:4px">${inv.accountantEmail}</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button id="otdInvAccept" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">Принять</button>
+                  <button id="otdInvDecline" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-weight:700;cursor:pointer">Отклонить</button>
+                </div>
+              </div>
+            `;
+            document.body.appendChild(bar);
+
+            const send = (action)=>{
+              fetch('/api/client/invites/respond', {
+                method:'POST',
+                headers:{ 'Content-Type':'application/json' },
+                credentials:'include',
+                body: JSON.stringify({ accountantEmail: inv.accountantEmail, action })
+              }).then(()=>{ bar.remove(); location.reload(); }).catch(()=>{ bar.remove(); });
+            };
+            bar.querySelector('#otdInvAccept')?.addEventListener('click', ()=>send('accept'));
+            bar.querySelector('#otdInvDecline')?.addEventListener('click', ()=>send('decline'));
+          })
+          .catch(()=>null);
+      }
+    } catch(e){}
+
+    // Client: accountant requests + file upload (jpg/png/pdf) + attach from Vault
+    try {
+      if ((role || 'freelance_business') !== 'accountant') {
+
+        const ensureClientRequestsUI = ()=>{
+          // Button
+          if (!document.getElementById('openClientRequestsBtn')) {
+            const anchor = document.getElementById('openVaultBtn') || document.querySelector('#docs .row') || document.querySelector('#docs') || document.body;
+            const btn = document.createElement('button');
+            btn.id = 'openClientRequestsBtn';
+            btn.className = 'btn secondary';
+            btn.type = 'button';
+            btn.textContent = 'Запросы бухгалтера';
+            btn.style.marginLeft = '8px';
+            if (anchor && anchor.parentNode) {
+              // try to place near Vault button
+              if (anchor.id === 'openVaultBtn') anchor.insertAdjacentElement('afterend', btn);
+              else anchor.insertAdjacentElement('afterbegin', btn);
+            } else {
+              document.body.appendChild(btn);
+            }
+          }
+
+          // Modal
+          if (!document.getElementById('clientRequestsModal')) {
+            const modal = document.createElement('div');
+            modal.id = 'clientRequestsModal';
+            modal.style.display = 'none';
+            modal.style.position = 'fixed';
+            modal.style.left = '0';
+            modal.style.top = '0';
+            modal.style.right = '0';
+            modal.style.bottom = '0';
+            modal.style.zIndex = '9998';
+            modal.style.background = 'rgba(0,0,0,.55)';
+            modal.style.backdropFilter = 'blur(6px)';
+            modal.innerHTML = `
+              <div style="max-width:860px;margin:40px auto;padding:0 12px">
+                <div class="card" style="padding:14px;border-radius:16px">
+                  <div class="row between" style="gap:10px;align-items:center;flex-wrap:wrap">
+                    <div>
+                      <div style="font-weight:900;font-size:16px">Запросы от бухгалтера</div>
+                      <div class="muted small" style="margin-top:2px">Прикрепляй файлы к конкретному запросу.</div>
+                    </div>
+                    <div class="row" style="gap:8px;align-items:center">
+                      <button id="clientRequestsClose" class="btn secondary" type="button">Закрыть</button>
+                    </div>
+                  </div>
+                  <div id="clientReqList" style="margin-top:12px"></div>
+                  <input id="clientReqFileInput" type="file" accept=".jpg,.jpeg,.png,.pdf" multiple style="display:none" />
+                </div>
+              </div>
+            `;
+            document.body.appendChild(modal);
+          }
+        };
+
+        ensureClientRequestsUI();
+
+        const btnOpen = document.getElementById('openClientRequestsBtn');
+        const modal = document.getElementById('clientRequestsModal');
+        const listEl = document.getElementById('clientReqList');
+        const closeBtn = document.getElementById('clientRequestsClose');
+        const fileInput = document.getElementById('clientReqFileInput');
+
+        let currentRid = null;
+
+        const esc = (s)=> String(s||'')
+          .replaceAll('&','&amp;')
+          .replaceAll('<','&lt;')
+          .replaceAll('>','&gt;')
+          .replaceAll('"','&quot;')
+          .replaceAll("'","&#039;");
+
+        const reqParts = (items)=>{
+          const parts = [];
+          if (items && items.bank) parts.push('Выписка');
+          if (items && items.invoices) parts.push('Фактуры');
+          if (items && items.receipts) parts.push('Чеки');
+          if (items && items.other) parts.push('Другое: ' + String(items.other).slice(0,80));
+          return parts.join(' • ') || '—';
+        };
+
+        const normalizeFiles = (r)=>{
+          if (Array.isArray(r && r.files) && r.files.length) return r.files;
+          if (r && r.fileUrl) return [{ fileUrl: r.fileUrl, fileName: r.fileName || 'download' }];
+          return [];
+        };
+
+        async function loadAndRender(focusRid){
+          if (!listEl) return;
+          listEl.innerHTML = '<div class="muted small">Загрузка…</div>';
+          try{
+            const rr = await fetch('/api/client/requests', { credentials:'include' });
+            const js = await rr.json();
+            const reqs = (js && js.requests) || [];
+            if (!reqs.length){
+              listEl.innerHTML = '<div class="hintBox">Пока нет запросов от бухгалтера.</div>';
+              return;
+            }
+            listEl.innerHTML = reqs.map(r=>{
+              const when = (r.month ? r.month : '—');
+              const created = (r.createdAt ? new Date(r.createdAt).toLocaleString() : '');
+              const stRaw = String(r.status || 'open');
+              const st = (stRaw === 'received') ? 'Отправлено'
+                : (stRaw === 'approved') ? 'Принято'
+                : (stRaw === 'rejected') ? 'Отклонено'
+                : 'Ожидает';
+              const dueTxt = r.dueAt ? new Date(r.dueAt).toLocaleDateString() : '';
+              const isOverdue = !!(r.dueAt && stRaw !== 'approved' && Date.now() > new Date(r.dueAt).getTime());
+
+              const showAttach = (stRaw !== 'approved');
+              const files = normalizeFiles(r);
+              const fileHtml = files.length
+                ? `<div class="muted small" style="margin-top:8px">
+                     <div style="font-weight:800;margin-bottom:4px">Файлы (${files.length})</div>
+                     <div style="display:flex;flex-direction:column;gap:4px">
+                       ${files.slice(0,6).map(f=>`<div>• <a href="${esc(f.fileUrl)}" target="_blank" rel="noopener">${esc(f.fileName || 'download')}</a></div>`).join('')}
+                       ${files.length>6 ? `<div class="muted small">… и ещё ${files.length-6}</div>` : ''}
+                     </div>
+                   </div>`
+                : '';
+
+              return `
+                <div class="card" data-rid="${esc(r.id)}" style="padding:12px">
+                  <div class="row between" style="gap:10px;align-items:flex-start">
+                    <div style="flex:1">
+                      <div style="font-weight:900">${esc(when)}</div>
+                      <div class="muted" style="margin-top:4px">${esc(reqParts(r.items||{}))}</div>
+                      ${r.note ? `<div class="muted small" style="margin-top:6px">${esc(r.note)}</div>` : ''}
+                      ${(stRaw==='rejected' && r.decisionNote) ? `<div class="muted small" style="margin-top:6px"><b>Бухгалтер:</b> ${esc(r.decisionNote)}</div>` : ''}
+                      ${(stRaw==='approved') ? `<div class="muted small" style="margin-top:6px"><b>Бухгалтер:</b> принято</div>` : ''}
+                      ${fileHtml}
+                    </div>
+                    <div class="muted small" style="text-align:right">
+                      <div class="clientReqStatus">${esc(st)}</div>
+                      ${dueTxt ? `<div class="muted small" style="margin-top:4px">Срок: ${esc(dueTxt)}${isOverdue ? ' • <span style="color:#ff5050;font-weight:800">Просрочено</span>' : ''}</div>` : ''}
+                      <div style="margin-top:4px">${esc(created)}</div>
+                    </div>
+                  </div>
+                  <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+                    ${showAttach ? `
+                      <button class="btn secondary" type="button" data-attach="${esc(r.id)}">С телефона</button>
+                      <button class="btn secondary" type="button" data-attach-vault="${esc(r.id)}" data-month="${esc(when)}">Из “Мои документы”</button>
+                    ` : `<div class="muted small">Запрос закрыт.</div>`}
+                  </div>
+                </div>
+              `;
+            }).join('');
+
+            listEl.querySelectorAll('button[data-attach]').forEach(btn=>{
+              btn.addEventListener('click', ()=>{
+                currentRid = btn.getAttribute('data-attach');
+                if (!fileInput) return;
+                fileInput.value = '';
+                fileInput.click();
+              });
+            });
+
+            listEl.querySelectorAll('button[data-attach-vault]').forEach(btn=>{
+              btn.addEventListener('click', async ()=>{
+                const rid = btn.getAttribute('data-attach-vault');
+                const month = btn.getAttribute('data-month') || '';
+                currentRid = rid;
+                if (!rid) return;
+
+                if (window.OTD_Vault && typeof window.OTD_Vault.openPicker === 'function') {
+                  await window.OTD_Vault.openPicker({ requestId: rid, suggestedMonth: month });
+                  await loadAndRender(rid);
+                } else {
+                  alert('“Мои документы” ещё не готовы в этом билде. Обнови страницу.');
+                }
+              });
+            });
+
+            if (focusRid) {
+              setTimeout(()=>{
+                const el = listEl.querySelector(`[data-rid="${focusRid}"]`);
+                if (el && el.scrollIntoView) el.scrollIntoView({ behavior:'smooth', block:'start' });
+              }, 100);
+            }
+
+          } catch(e){
+            listEl.innerHTML = '<div class="hintBox">Не удалось загрузить запросы.</div>';
+          }
+        }
+
+        const open = async (focusRid)=>{
+          if (!modal) return;
+          modal.style.display = 'block';
+          await loadAndRender(focusRid);
+        };
+        const close = ()=>{ if(modal) modal.style.display='none'; };
+
+        // Expose for notifications deep-link
+        window.OTD_OpenClientRequests = open;
+
+        btnOpen?.addEventListener('click', ()=>open());
+        closeBtn?.addEventListener('click', close);
+        modal?.addEventListener('click', (e)=>{ if(e.target===modal) close(); });
+
+        fileInput?.addEventListener('change', async ()=>{
+          const files = Array.from(fileInput.files || []);
+          if (!files.length || !currentRid) return;
+          const allowed = ['image/jpeg','image/png','application/pdf'];
+
+          const MAX = 10;
+          const pick = files.slice(0, MAX);
+
+          for (let i=0;i<pick.length;i++){
+            const f = pick[i];
+            if (!allowed.includes((f.type||'').toLowerCase())){
+              alert('Только JPG/PNG/PDF');
+              continue;
+            }
+
+            let dataUrl = '';
+            try{
+              dataUrl = await new Promise((resolve, reject)=>{
+                const fr = new FileReader();
+                fr.onload = ()=> resolve(fr.result);
+                fr.onerror = ()=> reject(fr.error || new Error('read failed'));
+                fr.readAsDataURL(f);
+              });
+            } catch(e){
+              alert('Не удалось прочитать файл');
+              continue;
+            }
+
+            // lightweight UI feedback
+            const card = listEl?.querySelector(`[data-rid="${currentRid}"]`);
+            const stEl = card ? card.querySelector('.clientReqStatus') : null;
+            if (stEl) stEl.textContent = `Загрузка… (${i+1}/${pick.length})`;
+
+            try{
+              const resp = await fetch('/api/client/requests/upload', {
+                method: 'POST',
+                headers: { 'Content-Type':'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ requestId: currentRid, fileName: f.name, dataUrl })
+              });
+              const js = await resp.json().catch(()=> ({}));
+              if (!resp.ok || !js.success){
+                alert((js && js.error) ? js.error : 'Upload failed');
+              }
+            } catch(e){
+              alert('Upload failed');
+            }
+          }
+
+          await loadAndRender(currentRid);
+        });
+      }
+    } catch(e){}
+
+
 
     // Reset helper that keeps localStorage consistent
     const clearAccess = () => {
@@ -4767,6 +5577,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   initHelper();
   initSpendingUI();
   initTrendInteractions();
+  initAnalyticsUI();
     // --- Фикс поломанной вёрстки: выносим секции из homeScreen ---
   try {
     const home = document.getElementById('homeScreen');
@@ -4783,6 +5594,8 @@ document.addEventListener('DOMContentLoaded', async ()=>{
       const moveIds = [
         'gate',
         'pulpit',
+        'analytics',
+        'analytics',
         'docs',
         'wyciag',
         'faktury',
@@ -5270,9 +6083,9 @@ renderChat();
       const secId = t.dataset.sec;
       if (!secId) return;
 
-      // Панель = возврат на домашний экран с плитками
-      if (secId === 'pulpit' && window.appShowHome) {
-        window.appShowHome();
+      // Панель = раздел pulpit (дневной обзор)
+      if (secId === 'pulpit' && window.appGoSection) {
+        window.appGoSection('pulpit');
         return;
       }
 
@@ -7488,3 +8301,1131 @@ function inventoryTplDownloadXLSX(){
   const name = (t.name || 'inventory').replaceAll(' ','_');
   XLSX.writeFile(wb, `Inwentaryzacja_${name}.xlsx`);
 }
+
+
+/* === QALTA CASH UI glue (visual-only; uses existing kasa data & actions) === */
+function _otdCashMonthSums(){
+  const now = new Date();
+  const ym = now.toISOString().slice(0,7);
+  let ins = 0, outs = 0;
+  (kasa||[]).forEach(k=>{
+    const d = String(k.date||"").slice(0,7);
+    if(d !== ym) return;
+    if(k.type === 'przyjęcie') ins += Number(k.amount||0);
+    if(k.type === 'wydanie') outs += Number(k.amount||0);
+  });
+  return {ins, outs};
+}
+function _otdFmtPLN(n){
+  try{
+    const v = Number(n||0);
+    // keep it simple, no locale surprises
+    return v.toFixed(2);
+  }catch(_){ return String(n||"0.00"); }
+}
+function _otdReceiptParse(text){
+  const lines = String(text||"").split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  const merchant = (lines.find(l=>/^[\p{L}0-9].{2,}$/u.test(l)) || "").slice(0,48);
+
+  function numsFromLine(L){
+    const out = [];
+    // capture like "1 234,56" or "1234.56"
+    const reNum = /(?:^|\D)(\d{1,3}(?:[\s.]\d{3})*(?:[.,]\d{2})|\d+(?:[.,]\d{2})?)(?:\D|$)/g;
+    let m;
+    while((m=reNum.exec(L))){ out.push(m[1]); }
+    return out;
+  }
+  function toNum(s){
+    return Number(String(s).replace(/\s/g,'').replace(',','.'));
+  }
+
+  const pri = /(total|suma|razem|do zap|należ|kwota|summa|to pay|zapłaty|zaplaty)/i;
+  const cand = [];
+  lines.forEach(L=>{
+    const nums = numsFromLine(L);
+    if(!nums.length) return;
+    const hit = pri.test(L);
+    nums.forEach(n=>{
+      const v = toNum(n);
+      if(!isFinite(v) || v<=0) return;
+      if(v>1000000) return;
+      cand.push({v, hit});
+    });
+  });
+
+  let amount = null;
+  const hitCand = cand.filter(x=>x.hit).sort((a,b)=>b.v-a.v);
+  if(hitCand.length) amount = hitCand[0].v;
+  else if(cand.length) amount = cand.sort((a,b)=>b.v-a.v)[0].v;
+
+  return {merchant, amount};
+}
+
+function renderKasaQalta(listKasa){
+  const balEl = $id('cashBalanceBig');
+  if(balEl && typeof kasaBalance === 'function'){
+    balEl.textContent = _otdFmtPLN(kasaBalance()) + ' PLN';
+  }
+  const sums = _otdCashMonthSums();
+  const inEl = $id('cashMonthIn'); if(inEl) inEl.textContent = '+ ' + _otdFmtPLN(sums.ins);
+  const outEl = $id('cashMonthOut'); if(outEl) outEl.textContent = '- ' + _otdFmtPLN(sums.outs);
+
+  const feed = $id('kasaFeed');
+  if(!feed) return;
+  feed.innerHTML = '';
+
+  const grouped = {};
+  (listKasa||[]).forEach(k=>{
+    const d = (k.date||today()).slice(0,10);
+    (grouped[d] = grouped[d] || []).push(k);
+  });
+
+  const days = Object.keys(grouped).sort((a,b)=> b.localeCompare(a));
+  days.forEach(day=>{
+    const h = document.createElement('div');
+    h.className = 'q-day';
+    h.textContent = day;
+    feed.appendChild(h);
+
+    grouped[day].forEach(k=>{
+      const type = k.type || '';
+      const isIn = type === 'przyjęcie';
+      const isOut = type === 'wydanie';
+
+      // Category-first icon (instead of arrows)
+      const rawCat = (k.category || '').toString().trim();
+      const rawCatClean = rawCat.replace(/^[^\wА-Яа-яЁё]+/u,'').trim();
+      let catObj = null;
+      try{
+        if(rawCatClean && typeof getCatById === 'function') catObj = getCatById(rawCatClean);
+        if(!catObj && rawCatClean && typeof getAllSpCats === 'function'){
+          const cats = getAllSpCats() || [];
+          catObj = cats.find(c => String(c.label||'').toLowerCase() === rawCatClean.toLowerCase()) || null;
+        }
+      }catch(e){}
+
+      const catEmoji = (catObj && catObj.emoji) ? catObj.emoji : '';
+      const catLabel = (catObj && catObj.label) ? catObj.label : (rawCatClean || '');
+
+      const icon = catEmoji ? catEmoji : (isIn ? '💰' : (isOut ? '🧾' : '📦'));
+      const title = (k.comment && String(k.comment).trim()) ? String(k.comment).trim() : (isIn?'Przyjęcie': isOut?'Wydatek':'Kasa');
+      const sub = (catLabel && catLabel !== 'Без категории' && catLabel !== '—') ? catLabel : (k.source || '');
+
+      const row = document.createElement('div');
+      row.className = 'q-item';
+      const amt = Number(k.amount||0);
+      const sign = isOut ? '-' : (isIn ? '+' : '');
+      const cls = isOut ? 'neg' : (isIn ? 'pos' : '');
+      row.innerHTML = `
+        <div class="q-left">
+          <div class="q-ic">${icon}</div>
+          <div class="q-text">
+            <div class="q-title">${escapeHtml(title)}</div>
+            <div class="q-sub2">${escapeHtml(sub||'')}</div>
+          </div>
+        </div>
+        <div class="q-right">
+          <div class="q-amt ${cls}">${sign}${_otdFmtPLN(amt)}</div>
+          <div class="q-miniRow">
+            <button class="q-mini" data-act="cat" data-kind="kasa" data-id="${k.id}">Кат.</button>
+            <button class="q-mini" data-act="edit" data-kind="kasa" data-id="${k.id}">✎</button>
+            <button class="q-mini" data-act="del" data-kind="kasa" data-id="${k.id}">🗑</button>
+          </div>
+        </div>`;
+      feed.appendChild(row);
+    });
+  });
+}
+
+(function(){
+  // UI bindings: menu + cash sheet
+  function show(el){ if(el) el.style.display='flex'; }
+  function hide(el){ if(el) el.style.display='none'; }
+
+  let cashKind = 'wydanie'; // default: expense
+
+  function setKind(kind){
+    cashKind = kind;
+    const bOut = $id('cashTypeOut');
+    const bIn  = $id('cashTypeIn');
+    if(bOut && bIn){
+      const outActive = (kind==='wydanie');
+      bOut.classList.toggle('active', outActive);
+      bIn.classList.toggle('active', !outActive);
+      bOut.setAttribute('aria-selected', outActive ? 'true':'false');
+      bIn.setAttribute('aria-selected', !outActive ? 'true':'false');
+    }
+  }
+
+  function openSheet(kind){
+    if(kind) setKind(kind);
+    const back = $id('cashSheetBackdrop');
+    show(back);
+    // focus amount quickly
+    setTimeout(()=>{ try{ $id('quickAmt')?.focus(); }catch(e){} }, 50);
+  }
+  function closeSheet(){
+    hide($id('cashSheetBackdrop'));
+  }
+
+  document.addEventListener('click', (e)=>{
+    const t = e.target;
+
+
+    // Brand click -> home
+    if(t && (t.id==='brandHome' || (t.closest && t.closest('#brandHome')))){
+      if(window.appShowHome) window.appShowHome();
+      return;
+    }
+
+    // Menu overlay
+    if(t && t.id==='navBtn'){ hide($id('navOverlay')); if(window.appShowHome) window.appShowHome(); else if(window.appGoSection) window.appGoSection('pulpit'); }
+    if(t && t.id==='navClose'){ hide($id('navOverlay')); }
+    if(t && (t.id==='navOverlay')){ hide($id('navOverlay')); }
+
+    if(t && t.id==='navSettingsBtn'){ hide($id('navOverlay')); if(window.appGoSection) window.appGoSection('ustawienia'); }
+    if(t && t.classList && t.classList.contains('navItem')){
+      const sec = t.getAttribute('data-nav');
+      hide($id('navOverlay'));
+      if(window.appGoSection) window.appGoSection(sec);
+    }
+
+    // Cash action buttons
+    if(t && (t.id==='cashBtnAdd' || t.closest && t.closest('#cashBtnAdd'))){ openSheet('wydanie'); }
+    if(t && (t.id==='cashBtnPhoto' || t.closest && t.closest('#cashBtnPhoto'))){ $id('cashPhoto')?.click(); }
+    if(t && t.id==='cashSheetClose'){ closeSheet(); }
+    if(t && t.id==='cashSheetBackdrop'){ closeSheet(); } // click on backdrop
+    if(t && t.id==='cashTypeOut'){ setKind('wydanie'); }
+    if(t && t.id==='cashTypeIn'){ setKind('przyjęcie'); }
+    if(t && t.id==='cashSheetSave'){
+      if(typeof quickCashAdd === 'function') quickCashAdd(cashKind);
+      closeSheet();
+    }
+    if(t && t.id==='cashSheetPhoto'){ $id('cashPhoto')?.click(); }
+  });
+
+  // Receipt photo OCR -> prefill sheet
+  $id('cashPhoto')?.addEventListener('change', async (e)=>{
+    try{
+      const f = e.target.files && e.target.files[0];
+      if(!f) return;
+      if(typeof recognizeImage !== 'function'){ openSheet('wydanie'); return; }
+      const txt = await recognizeImage(f);
+      const parsed = _otdReceiptParse(txt);
+      if(parsed && parsed.amount){
+        const a = $id('quickAmt'); if(a) a.value = String(parsed.amount.toFixed(2));
+      }
+      if(parsed && parsed.merchant){
+        const n = $id('quickNote'); if(n) n.value = parsed.merchant;
+      }
+      openSheet('wydanie');
+    }catch(err){
+      console.warn('cash receipt OCR error', err);
+      openSheet('wydanie');
+    }finally{
+      try{ e.target.value = ''; }catch(_){}
+    }
+  });
+
+})();
+
+
+/* ==== OTD_NOTIF_V1: in-app notifications (client) ==== */
+    (function(){
+      if (window.__OTD_NOTIF_INIT) return;
+      window.__OTD_NOTIF_INIT = true;
+
+      const API = '/api/notifications';
+      const API_MARK = '/api/notifications/mark-read';
+      const SEEN_KEY = 'otd_notif_toast_seen';
+      let otdNotifShowAll = false;
+      let otdNotifUnreadCount = 0;
+
+      function esc(s){ return String(s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;"); }
+
+      function injectCss(){
+        if (document.getElementById('otdNotifCss')) return;
+        const st = document.createElement('style');
+        st.id = 'otdNotifCss';
+        st.textContent = `
+          .otdNotifBell{ position:fixed; top:12px; right:12px; z-index:9999; display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:999px; background:rgba(0,0,0,.35); border:1px solid rgba(71,181,0,.35); backdrop-filter: blur(10px); cursor:pointer; user-select:none; }
+          .otdNotifBell .t{ font-weight:700; color:#dfffd0; font-size:13px; }
+          .otdNotifBadge{ min-width:18px; height:18px; padding:0 6px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#0b1a07; background:#47b500; }
+          .otdNotifPanel{ position:fixed; top:54px; right:12px; width:min(360px, calc(100vw - 24px)); max-height:60vh; overflow:auto; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; }
+          .otdNotifPanel header{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); }
+          .otdNotifPanel header .h{ font-weight:700; color:#eaffdf; font-size:13px; }
+          .otdNotifPanel header button{ background:transparent; border:1px solid rgba(255,255,255,.16); color:#eaffdf; border-radius:12px; padding:6px 10px; cursor:pointer; }
+          .otdNotifItem{ padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); cursor:pointer; }
+          .otdNotifItem:last-child{ border-bottom:none; }
+          .otdNotifItem .m{ color:#eaffdf; font-size:13px; line-height:1.25; }
+          .otdNotifItem .d{ margin-top:4px; color:rgba(234,255,223,.7); font-size:11px; }
+          .otdNotifItem.read{ opacity:.55; }
+          .otdNotifTabs{ display:flex; gap:6px; align-items:center; }
+          .otdNotifTabs button.active{ border-color: rgba(71,181,0,.55); background: rgba(71,181,0,.12); }
+
+          .otdNotifToast{ position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10000; max-width:min(520px, calc(100vw - 24px)); padding:10px 12px; border-radius:14px; background:rgba(0,0,0,.70); border:1px solid rgba(71,181,0,.30); backdrop-filter: blur(14px); box-shadow: 0 10px 28px rgba(0,0,0,.35); color:#eaffdf; font-size:13px; display:none; }
+          .otdNotifToast b{ color:#dfffd0; }
+        `;
+        document.head.appendChild(st);
+      }
+
+      function ensureUi(){
+        injectCss();
+        if (document.getElementById('otdNotifBell')) return;
+        const bell = document.createElement('div');
+        bell.id = 'otdNotifBell';
+        bell.className = 'otdNotifBell';
+        bell.innerHTML = `<span class="t">🔔</span><span class="t">Уведомления</span><span class="otdNotifBadge" style="display:none">0</span>`;
+        const panel = document.createElement('div');
+        panel.id = 'otdNotifPanel';
+        panel.className = 'otdNotifPanel';
+        panel.innerHTML = `<header><div class="h">Уведомления</div><div class="otdNotifTabs"><button id="otdNotifShowNew" class="active">Новые</button><button id="otdNotifShowAll">История</button><button id="otdNotifMarkAll">Прочитано</button></div></header><div id="otdNotifList"></div>`;
+        const toast = document.createElement('div');
+        toast.id = 'otdNotifToast';
+        toast.className = 'otdNotifToast';
+
+        document.body.appendChild(bell);
+        document.body.appendChild(panel);
+        document.body.appendChild(toast);
+
+        bell.addEventListener('click', async ()=>{
+          const shown = panel.style.display === 'block';
+          panel.style.display = shown ? 'none' : 'block';
+          if (!shown) { try{ await pull(); }catch(_){}} 
+        });
+        document.addEventListener('click', (e)=>{
+          if (!panel || panel.style.display !== 'block') return;
+          if (e.target === bell || bell.contains(e.target) || e.target === panel || panel.contains(e.target)) return;
+          panel.style.display = 'none';
+        });
+        document.getElementById('otdNotifMarkAll')?.addEventListener('click', async ()=>{
+          try{
+            await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({all:true}) });
+          }catch(_){}
+          try{ await pull(); }catch(_){}
+        });
+
+        document.getElementById('otdNotifShowNew')?.addEventListener('click', async ()=>{
+          otdNotifShowAll = false;
+          document.getElementById('otdNotifShowNew')?.classList.add('active');
+          document.getElementById('otdNotifShowAll')?.classList.remove('active');
+          try{ await pull(); }catch(_){}
+        });
+        document.getElementById('otdNotifShowAll')?.addEventListener('click', async ()=>{
+          otdNotifShowAll = true;
+          document.getElementById('otdNotifShowAll')?.classList.add('active');
+          document.getElementById('otdNotifShowNew')?.classList.remove('active');
+          try{ await pull(); }catch(_){}
+        });
+
+      }
+
+      function getSeen(){
+        try { return JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'); } catch(_) { return []; }
+      }
+      function setSeen(arr){
+        try { localStorage.setItem(SEEN_KEY, JSON.stringify(arr.slice(-200))); } catch(_){}
+      }
+
+      function showToast(msg){
+        const t = document.getElementById('otdNotifToast');
+        if (!t) return;
+        t.innerHTML = `<b>Уведомление:</b> ${esc(msg)}`;
+        t.style.display = 'block';
+        clearTimeout(showToast._tm);
+        showToast._tm = setTimeout(()=>{ t.style.display = 'none'; }, 4500);
+      }
+
+      function fmtDate(iso){
+        try { return new Date(iso).toLocaleString(); } catch(_) { return ''; }
+      }
+
+      async function markRead(ids){
+        if (!ids || !ids.length) return;
+        try{
+          await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ids }) });
+        }catch(_){}
+      }
+
+      function render(list, mode){
+        const badge = document.querySelector('#otdNotifBell .otdNotifBadge');
+        const listEl = document.getElementById('otdNotifList');
+        const cnt = (list||[]).length;
+        const unreadCnt = Number(otdNotifUnreadCount || 0);
+
+        if (badge){
+          badge.textContent = String(unreadCnt);
+          badge.style.display = unreadCnt > 0 ? 'inline-flex' : 'none';
+        }
+        if (!listEl) return;
+        if (!cnt){
+          listEl.innerHTML = `<div class="otdNotifItem" style="cursor:default"><div class="m">${mode==='all' ? 'История пуста.' : 'Пока нет новых уведомлений.'}</div></div>`;
+          return;
+        }
+        listEl.innerHTML = list.map(n=>{
+          const msg = esc(n.message || '');
+          const dt = fmtDate(n.createdAt);
+          const readCls = (mode==='all' && n.read) ? ' read' : '';
+          return `<div class="otdNotifItem${readCls}" data-id="${esc(n.id)}" data-request="${esc(n.requestId||'')}">
+                    <div class="m">${msg}</div>
+                    <div class="d">${esc(dt)}</div>
+                  </div>`;
+        }).join('');
+        listEl.querySelectorAll('.otdNotifItem[data-id]').forEach(el=>{
+          el.addEventListener('click', async ()=>{
+            const id = el.getAttribute('data-id');
+            const rid = el.getAttribute('data-request');
+            try{ await markRead([id]); }catch(_){}
+            // Open requests modal for convenience
+            if (rid){
+              try{ document.getElementById('openClientRequestsBtn')?.click(); }catch(_){}
+            }
+            try{ await pull(); }catch(_){}
+          });
+        });
+      }
+
+      async function pull(){
+        ensureUi();
+        let unreadJson = null;
+        try{
+          const r = await fetch(API + '?unread=1', { credentials:'include' });
+          if (!r.ok) { otdNotifUnreadCount = 0; render([], 'unread'); return; }
+          unreadJson = await r.json();
+        }catch(_){ return; }
+
+        const unread = (unreadJson && unreadJson.notifications) ? unreadJson.notifications : [];
+        otdNotifUnreadCount = unread.length;
+
+        if (!otdNotifShowAll){
+          render(unread, 'unread');
+        } else {
+          try{
+            const r2 = await fetch(API, { credentials:'include' });
+            const j2 = await r2.json().catch(()=>({}));
+            const all = (j2 && j2.notifications) ? j2.notifications : [];
+            render(all, 'all');
+          } catch(_){
+            render(unread, 'unread');
+          }
+        }
+
+        // Toast only for new ids (local)
+        const seen = new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'));
+        const newly = unread.filter(n=> n && n.id && !seen.has(n.id));
+        if (newly.length){
+          showToast((newly[0] && newly[0].message) ? newly[0].message : 'Новое уведомление');
+          newly.forEach(n=> seen.add(n.id));
+          localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(seen).slice(-200)));
+        }
+      }
+
+      function start(){
+        ensureUi();
+        pull();
+        setInterval(pull, 15000);
+      }
+
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+      else start();
+    })();
+
+
+
+// ===== Document Vault (client folders + files) =====
+(function(){
+  function esc(s){ return String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+  async function apiJson(url, method, body){
+    const opt = { method: method||'GET', credentials:'include', headers:{'Content-Type':'application/json'} };
+    if (body) opt.body = JSON.stringify(body);
+    const r = await fetch(url, opt);
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(j && j.error ? j.error : ('HTTP ' + r.status));
+    return j;
+  }
+
+  let modal = null;
+  let vaultState = { folders:[], files:[] };
+
+
+  // Bulk actions (multi-select files)
+  let bulkSelected = new Set();
+  let lastVisibleFiles = [];
+
+  function bulkReset(){
+    try{ bulkSelected.clear(); }catch(_){ bulkSelected = new Set(); }
+  }
+
+  function bulkPruneToVisible(list){
+    const vis = new Set((list||[]).map(f=>String((f&&f.id)||'')));
+    try{
+      Array.from(bulkSelected).forEach(id=>{ if (!vis.has(String(id))) bulkSelected.delete(id); });
+    }catch(_){ }
+  }
+
+  function renderBulkBar(list){
+    const bar = modal && modal.querySelector('#otdVaultBulkBar');
+    if (!bar) return;
+    const total = (list||[]).length;
+    const selected = (bulkSelected && bulkSelected.size) ? bulkSelected.size : 0;
+    if (!selected){
+      bar.style.display = 'none';
+      bar.innerHTML = '';
+      return;
+    }
+    bar.style.display = 'flex';
+    const pickMode = !!(vaultPickCtx && vaultPickCtx.requestId);
+    bar.innerHTML = `
+      <span class="muted small" style="opacity:.85">Выбрано: ${selected}</span>
+      <button type="button" class="btn ghost small" data-bulkact="all">Выбрать все (${total})</button>
+      <button type="button" class="btn ghost small" data-bulkact="clear">Сброс</button>
+      ${pickMode ? `<button type="button" class="btn small" data-bulkact="attach">Прикрепить к запросу</button>
+      <button type="button" class="btn ghost small" data-bulkact="cancelPick">Отмена</button>` : `<button type="button" class="btn small" data-bulkact="move">Переместить</button>
+      <button type="button" class="btn secondary small" data-bulkact="delete">Удалить</button>`}
+    `;
+  }
+
+  const VAULT_CATS = [
+    { id:'incoming', label:'Входящие' },
+    { id:'outgoing', label:'Выставленные' },
+    { id:'tax', label:'ZUS/PIT' },
+    { id:'proof', label:'Подтверждения' },
+    { id:'other', label:'Другое' }
+  ];
+
+  function curMonth(){
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    return `${y}-${m}`;
+  }
+
+  function monthList(){
+  // from 2025-01, forward to (current month + 12)
+  const out = [];
+  const start = new Date(2025, 0, 1);
+  const end = new Date();
+  end.setDate(1);
+  end.setMonth(end.getMonth() + 12);
+
+  const d = new Date(start.getTime());
+  d.setDate(1);
+  while (d.getTime() <= end.getTime()){
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    out.push(`${y}-${m}`);
+    d.setMonth(d.getMonth()+1);
+  }
+  return out;
+}
+
+  function lsGet(k, def){
+    try{ const v = localStorage.getItem(k); return v ? v : def; }catch(_){ return def; }
+  }
+  function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(_){ }
+  }
+
+  let selectedMonth = lsGet('otd_vault_month', curMonth());
+  let selectedCat = lsGet('otd_vault_cat', 'incoming');
+
+  let vaultPickCtx = null; // { requestId }
+  let vaultPickResolve = null;
+  let vaultSearchQ = '';
+
+
+  function setSelectedMonth(v){ selectedMonth = v || curMonth(); lsSet('otd_vault_month', selectedMonth); }
+  function setSelectedCat(v){ selectedCat = v || 'incoming'; lsSet('otd_vault_cat', selectedCat); }
+
+  function catBtnHtml(cat){
+    const active = (cat.id === selectedCat);
+    const cls = active ? 'btn' : 'btn secondary';
+    return `<button type="button" class="${cls} small" data-cat="${esc(cat.id)}">${esc(cat.label)}</button>`;
+  }
+
+  function renderSmartControls(){
+    if (!modal) return;
+    const msel = modal.querySelector('#otdVaultMonthSel');
+    if (msel){
+      const months = monthList();
+      msel.innerHTML = months.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
+      if (months.includes(selectedMonth)) msel.value = selectedMonth;
+      else { selectedMonth = curMonth(); msel.value = selectedMonth; }
+    }
+    const box = modal.querySelector('#otdVaultCatBtns');
+    if (box){
+      box.innerHTML = VAULT_CATS.map(catBtnHtml).join('');
+      box.querySelectorAll('button[data-cat]').forEach(b=>{
+        b.addEventListener('click', async ()=>{
+          const c = b.getAttribute('data-cat') || 'incoming';
+          setSelectedCat(c);
+          // re-render for active state
+          renderSmartControls();
+          await syncSmart().catch(err=>setStatus('Ошибка: '+err.message));
+        });
+      });
+    }
+  }
+
+  function folderByMeta(month, cat){
+    const folders = vaultState.folders || [];
+    const hit = folders.find(f=>f && f.meta && f.meta.month === month && f.meta.category === cat);
+    return hit ? hit.id : '';
+  }
+
+  async function ensureSmartFolder(month, cat){
+    const j = await apiJson('/api/docs/folders/ensure','POST',{ month, category: cat });
+    return (j && j.folder && j.folder.id) ? j.folder.id : '';
+  }
+
+  function onExportMonth(){
+    const m = selectedMonth || curMonth();
+    const c = selectedCat || 'incoming';
+    const url = `/api/docs/export/month?month=${encodeURIComponent(m)}&category=${encodeURIComponent(c)}`;
+    try{ window.open(url, '_blank'); }catch(_){ window.location.href = url; }
+  }
+
+  async function syncSmart(){
+    // Ensure server folder exists for month+category, then refresh and select it.
+    const month = selectedMonth || curMonth();
+    const cat = selectedCat || 'incoming';
+    const fid = await ensureSmartFolder(month, cat);
+    await refresh(fid);
+  }
+
+
+  function ensureModal(){
+    if (modal) return modal;
+    const wrap = document.createElement('div');
+    wrap.id = 'otdVaultModal';
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);padding:14px;';
+    wrap.innerHTML = `
+      <style>
+        #otdVaultModal select option{ color:#111; background:#fff; }
+      </style>
+      <div style="width:min(820px,96vw);max-height:90vh;overflow:auto;border-radius:18px;background:rgba(18,22,25,.92);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 80px rgba(0,0,0,.55);padding:14px">
+        <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:900;font-size:18px">Мои документы</div>
+            <div style="opacity:.75;font-size:12px;margin-top:2px">Папки и файлы внутри OneTapDay. Не теряются в чате, не теряются в галерее.</div>
+          </div>
+          <button id="otdVaultClose" class="btn ghost" type="button">Закрыть</button>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:12px">
+          <div style="min-width:160px">
+            <div class="muted small" style="margin-bottom:6px">Месяц</div>
+            <select id="otdVaultMonthSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
+          </div>
+          <div style="flex:1;min-width:240px">
+            <div class="muted small" style="margin-bottom:6px">Раздел</div>
+            <div id="otdVaultCatBtns" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+          </div>
+          <button id="otdVaultFoldersToggle" class="btn ghost" type="button">Папки</button>
+        </div>
+
+        <div id="otdVaultFoldersPanel" style="display:none;margin-top:12px">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:1;min-width:220px">
+              <div class="muted small" style="margin-bottom:6px">Папка</div>
+              <select id="otdVaultFolderSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
+            </div>
+            <div style="min-width:220px;flex:1">
+              <div class="muted small" style="margin-bottom:6px">Новая папка</div>
+              <div style="display:flex;gap:8px">
+                <input id="otdVaultNewFolder" placeholder="Напр. 2025-12 / VAT / Контракты" style="flex:1;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff" />
+                <button id="otdVaultCreateFolder" class="btn secondary" type="button">Создать</button>
+              </div>
+            
+          <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <div class="muted small">Доступ бухгалтеру</div>
+            <button id="otdVaultShareToggle" class="btn secondary small" type="button">...</button>
+            <div id="otdVaultShareState" class="muted small" style="opacity:.8"></div>
+          </div>
+        </div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <label class="btn secondary" style="cursor:pointer">
+            <input id="otdVaultFileInput" type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" multiple style="display:none" />
+            <span>Выбрать файлы</span>
+          </label>
+          <button id="otdVaultUploadBtn" class="btn" type="button">Загрузить в папку</button>
+          <div id="otdVaultStatus" class="muted small" style="opacity:.85"></div>
+        </div>
+
+        <div style="margin-top:12px">
+          <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px">
+            <div style="font-weight:800">Файлы</div>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <input id="otdVaultSearch" placeholder="Поиск" style="padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff;min-width:180px" />
+              <button id="otdVaultExportBtn" class="btn ghost small" type="button">Экспорт месяца</button>
+              <div id="otdVaultBulkBar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap"></div>
+            </div>
+          </div>
+          <div id="otdVaultFiles" style="display:flex;flex-direction:column;gap:8px"></div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    modal = wrap;
+
+    wrap.addEventListener('click', (e)=>{ if (e.target === wrap) close(); });
+    wrap.querySelector('#otdVaultClose')?.addEventListener('click', close);
+    wrap.querySelector('#otdVaultCreateFolder')?.addEventListener('click', onCreateFolder);
+    wrap.querySelector('#otdVaultUploadBtn')?.addEventListener('click', onUpload);
+    wrap.querySelector('#otdVaultShareToggle')?.addEventListener('click', ()=>{
+      onToggleShare().catch(err=>setStatus('Ошибка: '+(err && err.message ? err.message : err)));
+    });
+    wrap.querySelector('#otdVaultFolderSel')?.addEventListener('change', ()=>{
+      bulkReset();
+      const fid = wrap.querySelector('#otdVaultFolderSel')?.value || '';
+      renderFiles((vaultState && vaultState.files) ? vaultState.files : [], fid);
+      renderShare(fid);
+    });
+    wrap.querySelector('#otdVaultFoldersToggle')?.addEventListener('click', ()=>{
+      const p = wrap.querySelector('#otdVaultFoldersPanel');
+      if (!p) return;
+      const open = (p.style.display !== 'none');
+      p.style.display = open ? 'none' : 'block';
+    });
+    wrap.querySelector('#otdVaultMonthSel')?.addEventListener('change', async (e)=>{
+      setSelectedMonth(e.target && e.target.value ? e.target.value : curMonth());
+      await syncSmart().catch(err=>setStatus('Ошибка: '+err.message));
+    });
+    wrap.querySelector('#otdVaultSearch')?.addEventListener('input', (e)=>{
+      vaultSearchQ = String(e.target && e.target.value ? e.target.value : '').trim();
+      const fid = wrap.querySelector('#otdVaultFolderSel')?.value || '';
+      renderFiles((vaultState && vaultState.files) ? vaultState.files : [], fid);
+    });
+    wrap.querySelector('#otdVaultExportBtn')?.addEventListener('click', ()=>{
+      onExportMonth();
+    });
+
+    // render month + category UI
+    setTimeout(()=>{ try{ renderSmartControls(); }catch(_){ } }, 0);
+
+    return wrap;
+  }
+
+  function open(){
+    ensureModal();
+    modal.style.display='flex';
+    try{ renderSmartControls(); }catch(_){ }
+    syncSmart().catch(err=>setStatus('Ошибка: '+err.message));
+  }
+  function close(){
+    if(modal) modal.style.display='none';
+    // exit picker mode if active
+    if (vaultPickCtx){
+      vaultPickCtx = null;
+      if (vaultPickResolve){ try{ vaultPickResolve(false); }catch(_){ } }
+      vaultPickResolve = null;
+      vaultSearchQ = '';
+      try{ const si = modal && modal.querySelector('#otdVaultSearch'); if(si) si.value=''; }catch(_){ }
+    }
+  }
+
+  function setStatus(msg){ const el = modal && modal.querySelector('#otdVaultStatus'); if(el) el.textContent = msg||''; }
+
+  function openPicker(opts){
+    const requestId = opts && opts.requestId ? String(opts.requestId) : '';
+    const suggestedMonth = opts && opts.suggestedMonth ? String(opts.suggestedMonth) : '';
+    if (!requestId) return Promise.resolve(false);
+    vaultPickCtx = { requestId };
+    if (/^[0-9]{4}-[0-9]{2}$/.test(suggestedMonth)) setSelectedMonth(suggestedMonth);
+    open();
+    setStatus('Выберите файлы и нажмите “Прикрепить к запросу”.');
+    return new Promise((resolve)=>{ vaultPickResolve = resolve; });
+  }
+
+  async function refresh(selectFolderId){
+    setStatus('Загружаю...');
+    const j = await apiJson('/api/docs/state','GET');
+    const folders = j.folders || [];
+    const files = j.files || [];
+    vaultState = { folders, files };
+    const sel = modal.querySelector('#otdVaultFolderSel');
+    const cur = sel ? (sel.value || '') : '';
+    if (sel){
+      sel.innerHTML = folders.map(f=>`<option value="${esc(f.id)}">${esc(f.name||f.id)}</option>`).join('');
+      const desired = selectFolderId || cur;
+      if (desired && folders.some(f=>f.id===desired)) sel.value = desired;
+      if (!sel.value && folders.length) sel.value = folders[0].id;
+    }
+
+    const folderId = sel ? sel.value : '';
+    renderFiles(files, folderId);
+    renderShare(folderId);
+    setStatus('');
+  }
+  function renderFiles(allFiles, folderId){
+    const box = modal.querySelector('#otdVaultFiles');
+    const q = String(vaultSearchQ || '').toLowerCase();
+    const list = (allFiles||[])
+      .filter(f=>!folderId || f.folderId===folderId)
+      .filter(f=>!q || String(f.fileName||'').toLowerCase().includes(q))
+      .sort((a,b)=>(String(b.uploadedAt||'').localeCompare(String(a.uploadedAt||''))));
+
+    lastVisibleFiles = list;
+
+    if (!list.length){
+      bulkReset();
+      renderBulkBar([]);
+      box.innerHTML = '<div class="muted small">Пока пусто. Загрузите сюда файлы.</div>';
+      return;
+    }
+
+    // Keep selection within current folder + render toolbar
+    bulkPruneToVisible(list);
+    renderBulkBar(list);
+
+    const bulkBar = modal && modal.querySelector('#otdVaultBulkBar');
+    if (bulkBar){
+      bulkBar.onclick = async (e)=>{
+        const b = e.target && e.target.closest ? e.target.closest('button[data-bulkact]') : null;
+        if (!b) return;
+        const act = b.getAttribute('data-bulkact');
+
+        if (act === 'all'){
+          list.forEach(f=>bulkSelected.add(String(f.id||'')));
+          renderFiles(allFiles, folderId);
+          return;
+        }
+        if (act === 'clear'){
+          bulkReset();
+          renderFiles(allFiles, folderId);
+          return;
+        }
+        if (act === 'cancelPick'){
+          close();
+          return;
+        }
+        if (act === 'attach'){
+          if (!bulkSelected.size || !vaultPickCtx || !vaultPickCtx.requestId) return;
+          try{
+            setStatus('Прикрепляю к запросу...');
+            const rid = vaultPickCtx.requestId;
+            await apiJson('/api/client/requests/attach-vault','POST',{ requestId: rid, fileIds: Array.from(bulkSelected) });
+            bulkReset();
+            setStatus('Прикреплено');
+            if (vaultPickResolve){ try{ vaultPickResolve(true); }catch(_){ } }
+            vaultPickResolve = null;
+            vaultPickCtx = null;
+            setTimeout(()=>{ try{ close(); }catch(_){ } }, 400);
+          }catch(err){
+            setStatus('Ошибка: '+(err && err.message ? err.message : err));
+          }
+          return;
+        }
+        if (act === 'move'){
+          if (!bulkSelected.size) return;
+          showMoveDialogForIds(Array.from(bulkSelected));
+          return;
+        }
+        if (act === 'delete'){
+          if (!bulkSelected.size) return;
+          const ok = confirm('Удалить выбранные файлы (' + bulkSelected.size + ')?');
+          if (!ok) return;
+          try{
+            setStatus('Удаляю...');
+            await apiJson('/api/docs/files/bulk-delete','POST',{ fileIds: Array.from(bulkSelected) });
+            bulkReset();
+            await refresh(modal.querySelector('#otdVaultFolderSel')?.value || '');
+            setStatus('Удалено');
+            setTimeout(()=>setStatus(''), 900);
+          }catch(err){
+            setStatus('Ошибка: '+(err && err.message ? err.message : err));
+          }
+          return;
+        }
+      };
+    }
+
+    box.innerHTML = list.map(f=>{
+      const dt = f.uploadedAt ? new Date(f.uploadedAt).toLocaleString() : '';
+      const size = f.fileSize ? (Math.round((f.fileSize/1024)*10)/10 + ' KB') : '';
+      const checked = bulkSelected.has(String(f.id||'')) ? 'checked' : '';
+      return `
+        <div class="card" style="padding:10px;border-radius:14px">
+          <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
+            <div style="display:flex;gap:10px;align-items:flex-start;min-width:220px;flex:1">
+              <input type="checkbox" data-bsel="1" data-fid="${esc(f.id)}" ${checked} style="margin-top:4px;transform:scale(1.08)" />
+              <div>
+                <div style="font-weight:800">${esc(f.fileName||'document')}</div>
+                <div class="muted small" style="margin-top:4px">${esc(dt)} ${size?('• '+esc(size)):''}</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <a class="btn ghost small" href="${esc(f.fileUrl||'#')}" target="_blank" rel="noopener">Открыть</a>
+              <button class="btn ghost small" type="button" data-docact="rename" data-fid="${esc(f.id)}">Имя</button>
+              <button class="btn ghost small" type="button" data-docact="move" data-fid="${esc(f.id)}">Раздел</button>
+              <button class="btn ghost small" type="button" data-docact="delete" data-fid="${esc(f.id)}">Удалить</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    box.onchange = (e)=>{
+      const cb = e.target && e.target.matches && e.target.matches('input[type="checkbox"][data-bsel]') ? e.target : null;
+      if (!cb) return;
+      const fid = cb.getAttribute('data-fid');
+      if (!fid) return;
+      if (cb.checked) bulkSelected.add(String(fid));
+      else bulkSelected.delete(String(fid));
+      renderBulkBar(list);
+    };
+
+    // One delegated handler for actions
+    box.onclick = async (e)=>{
+      const btn = e.target && e.target.closest ? e.target.closest('button[data-docact]') : null;
+      if (!btn) return;
+      const act = btn.getAttribute('data-docact');
+      const fid = btn.getAttribute('data-fid');
+      if (!fid) return;
+      const file = (vaultState.files||[]).find(x=>String(x.id||'')===String(fid));
+      if (!file) return;
+      try{
+        if (act === 'rename') {
+          const current = String(file.fileName || 'document');
+          const next = prompt('Новое имя файла', current);
+          if (next === null) return;
+          const name = String(next||'').trim();
+          if (!name) { setStatus('Имя не может быть пустым'); return; }
+          setStatus('Сохраняю имя...');
+          await apiJson('/api/docs/files/rename','POST',{ fileId: fid, fileName: name });
+          await refresh(modal.querySelector('#otdVaultFolderSel')?.value || '');
+          setStatus('Готово');
+          setTimeout(()=>setStatus(''), 900);
+        }
+        if (act === 'delete') {
+          const ok = confirm('Удалить файл? Он исчезнет из OneTapDay.');
+          if (!ok) return;
+          setStatus('Удаляю...');
+          await apiJson('/api/docs/files/delete','POST',{ fileId: fid });
+          // keep bulk selection consistent
+          bulkSelected.delete(String(fid));
+          await refresh(modal.querySelector('#otdVaultFolderSel')?.value || '');
+          setStatus('Удалено');
+          setTimeout(()=>setStatus(''), 900);
+        }
+        if (act === 'move') {
+          showMoveDialog(file);
+        }
+      } catch(err){
+        setStatus('Ошибка: '+(err && err.message ? err.message : err));
+      }
+    };
+  }
+
+  // --- Move dialog (month+category or explicit folder) ---
+  let moveDlg = null;
+  let moveCtx = { fileIds:[], month:'', cat:'incoming', folderId:'' };
+
+  function ensureMoveDlg(){
+    if (moveDlg) return moveDlg;
+    const d = document.createElement('div');
+    d.id = 'otdVaultMoveDlg';
+    d.style.cssText = 'position:fixed;inset:0;z-index:100000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);padding:14px;';
+    d.innerHTML = `
+      <div style="width:min(520px,96vw);border-radius:18px;background:rgba(18,22,25,.94);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 80px rgba(0,0,0,.55);padding:14px">
+        <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+          <div id="otdMoveTitle" style="font-weight:900">Переместить файл</div>
+          <button id="otdMoveClose" class="btn ghost small" type="button">Закрыть</button>
+        </div>
+
+        <div class="muted small" style="margin-top:6px">Выберите новый месяц/раздел или конкретную папку.</div>
+
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="min-width:160px;flex:1">
+            <div class="muted small" style="margin-bottom:6px">Месяц</div>
+            <select id="otdMoveMonth" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
+          </div>
+          <div style="flex:2;min-width:220px">
+            <div class="muted small" style="margin-bottom:6px">Раздел</div>
+            <div id="otdMoveCats" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="muted small" style="margin-bottom:6px">Или папка</div>
+          <select id="otdMoveFolder" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
+          <div class="muted small" style="opacity:.8;margin-top:6px">Если выбрана папка, она приоритетнее месяца/раздела.</div>
+        </div>
+
+        <div style="margin-top:14px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+          <button id="otdMoveDo" class="btn" type="button">Переместить</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(d);
+    d.addEventListener('click', (e)=>{ if (e.target === d) hideMove(); });
+    d.querySelector('#otdMoveClose')?.addEventListener('click', hideMove);
+    d.querySelector('#otdMoveDo')?.addEventListener('click', ()=>{
+      doMove().catch(err=>setStatus('Ошибка: '+(err && err.message ? err.message : err)));
+    });
+    moveDlg = d;
+    return d;
+  }
+
+  function renderMoveCats(){
+    const box = moveDlg.querySelector('#otdMoveCats');
+    box.innerHTML = VAULT_CATS.map(cat=>{
+      const active = (cat.id === moveCtx.cat);
+      const cls = active ? 'btn' : 'btn secondary';
+      return `<button type="button" class="${cls} small" data-mcat="${esc(cat.id)}">${esc(cat.label)}</button>`;
+    }).join('');
+    box.querySelectorAll('button[data-mcat]').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        moveCtx.cat = b.getAttribute('data-mcat') || 'incoming';
+        renderMoveCats();
+      });
+    });
+  }
+
+  function showMoveDialog(file){
+    const id = String(file && file.id || '');
+    if (!id) return;
+    showMoveDialogForIds([id]);
+  }
+
+  function showMoveDialogForIds(ids){
+    ensureMoveDlg();
+    moveCtx.fileIds = Array.isArray(ids) ? ids.map(x=>String(x||'')).filter(Boolean) : [];
+    const title = moveDlg.querySelector('#otdMoveTitle');
+    if (title){
+      const n = moveCtx.fileIds.length || 1;
+      title.textContent = n === 1 ? 'Переместить файл' : ('Переместить ' + n + ' файлов');
+    }
+    moveCtx.month = selectedMonth || curMonth();
+    moveCtx.cat = selectedCat || 'incoming';
+    moveCtx.folderId = '';
+
+    const msel = moveDlg.querySelector('#otdMoveMonth');
+    const months = monthList(18);
+    msel.innerHTML = months.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    msel.value = months.includes(moveCtx.month) ? moveCtx.month : months[0];
+    msel.onchange = ()=>{ moveCtx.month = msel.value || curMonth(); };
+
+    renderMoveCats();
+
+    const fsel = moveDlg.querySelector('#otdMoveFolder');
+    const folders = (vaultState.folders||[]);
+    fsel.innerHTML = `<option value="">(не выбрано)</option>` + folders.map(f=>`<option value="${esc(f.id)}">${esc(f.name||f.id)}</option>`).join('');
+    fsel.onchange = ()=>{ moveCtx.folderId = fsel.value || ''; };
+
+    moveDlg.style.display = 'flex';
+  }
+  function hideMove(){ if (moveDlg) moveDlg.style.display = 'none'; }
+
+  async function doMove(){
+    const fileIds = (moveCtx.fileIds||[]).map(x=>String(x||'')).filter(Boolean);
+    if (!fileIds.length) return;
+    setStatus('Перемещаю...');
+    if (moveCtx.folderId){
+      await apiJson('/api/docs/files/bulk-move','POST',{ fileIds, folderId: moveCtx.folderId });
+    } else {
+      await apiJson('/api/docs/files/bulk-move','POST',{ fileIds, month: moveCtx.month, category: moveCtx.cat });
+    }
+    hideMove();
+    await refresh(modal.querySelector('#otdVaultFolderSel')?.value || '');
+    setStatus('Готово');
+    setTimeout(()=>setStatus(''), 900);
+  }
+
+  
+  function getFolderShared(folderId){
+    const fid = String(folderId||'');
+    const f = (vaultState.folders||[]).find(x=>String(x.id||'')===fid);
+    if (!f) return true;
+    if (typeof f.sharedWithAccountant === 'boolean') return f.sharedWithAccountant;
+    if (f.share && typeof f.share.accountant === 'boolean') return f.share.accountant;
+    return true; // default shared
+  }
+
+  function renderShare(folderId){
+    const btn = modal && modal.querySelector('#otdVaultShareToggle');
+    const st = modal && modal.querySelector('#otdVaultShareState');
+    if (!btn || !st) return;
+    const fid = String(folderId||'');
+    if (!fid){
+      btn.disabled = true;
+      btn.textContent = '...';
+      st.textContent = '';
+      return;
+    }
+    const shared = getFolderShared(fid);
+    btn.disabled = false;
+    btn.textContent = shared ? 'Закрыть доступ' : 'Открыть доступ';
+    st.textContent = shared ? 'Бухгалтер видит эту папку' : 'Бухгалтер НЕ видит эту папку';
+  }
+
+  async function onToggleShare(){
+    const sel = modal && modal.querySelector('#otdVaultFolderSel');
+    const folderId = sel && sel.value ? sel.value : '';
+    if (!folderId) { setStatus('Выберите папку'); return; }
+    const cur = getFolderShared(folderId);
+    const next = !cur;
+    setStatus(next ? 'Открываю доступ...' : 'Закрываю доступ...');
+    await apiJson('/api/docs/folders/share', 'POST', { folderId, shared: next });
+    await refresh(folderId);
+    renderShare(folderId);
+    setStatus(next ? 'Доступ открыт' : 'Доступ закрыт');
+    setTimeout(()=>setStatus(''), 1200);
+  }
+
+async function onCreateFolder(){
+    const inp = modal.querySelector('#otdVaultNewFolder');
+    const name = (inp.value||'').trim();
+    if (!name) { setStatus('Введите имя папки'); return; }
+    setStatus('Создаю папку...');
+    await apiJson('/api/docs/folders/create','POST',{ name });
+    inp.value='';
+    await refresh();
+    setStatus('Папка создана');
+    setTimeout(()=>setStatus(''), 1200);
+  }
+
+  async function onUpload(){
+    const sel = modal.querySelector('#otdVaultFolderSel');
+    let folderId = sel && sel.value ? sel.value : '';
+    if (!folderId){
+      setStatus('Создаю папку...');
+      try{ await syncSmart(); }catch(e){ setStatus('Ошибка: '+e.message); return; }
+      folderId = (sel && sel.value) ? sel.value : '';
+    }
+    if (!folderId) { setStatus('Сначала создайте или выберите папку'); return; }
+    const input = modal.querySelector('#otdVaultFileInput');
+    const files = Array.from(input.files || []);
+    if (!files.length) { setStatus('Выберите файлы'); return; }
+
+    setStatus(`Загрузка 0/${files.length}...`);
+    for (let i=0; i<files.length; i++){
+      const f = files[i];
+      const dataUrl = await new Promise((resolve, reject)=>{
+        const r = new FileReader();
+        r.onload = ()=>resolve(String(r.result||''));
+        r.onerror = ()=>reject(new Error('File read error'));
+        r.readAsDataURL(f);
+      });
+      await apiJson('/api/docs/upload','POST',{ folderId, fileName: f.name, dataUrl });
+      setStatus(`Загрузка ${i+1}/${files.length}...`);
+    }
+    input.value='';
+    await refresh();
+    setStatus('Готово');
+    setTimeout(()=>setStatus(''), 1200);
+  }
+
+  function bind(){
+    const btn = document.getElementById('openVaultBtn');
+    if (btn && !btn.__otd_bound){
+      btn.__otd_bound = true;
+      btn.addEventListener('click', (e)=>{ e.preventDefault(); open(); });
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+})();
+

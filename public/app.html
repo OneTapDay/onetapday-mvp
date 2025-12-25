@@ -9,7 +9,7 @@
 <link href="/icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
 <link href="/icon-512.png" rel="icon" sizes="512x512" type="image/png"/>
 <link href="/manifest.json" rel="manifest"/>
-<title>OneTapDay — AI Księgowy (MVP)</title>
+<title>OneTapDay</title>
 <style>
     :root{
       --accent:#47b500;--bg:#0d0f10;--card:#15181a;--muted:#9aa3a9;--text:#e6edf3;
@@ -190,7 +190,10 @@
 
     .hidden{display:none!important}
     .homeScreen{padding:24px 16px 32px;max-width:480px;margin:0 auto}
-    .homeLogo{font-size:28px;font-weight:800;color:var(--accent);margin:6px 2px 4px}
+.homeHeader{display:none !important}
+.homeSub{display:none !important}
+
+    .homeLogo{color:var(--accent);font-size:28px;font-weight:800;color:var(--accent);margin:6px 2px 4px}
     .homeSub{font-size:13px;color:var(--muted);margin:0 2px 20px;line-height:1.5;text-align:center}
 .trendCard{
   margin:12px 0 18px;
@@ -458,6 +461,112 @@
 .aiChatItem .actions{display:flex;gap:6px}
 .aiChatItem .mini{border:1px solid #22282c;background:transparent;color:#cfd7dd;border-radius:10px;padding:4px 8px;font-size:12px}
 
+
+
+/* === QALTA-STYLE CASH (visual only) === */
+.top{display:flex;align-items:center;justify-content:space-between;
+  position:fixed;left:50%;transform:translateX(-50%);
+  top:calc(env(safe-area-inset-top) + 10px);
+  width:min(520px, calc(100% - 24px));
+  margin:0 auto;
+  padding:10px 12px;
+  z-index:1000;
+  background:rgba(15,18,20,0.78);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:16px;
+  backdrop-filter:blur(12px);
+}
+.brand b{font-size:16px;letter-spacing:0.2px;color:var(--accent)}
+.top .brand{cursor:pointer;user-select:none}
+.iconBtn{appearance:none;border:0;background:transparent;color:var(--text);font-size:18px;line-height:1;padding:8px;border-radius:12px}
+.iconBtn:active{transform:scale(0.98);background:rgba(255,255,255,0.06)}
+.wrap{padding-top: calc(84px + env(safe-area-inset-top));}
+.navOverlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:flex-end;justify-content:center}
+.navSheet{width:min(520px,100%);background:#0f1214;border:1px solid #20262b;border-radius:18px 18px 0 0;padding:14px 12px 18px}
+.navHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.navTitle{font-weight:800}
+.navList{display:flex;flex-direction:column;gap:8px}
+.navItem{appearance:none;border:1px solid #20262b;background:#121619;color:#e6edf3;border-radius:14px;padding:12px 12px;text-align:left;font-weight:700}
+.navItem:active{transform:scale(0.99);background:#171c20}
+
+.section#kasa{margin-top:10px}
+.kasa-qalta{background:rgba(15,18,20,0.82);color:var(--text);border-radius:26px;border:1px solid rgba(255,255,255,0.10);padding:18px 16px 96px;position:relative;backdrop-filter:blur(10px)}
+.q-header{padding:2px 2px 12px}
+.q-sub{font-size:13px;color:var(--muted);font-weight:700}
+.q-balance{font-size:44px;font-weight:900;letter-spacing:-0.8px;margin-top:4px;font-variant-numeric:tabular-nums}
+.q-deltas{display:flex;gap:8px;align-items:center;margin-top:8px}
+.q-chip{font-size:13px;font-weight:800;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06)}
+.q-chip.pos{color:#72ff4a}
+.q-chip.neg{color:#ff8a8a}
+
+.q-feed{margin-top:8px;display:flex;flex-direction:column;gap:10px}
+.q-day{font-size:12px;font-weight:800;color:var(--muted);margin:10px 2px 2px}
+.q-item{display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:18px;padding:10px 10px}
+.q-left{display:flex;gap:10px;align-items:center;min-width:0}
+.q-ic{width:34px;height:34px;border-radius:12px;background:rgba(71,181,0,0.12);border:1px solid rgba(71,181,0,0.20);display:flex;align-items:center;justify-content:center;font-size:18px}
+.q-text{min-width:0}
+.q-title{font-weight:900;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-sub2{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.q-right{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.q-amt{font-weight:900;font-variant-numeric:tabular-nums}
+.q-amt.pos{color:#72ff4a}
+.q-amt.neg{color:#ff8a8a}
+.q-miniRow{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+.q-mini{appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--muted);border-radius:10px;padding:4px 7px;font-size:12px;white-space:nowrap}
+
+.q-actions{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;width:min(520px, calc(100% - 24px));display:flex;align-items:center;justify-content:space-between;gap:12px;background:rgba(15,18,20,0.90);border:1px solid rgba(255,255,255,0.12);border-radius:26px;padding:12px 16px;box-shadow:0 22px 55px rgba(0,0,0,0.55);backdrop-filter:blur(10px);z-index:1000}
+.q-act{appearance:none;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.06);color:var(--text);width:46px;height:46px;border-radius:999px;display:flex;align-items:center;justify-content:center}
+.q-act:active{transform:scale(0.98)}
+.q-act.q-main{width:58px;height:58px;background:#0b0e10;color:#ffffff;font-size:28px;font-weight:900;border:1px solid rgba(71,181,0,0.35);box-shadow:0 16px 40px rgba(0,0,0,0.55)}
+.q-ico{font-size:18px}
+
+/* Bottom sheet */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px 22px 0 0;padding:10px 14px 16px;box-shadow:0 -22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
+.sheet-handle{width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,0.18);margin:6px auto 10px}
+.sheet-top{display:flex;align-items:center;justify-content:space-between}
+.sheet-title{font-weight:900}
+.sheet-close{appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--text);border-radius:12px;padding:8px 10px}
+.sheet-toggle{display:flex;gap:8px;margin-top:10px}
+.seg{flex:1;appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--text);border-radius:14px;padding:10px 12px;font-weight:900}
+.seg.active{background:rgba(71,181,0,0.16);color:#dfffd1;border-color:rgba(71,181,0,0.35)}
+.sheet-field{margin-top:10px}
+.lbl{font-size:12px;font-weight:800;color:var(--muted);margin-bottom:6px}
+.sheet input, .sheet select{width:100%;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:12px 12px;font-size:16px;background:rgba(0,0,0,0.25);color:var(--text)}
+.sheet input:focus, .sheet select:focus{outline:none;border-color:rgba(71,181,0,0.55);box-shadow:0 0 0 4px rgba(71,181,0,0.10)}
+.sheet-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.sheet-row .btn{flex:1;min-width:120px}
+.sheet-adv{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.speechSel{flex:0 0 auto}
+.micStatus{font-size:12px;color:var(--muted);flex:1;min-width:120px}
+
+/* Ensure cash section doesn't sit under fixed action bar */
+.section#kasa{padding-bottom:120px}
+
+
+/* Voice waveform hint (ChatGPT-ish) */
+#micBtn{position:relative;overflow:hidden}
+#micBtn .q-voice-bars{display:none;width:22px;height:22px}
+#micBtn.on{background:#0f1214 !important}
+#micBtn.on .q-ico{display:none}
+#micBtn.on .q-voice-bars{display:block}
+#micBtn.on .q-voice-bars:before,
+#micBtn.on .q-voice-bars:after{content:'';display:block;width:100%;height:100%;background:
+  linear-gradient(to right,
+    rgba(255,255,255,0.95) 0 2px, transparent 2px 4px,
+    rgba(255,255,255,0.75) 4px 6px, transparent 6px 9px,
+    rgba(255,255,255,0.95) 9px 11px, transparent 11px 14px,
+    rgba(255,255,255,0.65) 14px 16px, transparent 16px 19px,
+    rgba(255,255,255,0.9) 19px 22px);
+  mask: linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%);
+  border-radius:10px;
+  animation: voicePulse 0.9s infinite ease-in-out;
+}
+@keyframes voicePulse{
+  0%{transform:scaleY(0.55);opacity:0.85}
+  50%{transform:scaleY(1.0);opacity:1}
+  100%{transform:scaleY(0.55);opacity:0.85}
+}
 </style>
 <style>
   /* Глобальный фон и контейнер */
@@ -754,7 +863,125 @@
   .helper-chip{
     border-radius:999px;
   }
+
+  /* === Analytics (premium) === */
+  .analyticsWrap{max-width:520px;margin:0 auto}
+  .analyticsHead{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .analyticsTitle{font-size:22px;font-weight:800;letter-spacing:0.2px}
+  .analyticsFullBtn{padding:8px 12px;border-radius:999px}
+  .analyticsSeg{display:flex;gap:10px;align-items:center;margin:10px 0 12px}
+  .segBtn{
+    appearance:none;border:1px solid rgba(255,255,255,0.10);
+    background:rgba(15,18,20,0.75);
+    color:rgba(230,237,243,0.9);
+    border-radius:999px;
+    padding:8px 14px;
+    font-weight:800;
+    cursor:pointer;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.55);
+    transition:transform .08s ease, border-color .15s ease, background .15s ease;
+  }
+  .segBtn:active{transform:scale(0.98)}
+  .segBtn.on{
+    background:linear-gradient(180deg, rgba(71,181,0,0.90), rgba(71,181,0,0.72));
+    color:#07110b;
+    border-color:rgba(120,255,120,0.55);
+    box-shadow: 0 16px 34px rgba(0,0,0,0.6), 0 0 0 1px rgba(71,181,0,0.15) inset;
+  }
+
+  .analyticsKpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+  @media (max-width:380px){ .analyticsKpis{grid-template-columns:1fr;}}
+  .kpiPill{
+    background:rgba(18,22,24,0.72);
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:16px;
+    padding:10px 12px;
+    box-shadow: 0 18px 45px rgba(0,0,0,0.55);
+    backdrop-filter: blur(10px);
+  }
+  .kpiLabel{font-size:12px;color:rgba(154,163,169,0.95);margin-bottom:6px}
+  .kpiVal{font-size:16px;font-weight:900}
+
+  .analyticsGrid{display:grid;grid-template-columns:1fr;gap:12px}
+  .aCard{
+    background:rgba(18,22,24,0.72);
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:18px;
+    padding:14px;
+    box-shadow: 0 20px 55px rgba(0,0,0,0.6);
+    backdrop-filter: blur(10px);
+  }
+  .aCardHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .aCardTitle{font-size:14px;font-weight:900}
+  .analyticsLine{min-height:240px}
+  #analyticsFullChart{min-height:320px}
+
+  .donutWrap{position:relative;display:flex;align-items:center;justify-content:center;padding:8px 0 2px}
+  .donutSvg{width:220px;max-width:100%;height:220px}
+  .donutCenter{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    pointer-events:none;
+  }
+  .donutValue{font-size:18px;font-weight:900}
+  .donutSub{font-size:12px;color:rgba(154,163,169,0.95);margin-top:2px}
+
+  .catList{margin-top:10px;display:flex;flex-direction:column;gap:10px}
+  .catRow{display:flex;align-items:center;gap:10px}
+  .catDot{width:10px;height:10px;border-radius:999px;flex:0 0 auto;background:rgba(71,181,0,0.9);box-shadow:0 0 0 4px rgba(71,181,0,0.12)}
+  .catName{flex:1 1 auto;font-size:13px;font-weight:700;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .catAmt{flex:0 0 auto;font-size:13px;font-weight:900}
+  .catBar{height:8px;border-radius:999px;background:rgba(255,255,255,0.06);overflow:hidden;border:1px solid rgba(255,255,255,0.06);margin-top:6px}
+  .catBar > i{display:block;height:100%;width:0;background:linear-gradient(90deg, rgba(71,181,0,0.95), rgba(71,181,0,0.45));border-radius:999px}
+
+  .analyticsModalCard{max-width:520px;width:92%}
 </style>
+
+<style id="otd-safe-offsets">
+/* === FIX: prevent floating top/bottom bars from covering content === */
+:root{
+  --otd-topbar-space: calc(env(safe-area-inset-top) + 96px);
+  --otd-bottombar-space: calc(env(safe-area-inset-bottom) + 120px);
+}
+/* The file defines .wrap multiple times; this override must be LAST. */
+.wrap{ padding-top: var(--otd-topbar-space) !important; }
+/* Floating header */
+.top{ top: calc(env(safe-area-inset-top) + 8px) !important; }
+/* Cash bottom action bar should sit above iOS safe area */
+.q-actions{ bottom: calc(14px + env(safe-area-inset-bottom)) !important; }
+/* Ensure the cash feed never hides behind the fixed bottom bar */
+/* Cash screen: lock layout so only the history scrolls */
+.section#kasa.active{
+  margin-top: 0 !important;
+  height: calc(100dvh - var(--otd-topbar-space) - 32px) !important;
+  padding-bottom: 0 !important;
+  overflow: hidden !important;
+}
+.section#kasa.active .kasa-qalta{
+  height: 100% !important;
+  padding-bottom: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+.section#kasa.active .q-header{ flex: 0 0 auto !important; }
+.section#kasa.active .q-feed{
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(130px + env(safe-area-inset-bottom)) !important;
+}
+.section#kasa.active .q-actions{
+  bottom: calc(18px + env(safe-area-inset-bottom)) !important;
+}
+
+/* Small phones need a bit more breathing room */
+@media (max-width: 380px){
+  :root{ --otd-topbar-space: calc(env(safe-area-inset-top) + 110px); }
+}
+</style>
+
+  <link rel="stylesheet" href="/css/scrollbar-premium.css">
 </head>
 <body>
 <div class="wrap">
@@ -764,7 +991,7 @@
 <button class="homeMenuBtn" onclick="appGoSection('ustawienia')" type="button">⋯</button>
 </div>
 <div class="homeSub" data-i18n="home.tagline"></div>
-<div class="trendCard">
+<div class="trendCard" id="trendCard" role="button" tabindex="0" aria-label="Analityka">
 <div class="trendHeader">
 <span data-i18n="home.trend_title"></span>
 <span class="trendChip" id="trendChange">—</span>
@@ -779,7 +1006,7 @@
 <div class="homeTileTitle" data-i18n="home.tile_docs_title"></div>
 <div class="homeTileDesc" data-i18n="home.tile_docs_desc"></div>
 </button>
-<button class="homeTile" onclick="appGoSection('pulpit')" type="button">
+<button class="homeTile" onclick="appGoSection('wyciag')" type="button">
 <div class="homeTileIcon">💸</div>
 <div class="homeTileTitle" data-i18n="home.tile_money_title"></div>
 <div class="homeTileDesc" data-i18n="home.tile_money_desc"></div>
@@ -806,33 +1033,10 @@
 </button>
 </div>
 </div>
-<div class="top hidden">
-<div class="brand">
-<!-- Back button временно отключён: возвращение на главную через вкладку Panel -->
-<!--
-  <!-- Back button временно отключён: возвращение на главную через вкладку Panel -->
-<!--
-  <button
-    type="button"
-    id="backHomeBtn"
-    class="iconBtn"
-    aria-label="Powrót"
-    onclick="appShowHome()"
-  >←</button>
-  -->
-  --&gt;
-<div><b>OneTapDay — AI Księgowy</b> <span class="pill">MVP</span></div>
-<!-- Кнопка настроек (⋯) временно скрыта в этой сборке -->
-<!-- <button type="button" id="settingsBtn" class="iconBtn">⋯</button> -->
-</div>
-<div class="tabs" id="tabs">
-<div class="tab active" data-i18n="tab_dashboard" data-sec="pulpit">Panel</div>
-<div class="tab" data-i18n="tab_statement" data-sec="wyciag">Wyciąg</div>
-<div class="tab" data-i18n="tab_invoices" data-sec="faktury">Faktury</div>
-<div class="tab" data-i18n="tab_accounts" data-sec="konta">Konta</div>
-<div class="tab" data-i18n="tab_cash" data-sec="kasa">Kasa</div>
-<div class="tab" data-i18n="tab_settings" data-sec="ustawienia">Ustawienia</div>
-</div>
+<div class="top">
+<button aria-label="Menu" class="iconBtn" id="navBtn" type="button">☰</button>
+<div class="brand" id="brandHome" role="button" tabindex="0" aria-label="Home"><b>OneTapDay</b></div>
+<button aria-label="Ustawienia" class="iconBtn" id="navSettingsBtn" type="button">⚙︎</button>
 </div>
 <!-- ACCESS GATE (hidden if demo/sub active) -->
 <div class="gate hidden" id="gate">
@@ -1060,7 +1264,6 @@
 <div id="invoiceTplList" style="display:flex;flex-direction:column;gap:8px;max-height:22vh;overflow:auto;margin-bottom:10px"></div>
 <div class="modal-row" style="display:flex;gap:8px">
 <button class="btn" id="invoiceTplSave" style="flex:1">Zapisz</button>
-
 <button class="btn ghost" id="invoiceTplNew" style="flex:1" type="button">Nowy</button></div>
 <div class="modal-row" style="margin-top:8px;display:flex;gap:8px"><button class="btn secondary" id="invoiceTplDownloadHTML" style="flex:1">Pobierz HTML</button>
 <button class="btn secondary" id="invoiceTplDownloadCSV" style="flex:1">Pobierz CSV</button>
@@ -1089,14 +1292,91 @@
 <div id="inventoryTplList" style="display:flex;flex-direction:column;gap:8px;max-height:22vh;overflow:auto;margin-bottom:10px"></div>
 <div class="modal-row" style="display:flex;gap:8px">
 <button class="btn" id="inventoryTplSave" style="flex:1">Zapisz</button>
-
 <button class="btn ghost" id="inventoryTplNew" style="flex:1" type="button">Nowy</button></div><div class="modal-row" style="margin-top:8px;display:flex;gap:8px"><button class="btn secondary" id="inventoryTplDownloadCSV" style="flex:1">Pobierz CSV</button><button class="btn secondary" id="inventoryTplDownloadXLSX" style="flex:1">Pobierz XLSX</button></div>
 <div class="modal-row" style="margin-top:8px;display:flex;gap:8px">
-
 <button class="btn ghost" id="inventoryTplClose" style="flex:1">Zamknij</button>
 </div>
 </div>
 </div><div class="modal-overlay" id="accountantToolsModal"><div class="modal-card"><h3 data-i18n="documents.accountant_modal_title"></h3><div class="muted small" data-i18n="documents.accountant_modal_desc" style="margin-bottom:10px"></div><div class="modal-row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-i18n="documents.accountant_tab_exports" id="acctTabExports" type="button"></button><button class="btn secondary" data-i18n="documents.accountant_tab_templates" id="acctTabTemplates" type="button"></button></div><div id="acctPanelExports" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="docExportTxBtn" type="button">Wyciągi (CSV)</button><button class="btn secondary" id="docExportBillsBtn" type="button">Faktury (CSV)</button><button class="btn secondary" id="docExportBookBtn" type="button">Księga (CSV)</button><button class="btn secondary" id="docExportCashBtn" type="button">Kasa (CSV)</button></div><div id="acctPanelTemplates" style="margin-top:10px;display:none;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="openInvoiceTplBtn" type="button">Szablon faktury</button><button class="btn secondary" id="openInventoryTplBtn" type="button">Szablon inwentaryzacji</button></div><div class="muted small" data-i18n="documents.accountant_modal_hint" style="margin-top:10px"></div><div class="modal-row" style="margin-top:12px;display:flex;gap:8px"><button class="btn ghost" data-i18n="buttons.close" id="accountantToolsClose" style="flex:1" type="button">Zamknij</button></div></div></div>
+<!-- ANALYTICS -->
+<div class="section" id="analytics" style="display:none">
+  <div class="analyticsWrap">
+    <div class="analyticsHead">
+      <div>
+        <div class="analyticsTitle">Analityka</div>
+        <div class="muted small" id="analyticsRangeLabel">Ostatnie 30 dni</div>
+      </div>
+      <button class="btn ghost analyticsFullBtn" id="analyticsFullBtn" type="button">Pełny wykres</button>
+    </div>
+
+    <div class="analyticsSeg" role="tablist" aria-label="Zakres czasu">
+      <button class="segBtn on" id="analyticsRange30" type="button" role="tab" aria-selected="true">30d</button>
+      <button class="segBtn" id="analyticsRange90" type="button" role="tab" aria-selected="false">90d</button>
+      <button class="segBtn" id="analyticsRange365" type="button" role="tab" aria-selected="false">12m</button>
+    </div>
+
+    <div class="analyticsKpis">
+      <div class="kpiPill">
+        <div class="kpiLabel">Wpływy</div>
+        <div class="kpiVal" id="analyticsIn">—</div>
+      </div>
+      <div class="kpiPill">
+        <div class="kpiLabel">Wydatki</div>
+        <div class="kpiVal" id="analyticsOut">—</div>
+      </div>
+      <div class="kpiPill">
+        <div class="kpiLabel">Netto</div>
+        <div class="kpiVal" id="analyticsNet">—</div>
+      </div>
+    </div>
+
+    <div class="analyticsGrid">
+      <div class="aCard">
+        <div class="aCardHead">
+          <div class="aCardTitle">Wydatki po kategoriach</div>
+          <div class="pill" id="analyticsCatsHint">Top</div>
+        </div>
+
+        <div class="donutWrap">
+          <div class="donutSvg" id="analyticsDonut"></div>
+          <div class="donutCenter">
+            <div class="donutValue" id="analyticsDonutTotal">—</div>
+            <div class="donutSub">wydatki</div>
+          </div>
+        </div>
+
+        <div class="catList" id="analyticsCatList"></div>
+      </div>
+
+      <div class="aCard">
+        <div class="aCardHead">
+          <div class="aCardTitle">Ruch</div>
+          <div class="pill" id="analyticsLineBadge">Ostatnie 30 dni</div>
+        </div>
+
+        <div class="trendChart analyticsLine" id="analyticsChart" role="button" tabindex="0" aria-label="Wykres ruchu"></div>
+        <div class="muted small" style="margin-top:8px">Kliknij wykres, aby powiększyć.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- FULL ANALYTICS MODAL -->
+<div class="modal-overlay" id="analyticsFullModal" aria-hidden="true">
+  <div class="modal-card analyticsModalCard" role="dialog" aria-modal="true" aria-label="Pełny wykres">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h3 style="margin:0;flex:1">Wykres</h3>
+      <button class="iconBtn" id="analyticsFullClose" type="button" aria-label="Zamknij">✕</button>
+    </div>
+    <div class="muted small" id="analyticsFullLabel" style="margin:6px 0 10px">—</div>
+    <div class="trendChart" id="analyticsFullChart"></div>
+    <div class="row" style="margin-top:12px;justify-content:flex-end">
+      <button class="btn secondary" id="analyticsExportCSV" type="button">Eksport CSV</button>
+      <button class="btn ghost" id="analyticsFullClose2" type="button">Zamknij</button>
+    </div>
+  </div>
+</div>
+
 <!-- STATEMENT -->
 <div class="section" id="docs">
 <div class="card">
@@ -1131,6 +1411,15 @@
 </div>
 </div>
 <div class="homeTile" style="padding:12px 10px;border-radius:14px"><div class="homeTileTitle" data-i18n="documents.accountant_tools"></div><div class="homeTileDesc" data-i18n="documents.accountant_tools_desc"></div><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn secondary" data-i18n="documents.accountant_open" id="openAccountantToolsBtn" type="button"></button></div><div class="muted small" data-i18n="documents.accountant_hint" style="margin-top:8px"></div></div>
+
+<div class="homeTile" style="padding:12px 10px;border-radius:14px">
+  <div class="homeTileTitle">Мои документы</div>
+  <div class="homeTileDesc">Папки и файлы: чеки, фактуры, договора. Чтобы не терять.</div>
+  <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+    <button class="btn secondary" id="openVaultBtn" type="button">Открыть папки</button>
+  </div>
+  <div class="muted small" style="margin-top:8px">Доступно с телефона и компьютера. Бухгалтер видит это только после принятого инвайта.</div>
+</div>
 </div>
 </div>
 </div>
@@ -1243,184 +1532,80 @@ application/x-ofx" id="billFile" type="file"/>
 </div>
 </div>
 <div class="section" id="kasa">
-<div class="muted small" data-i18n="cash_intro" style="margin:6px 0 10px 0">
-      Tu zapisujesz ruchy gotówki: przyjęcia i wydania. One trafią do podsumowań i księgi.
-    </div>
-<div class="card">
-<!-- Заголовок кассы -->
-<div data-i18n="cash_title" style="font-weight:700; font-size:18px;">
-        Kasa — szybkie operacje
-      </div>
-<div class="muted small" data-i18n="cash_note" style="margin-top:4px">
-        Głosowa kasa + szybkie przyciski
-      </div>
-<!-- БЫСТРЫЕ ОПЕРАЦИИ (сетка 2x2) -->
-<div style="margin-top:16px">
-<div class="muted small" style="margin-bottom:6px">
-          Быстрые операции
-        </div>
-<div class="kasa-quick" id="kasaQuickHolder" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
-<!-- Кнопки пресетов создаются через JS, контейнер просто стал сеткой -->
+<div class="kasa-qalta">
+<div class="q-header">
+<div class="q-sub">Balance</div>
+<div class="q-balance" id="cashBalanceBig">—</div>
+<div class="q-deltas">
+<span class="q-chip pos" id="cashMonthIn">+—</span>
+<span class="q-chip neg" id="cashMonthOut">-—</span>
 </div>
 </div>
-<!-- РАСХОД / МИКРОФОН / ДОХОД -->
-<div style="margin-top:16px; display:flex; justify-content:center; gap:8px; align-items:center; flex-wrap:wrap;">
-<!-- Расход -->
-<button class="btn secondary" data-i18n="btn_add_out" id="addOut" onclick="
-          (function(){
-            var amtEl  = document.getElementById('quickAmt');
-            var noteEl = document.getElementById('quickNote');
-            var catSel = document.getElementById('quickCashCat');
-            if (!amtEl) return;
-
-            var raw = String(amtEl.value || '').replace(',', '.');
-            var val = parseFloat(raw);
-            if (!val || !isFinite(val)) {
-              alert('Сначала введи сумму');
-              return;
-            }
-
-            var note = (noteEl &amp;&amp; noteEl.value || '').trim();
-            var cat  = (catSel &amp;&amp; catSel.value) || '';
-
-            if (typeof addKasa === 'function') {
-              addKasa('wydanie', val, note, 'manual', cat);
-              amtEl.value = '';
-              if (noteEl) noteEl.value = '';
-            } else {
-              console.error('addKasa not found');
-            }
-          })();
-        " style="flex:1; min-width:140px; max-width:200px;">
-  − <span data-i18n="cash_expense_label">Wydatek</span>
+<div class="q-feed" id="kasaFeed"></div>
+<div aria-label="Cash actions" class="q-actions">
+<button aria-label="Photo" class="q-act" id="cashBtnPhoto" type="button">
+<span class="q-ico">📷</span>
 </button>
-<!-- Микрофон -->
-<button class="mic" id="micBtn" style="width:44px;height:44px;border-radius:999px;display:flex;align-items:center;justify-content:center;" title="Voice">
-          🎤
-        </button>
-<!-- Доход -->
-<button class="btn secondary" data-i18n="btn_add_in" id="addIn" onclick="
-          (function(){
-            var amtEl  = document.getElementById('quickAmt');
-            var noteEl = document.getElementById('quickNote');
-            var catSel = document.getElementById('quickCashCat');
-            if (!amtEl) return;
-
-            var raw = String(amtEl.value || '').replace(',', '.');
-            var val = parseFloat(raw);
-            if (!val || !isFinite(val)) {
-              alert('Сначала введи сумму');
-              return;
-            }
-
-            var note = (noteEl &amp;&amp; noteEl.value || '').trim();
-            var cat  = (catSel &amp;&amp; catSel.value) || '';
-
-            if (typeof addKasa === 'function') {
-              addKasa('przyjęcie', val, note, 'manual', cat);
-              amtEl.value = '';
-              if (noteEl) noteEl.value = '';
-            } else {
-              console.error('addKasa not found');
-            }
-          })();
-        " style="flex:1; min-width:140px; max-width:200px;">
-  + <span data-i18n="cash_income_label">Przyjęcie</span>
-</button>
+<button aria-label="Add" class="q-act q-main" id="cashBtnAdd" type="button">+</button>
+<button aria-label="Voice" class="q-act" id="micBtn" type="button">
+<span class="q-ico">🎤</span>
+<span aria-hidden="true" class="q-voice-bars"></span></button>
 </div>
-<!-- СУММА / КОММЕНТ / КАТЕГОРИЯ (стеком, как на макете) -->
-<div style="margin-top:16px; display:flex; flex-direction:column; gap:8px; max-width:420px;">
-<div>
-<div class="muted small">Сумма</div>
-<input data-i18n-ph="ph_amount" id="quickAmt" placeholder="0.00" step="0.01" style="width:100%;" type="number"/>
+<input accept="image/*" id="cashPhoto" style="display:none" type="file"/>
 </div>
-<div>
-<div class="muted small">Комментарий</div>
-<input data-i18n-ph="ph_comment" id="quickNote" placeholder="" style="width:100%;" type="text"/>
+<div class="sheet-backdrop" id="cashSheetBackdrop" style="display:none">
+<div aria-modal="true" class="sheet" id="cashSheet" role="dialog">
+<div class="sheet-handle"></div>
+<div class="sheet-top">
+<div class="sheet-title">Kasa</div>
+<button aria-label="Close" class="sheet-close" id="cashSheetClose" type="button">✕</button>
 </div>
-<div>
-<div class="muted small">Категория</div>
-<select id="quickCashCat" style="width:100%;">
+<div aria-label="Type" class="sheet-toggle" role="tablist">
+<button aria-selected="true" class="seg active" id="cashTypeOut" type="button">− Wydatek</button>
+<button aria-selected="false" class="seg" id="cashTypeIn" type="button">+ Przyjęcie</button>
+</div>
+<div class="sheet-field">
+<div class="lbl">Suma</div>
+<input id="quickAmt" placeholder="0.00" step="0.01" type="number"/>
+</div>
+<div class="sheet-field">
+<div class="lbl">Opis</div>
+<input id="quickNote" placeholder="np. Biedronka, paliwo..." type="text"/>
+</div>
+<div class="sheet-field">
+<div class="lbl">Kategoria</div>
+<select id="quickCashCat">
 <option value="">Категория</option>
 </select>
 </div>
+<div class="sheet-row">
+<button class="btn" id="cashSheetSave" type="button">Zapisz</button>
 </div>
-<!-- ЗАКРЫТЬ СМЕНУ -->
-<div style="margin-top:12px; text-align:right;">
-<button class="btn" data-i18n="btn_close_shift" id="cashClose" onclick="
-          (function(){
-            if (typeof kasaBalance !== 'function' || typeof addKasa !== 'function') {
-              console.error('kasaBalance/addKasa missing');
-              return;
-            }
-
-            var current = kasaBalance().toFixed(2);
-            var a = prompt('Итог в кассе (PLN):', current);
-            if (a === null) return;
-
-            var raw = String(a).replace(',', '.');
-            var v = parseFloat(raw);
-            if (!v || !isFinite(v)) {
-              alert('Сумма некорректна');
-              return;
-            }
-
-            addKasa('zamknięcie', v, 'close', 'manual');
-
-            if (typeof showKasaTodayStats === 'function') {
-              showKasaTodayStats();
-            }
-          })();
-        ">
-  Zamknij zmianę
-</button>
-</div>
-<!-- ЯЗЫК РАСПОЗНАВАНИЯ + СТАТУС МИКРОФОНА -->
-<div style="margin-top:16px; display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
-<span class="muted small" data-i18n="speech_lang_label">
-          Język rozpoznawania:
-        </span>
-<select id="speechLang">
+<div class="sheet-adv">
+<select class="speechSel" id="speechLang">
 <option value="pl-PL">PL</option>
 <option value="ru-RU">RU</option>
 <option value="en-US">EN</option>
 <option value="uk-UA">UK</option>
 </select>
-<span class="muted small" id="micStatus" style="margin-left:4px;">
-          —
-        </span>
+<span class="micStatus" id="micStatus">—</span>
+<button class="btn ghost" id="exportCashCSV" type="button">Eksport CSV</button>
 </div>
-<!-- ФОТО + ЭКСПОРТ -->
-<div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
-<input accept="image/*" id="cashPhoto" style="display:inline-block;" type="file"/>
-<span class="muted small" data-i18n="cash_photo_note">
-          Zdjęcie paragonu/wyciągu — wykryj kwotę i opis.
-        </span>
-</div>
-<button class="btn secondary" data-i18n="btn_export_cash_csv" id="exportCashCSV" style="margin-top:10px">
-        Eksport kasy (CSV)
-      </button>
-<!-- ИСТОРИЯ -->
-<details class="history-block" style="margin-top:16px;">
-<summary>История кассы</summary>
+<!-- Legacy table kept for debugging/compat; hidden -->
+<details style="display:none">
+<summary>История кассы (debug)</summary>
 <div class="tableScroll">
-<table id="kasaTable" style="margin-top:12px">
+<table id="kasaTable">
 <thead>
 <tr>
-<th>#</th>
-<th data-i18n="cash_th_date">Data</th>
-<th data-i18n="cash_th_type">Typ</th>
-<th data-i18n="cash_th_amount">Kwota</th>
-<th data-i18n="cash_th_source">Źródło</th>
-<th>Категория</th>
-<th data-i18n="cash_th_comment">Komentarz</th>
-<th data-i18n="th_actions">Działania</th>
+<th>#</th><th>Data</th><th>Typ</th><th>Kwota</th><th>Źródło</th><th>Kategoria</th><th>Komentarz</th><th>Akcje</th>
 </tr>
 </thead>
 <tbody></tbody>
 </table>
 </div>
 </details>
+</div>
 </div>
 </div>
 <!-- SETTINGS -->
@@ -1454,16 +1639,15 @@ application/x-ofx" id="billFile" type="file"/>
 <div class="hint" data-i18n="sub_hint" style="margin-top:6px">
         Opłata dostępna tylko tutaj. Jeśli masz link Stripe — ustaw <code>localStorage.stripe_link</code>.
       </div>
-
 <div class="card" id="workspaceCard">
-  <div style="font-weight:700" id="workspaceTitle">Аккаунт</div>
-  <div class="muted small" id="workspaceDesc" style="margin-top:4px">Разделяйте данные по аккаунтам/клиентам.</div>
-  <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px;align-items:center">
-    <select id="workspaceSelect" style="min-width:240px"></select>
-    <button class="btn secondary" id="workspaceAdd" type="button" style="min-width:140px">+ Клиент</button>
-    <button class="btn ghost" id="workspaceRemove" type="button" style="min-width:140px">Удалить</button>
-  </div>
-  <div class="muted small" id="workspaceLimitHint" style="margin-top:8px"></div>
+<div data-i18n="settings.clients_title" id="workspaceTitle" style="font-weight:700">Klienci</div>
+<div class="muted small" data-i18n="settings.clients_desc" id="workspaceDesc" style="margin-top:4px">Każdy klient = osobny zestaw danych. W Trial do 3 klientów.</div>
+<div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px;align-items:center">
+<select id="workspaceSelect" style="min-width:240px"></select>
+<button class="btn secondary" id="workspaceAdd" style="min-width:140px" type="button">+ Клиент</button>
+<button class="btn ghost" id="workspaceRemove" style="min-width:140px" type="button">Удалить</button>
+</div>
+<div class="muted small" id="workspaceLimitHint" style="margin-top:8px"></div>
 </div>
 </div>
 </div>
@@ -1598,6 +1782,26 @@ application/x-ofx" id="billFile" type="file"/>
 </script>
 <script src="/sync-cloud.js" type="module"></script>
 <script src="/i18n_pack/i18n.js"></script>
+<div class="navOverlay" id="navOverlay" style="display:none">
+<div class="navSheet">
+<div class="navHeader">
+<div class="navTitle">OneTapDay</div>
+<button aria-label="Close" class="iconBtn" id="navClose" type="button">✕</button>
+</div>
+<div class="navList">
+<button class="navItem" data-nav="pulpit" type="button">Panel</button>
+<button class="navItem" data-nav="wyciag" type="button">Wyciąg</button>
+<button class="navItem" data-nav="faktury" type="button">Faktury</button>
+<button class="navItem" data-nav="konta" type="button">Konta</button>
+<button class="navItem" data-nav="kasa" type="button">Kasa</button>
+<button class="navItem" data-nav="docs" type="button">Dokumenty</button>
+<button class="navItem" data-nav="aiAssist" type="button">AI</button>
+<button class="navItem" data-nav="reports" type="button">Raporty</button>
+<button class="navItem" data-nav="analytics" type="button">Analityka</button>
+<button class="navItem" data-nav="ustawienia" type="button">Ustawienia</button>
+</div>
+</div>
+</div>
 <script>
     function showKasaTodayStats() {
       try {

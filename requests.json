@@ -1,0 +1,265 @@
+{
+  "items": {
+    "req_65020bb261d66143": {
+      "id": "req_65020bb261d66143",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "1tapday@gmail.com",
+      "month": "2025-12",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": true,
+        "other": "акты"
+      },
+      "note": "",
+      "status": "rejected",
+      "createdAt": "2025-12-24T09:42:31.962Z",
+      "updatedAt": "2025-12-24T11:04:09.785Z",
+      "fileName": "Invoice-CAQCJH65-0001.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 24486,
+      "filePath": "req_65020bb261d66143_1766569758772_Invoice-CAQCJH65-0001.pdf",
+      "fileUrl": "/api/files/req_65020bb261d66143",
+      "uploadedAt": "2025-12-24T09:49:18.773Z",
+      "decision": "reject",
+      "decisionNote": "уже не надо",
+      "decidedAt": "2025-12-24T11:04:09.785Z"
+    },
+    "req_5bdc43173ec0dac3": {
+      "id": "req_5bdc43173ec0dac3",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "amina.samarets@gmail.com",
+      "month": "2025-12",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": true,
+        "other": "Z-raport"
+      },
+      "note": "крайний срок до завтра",
+      "status": "received",
+      "createdAt": "2025-12-24T09:51:31.294Z",
+      "updatedAt": "2025-12-24T09:52:06.910Z",
+      "fileName": "arkusz-spisu-z-natury-160-pozycji.pdf",
+      "fileMime": "application/pdf",
+      "fileSize": 393708,
+      "filePath": "req_5bdc43173ec0dac3_1766569926907_arkusz-spisu-z-natury-160-pozycji.pdf",
+      "fileUrl": "/api/files/req_5bdc43173ec0dac3",
+      "uploadedAt": "2025-12-24T09:52:06.910Z"
+    },
+    "req_f37be0af58df1d1e": {
+      "id": "req_f37be0af58df1d1e",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "amina.samarets@gmail.com",
+      "month": "2025-12",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": true
+      },
+      "note": "",
+      "status": "open",
+      "createdAt": "2025-12-24T09:54:19.926Z",
+      "updatedAt": "2025-12-24T09:54:19.926Z"
+    },
+    "req_bd68a0f4d6369600": {
+      "id": "req_bd68a0f4d6369600",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "1tapday@gmail.com",
+      "month": "2025-12",
+      "dueAt": "2025-12-31T23:59:59.999Z",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": true
+      },
+      "note": "",
+      "status": "open",
+      "createdAt": "2025-12-24T12:33:02.427Z",
+      "updatedAt": "2025-12-24T12:33:02.427Z"
+    },
+    "req_2b905e84eb31e02d": {
+      "id": "req_2b905e84eb31e02d",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "1tapday@gmail.com",
+      "month": "2025-12",
+      "dueAt": "2025-12-31T23:59:59.999Z",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": true
+      },
+      "note": "",
+      "status": "open",
+      "createdAt": "2025-12-24T12:35:20.473Z",
+      "updatedAt": "2025-12-24T14:49:56.602Z",
+      "lastRemindedAt": "2025-12-24T14:49:56.602Z"
+    },
+    "req_0f07e4c4d05093ed": {
+      "id": "req_0f07e4c4d05093ed",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "1tapday@gmail.com",
+      "month": "2025-12",
+      "dueAt": "2025-12-31T23:59:59.999Z",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": false
+      },
+      "note": "СОСИ отдай деньгм",
+      "status": "open",
+      "createdAt": "2025-12-24T16:13:00.555Z",
+      "updatedAt": "2025-12-24T16:13:00.555Z"
+    },
+    "req_826b19a054b96c98": {
+      "id": "req_826b19a054b96c98",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "1tapday@gmail.com",
+      "month": "2025-12",
+      "dueAt": "2025-12-31T23:59:59.999Z",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": true
+      },
+      "note": "",
+      "status": "open",
+      "createdAt": "2025-12-24T19:08:46.196Z",
+      "updatedAt": "2025-12-24T19:08:46.196Z"
+    },
+    "req_43032bd8e3febf99": {
+      "id": "req_43032bd8e3febf99",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "1tapday@gmail.com",
+      "month": "2025-12",
+      "dueAt": "2025-12-26T23:59:59.999Z",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": false
+      },
+      "note": "",
+      "status": "approved",
+      "createdAt": "2025-12-24T23:56:32.421Z",
+      "updatedAt": "2025-12-25T00:08:59.152Z",
+      "lastRemindedAt": "2025-12-25T00:08:53.990Z",
+      "files": [
+        {
+          "id": "f_d70b47f67a00_mjkopqur",
+          "fileName": "apple-touch-icon.png.jpg",
+          "fileMime": "",
+          "fileSize": 31645,
+          "filePath": "req_43032bd8e3febf99_f_d70b47f67a00_mjkopqur.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_d70b47f67a00_mjkopqur",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_8d4a2040f50e_mjkopquz",
+          "fileName": "arkusz-spisu-z-natury-160-pozycji.pdf.jpg",
+          "fileMime": "",
+          "fileSize": 393708,
+          "filePath": "req_43032bd8e3febf99_f_8d4a2040f50e_mjkopquz.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_8d4a2040f50e_mjkopquz",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_72729b1f8776_mjkopqv1",
+          "fileName": "icon-192.png.jpg",
+          "fileMime": "",
+          "fileSize": 31645,
+          "filePath": "req_43032bd8e3febf99_f_72729b1f8776_mjkopqv1.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_72729b1f8776_mjkopqv1",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_e354e0fbda7a_mjkopqv3",
+          "fileName": "icon-512.png.jpg",
+          "fileMime": "",
+          "fileSize": 31645,
+          "filePath": "req_43032bd8e3febf99_f_e354e0fbda7a_mjkopqv3.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_e354e0fbda7a_mjkopqv3",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_69e13ac57ea6_mjkopqv4",
+          "fileName": "Invoice-CAQCJH65-0001.pdf.jpg",
+          "fileMime": "",
+          "fileSize": 24486,
+          "filePath": "req_43032bd8e3febf99_f_69e13ac57ea6_mjkopqv4.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_69e13ac57ea6_mjkopqv4",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_b2ca081a9082_mjkopqv6",
+          "fileName": "OneTapDay_IntroDeck_Pre-Seed___Exit-appendix.pdf.jpg",
+          "fileMime": "",
+          "fileSize": 8442637,
+          "filePath": "req_43032bd8e3febf99_f_b2ca081a9082_mjkopqv6.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_b2ca081a9082_mjkopqv6",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_da18a5d039ba_mjkopqve",
+          "fileName": "OneTapDay_IntroDeck_Pre-Seed.pdf.jpg",
+          "fileMime": "",
+          "fileSize": 7572448,
+          "filePath": "req_43032bd8e3febf99_f_da18a5d039ba_mjkopqve.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_da18a5d039ba_mjkopqve",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_cddff61e46fa_mjkopqvl",
+          "fileName": "photo_2025-12-05_18-55-03.jpg",
+          "fileMime": "",
+          "fileSize": 113180,
+          "filePath": "req_43032bd8e3febf99_f_cddff61e46fa_mjkopqvl.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_cddff61e46fa_mjkopqvl",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_d4dc4c0dfb16_mjkopqvn",
+          "fileName": "photo_2025-12-05_18-55-09.jpg",
+          "fileMime": "",
+          "fileSize": 102870,
+          "filePath": "req_43032bd8e3febf99_f_d4dc4c0dfb16_mjkopqvn.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_d4dc4c0dfb16_mjkopqvn",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        },
+        {
+          "id": "f_ccd1bf9dc3d5_mjkopqvo",
+          "fileName": "photo_2025-12-06_18-59-25.jpg",
+          "fileMime": "",
+          "fileSize": 69406,
+          "filePath": "req_43032bd8e3febf99_f_ccd1bf9dc3d5_mjkopqvo.jpg",
+          "fileUrl": "/api/files/req_43032bd8e3febf99/f_ccd1bf9dc3d5_mjkopqvo",
+          "uploadedAt": "2025-12-25T00:08:30.002Z"
+        }
+      ],
+      "decision": "approve",
+      "decisionNote": "",
+      "decidedAt": "2025-12-25T00:08:59.152Z",
+      "fileName": "photo_2025-12-06_18-59-25.jpg",
+      "fileMime": "",
+      "fileSize": 69406,
+      "filePath": "req_43032bd8e3febf99_f_ccd1bf9dc3d5_mjkopqvo.jpg",
+      "fileUrl": "/api/files/req_43032bd8e3febf99",
+      "uploadedAt": "2025-12-25T00:08:30.002Z"
+    },
+    "req_19cf26d7e0eb7b89": {
+      "id": "req_19cf26d7e0eb7b89",
+      "accountantEmail": "12tapday@gmail.com",
+      "clientEmail": "1tapday@gmail.com",
+      "month": "2025-12",
+      "dueAt": "2026-01-01T23:59:59.999Z",
+      "items": {
+        "bank": true,
+        "invoices": true,
+        "receipts": true
+      },
+      "note": "",
+      "status": "open",
+      "createdAt": "2025-12-25T00:10:11.211Z",
+      "updatedAt": "2025-12-25T00:10:11.211Z"
+    }
+  }
+}

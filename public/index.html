@@ -88,10 +88,6 @@
     background:transparent;color:var(--muted);cursor:pointer;font-weight:700}
   .tabs button.on{background:var(--accent);color:#052e24}
   .input{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
-  input[type=email],input[type=password],select{
-    padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);
-    background:#071010;color:var(--text);outline:none;font-size:14px;
-  }
   input[type=email],input[type=password]{
     padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);
     background:#071010;color:var(--text);outline:none;font-size:14px;
@@ -103,6 +99,20 @@
   .status-pill{padding:8px 12px;border-radius:999px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);display:inline-flex;gap:8px;align-items:center;color:var(--muted)}
   footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
   a.link{color:var(--accent);text-decoration:none}
+
+    /* Access page cleanup */
+    .grid{ grid-template-columns: 1fr !important; }
+    footer{ display:none !important; }
+    .roleGrid{ display:grid; grid-template-columns:1fr; gap:10px; }
+    @media (min-width: 700px){ .roleGrid{ grid-template-columns:1fr 1fr; } }
+    .roleCard{ display:block; border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px 12px; cursor:pointer;
+               background: rgba(255,255,255,.03); }
+    .roleCard:hover{ border-color: rgba(71,181,0,.55); }
+    .roleCard input{ position:absolute; opacity:0; pointer-events:none; }
+    .roleTitle{ font-weight:800; margin-bottom:6px; }
+    .roleDesc{ font-size:12px; color: rgba(255,255,255,.72); line-height:1.35; }
+    .roleCard:has(input:checked){ border-color: var(--accent); box-shadow: 0 0 0 2px rgba(71,181,0,.25) inset; }
+
 </style>
 </head>
 <body>
@@ -132,40 +142,32 @@
         <div class="input">
           <input id="email" type="email" placeholder="Email" />
           <input id="pass" type="password" placeholder="Пароль" />
-          <div id="roleRow" style="display:none">
-            <select id="roleSelect" aria-label="Role">
-              <option value="freelance_business">Фрилансер / Бизнес</option>
-              <option value="accountant">Бухгалтер</option>
-            </select>
+        </div>
+
+        <div id="roleWrap" class="roleWrap" style="display:none;margin-top:12px">
+          <div class="muted small" style="margin-bottom:8px" data-i="role_hint">Выберите роль (только при регистрации)</div>
+          <div class="roleGrid">
+            <label class="roleCard">
+              <input type="radio" name="role" value="freelance_business" checked />
+              <div class="roleTitle" data-i="role_business">Бизнес / Фриланс</div>
+              <div class="roleDesc" data-i="role_business_desc">Деньги, документы, ежедневный контроль (2–3 тапа в день).</div>
+            </label>
+            <label class="roleCard">
+              <input type="radio" name="role" value="accountant" />
+              <div class="roleTitle" data-i="role_accountant">Бухгалтер</div>
+              <div class="roleDesc" data-i="role_accountant_desc">Клиенты, запросы документов, статусы, экспорт.</div>
+            </label>
           </div>
         </div>
+
 
         <div class="row">
           <button class="btn" id="doLogin">Войти</button>
-          <button class="btn ghost" id="doPay">Оплата / Демо</button>
-        </div>
+</div>
+</section>
+</div>
 
-        <div class="muted" data-i="after_login_hint">После входа можно оплатить или включить демо.</div>
-      </section>
-
-      <!-- RIGHT: status & actions -->
-      <aside class="card">
-        <h3 data-i="status_title">Статус</h3>
-        <div id="statusBox">
-          <div class="status-pill" id="statusText" data-i="status_guest">Гость — войдите или зарегистрируйтесь</div>
-        </div>
-
-        <div style="margin-top:12px" class="section">
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <a id="payStripe" class="btn" href="#" role="button" data-i="stripe_2m">Оплатить (Stripe)</a>
-            <button id="demoBtn" class="btn ghost" data-i="demo_24">Демо 24 часа</button>
-          </div>
-          <div class="muted" style="margin-top:12px" data-i="access_note">Оплата даёт мгновенный доступ. Демо — 24 часа.</div>
-        </div>
-      </aside>
-    </div>
-
-    <footer>OneTapDay — MVP. Тестовый режим.</footer>
+    <footer></footer>
   </div>
 
   <script src="/main.js" defer></script>

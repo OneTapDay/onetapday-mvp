@@ -269,7 +269,13 @@
     "btn_start_demo": "Start demo (24h)",
     "btn_pay_sub": "Pay subscription",
     "btn_end_demo": "End demo",
-    "sub_hint": "Payments only through settings. If you have a Stripe link — store it in localStorage."
+    "sub_hint": "Payments only through settings. If you have a Stripe link — store it in localStorage.",
+    "clients_title": "Clients",
+    "clients_desc": "Each client is a separate data set. Trial: up to 3 clients.",
+    "btn_add_client": "+ Client",
+    "btn_remove_client": "Remove",
+    "clients_hint_trial": "Trial: {n}/3 clients.",
+    "clients_hint_pro": "PRO: unlimited clients."
   },
   "buttons": {
     "sync": "Sync",

@@ -269,7 +269,13 @@
     "btn_start_demo": "Запустити демо (24год)",
     "btn_pay_sub": "Оплатити підписку",
     "btn_end_demo": "Закінчити демо",
-    "sub_hint": "Оплати тільки через налаштування. Якщо є Stripe-лінк — клади в localStorage."
+    "sub_hint": "Оплати тільки через налаштування. Якщо є Stripe-лінк — клади в localStorage.",
+    "clients_title": "Клієнти",
+    "clients_desc": "Кожен клієнт = окремий набір даних. Trial: до 3 клієнтів.",
+    "btn_add_client": "+ Клієнт",
+    "btn_remove_client": "Видалити",
+    "clients_hint_trial": "Trial: {n}/3 клієнтів.",
+    "clients_hint_pro": "PRO: без ліміту клієнтів."
   },
   "buttons": {
     "sync": "Синхронізація",
