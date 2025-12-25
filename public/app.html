@@ -863,78 +863,6 @@
   .helper-chip{
     border-radius:999px;
   }
-
-  /* === Analytics (premium) === */
-  .analyticsWrap{max-width:520px;margin:0 auto}
-  .analyticsHead{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-bottom:10px}
-  .analyticsTitle{font-size:22px;font-weight:800;letter-spacing:0.2px}
-  .analyticsFullBtn{padding:8px 12px;border-radius:999px}
-  .analyticsSeg{display:flex;gap:10px;align-items:center;margin:10px 0 12px}
-  .segBtn{
-    appearance:none;border:1px solid rgba(255,255,255,0.10);
-    background:rgba(15,18,20,0.75);
-    color:rgba(230,237,243,0.9);
-    border-radius:999px;
-    padding:8px 14px;
-    font-weight:800;
-    cursor:pointer;
-    box-shadow: 0 10px 26px rgba(0,0,0,0.55);
-    transition:transform .08s ease, border-color .15s ease, background .15s ease;
-  }
-  .segBtn:active{transform:scale(0.98)}
-  .segBtn.on{
-    background:linear-gradient(180deg, rgba(71,181,0,0.90), rgba(71,181,0,0.72));
-    color:#07110b;
-    border-color:rgba(120,255,120,0.55);
-    box-shadow: 0 16px 34px rgba(0,0,0,0.6), 0 0 0 1px rgba(71,181,0,0.15) inset;
-  }
-
-  .analyticsKpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
-  @media (max-width:380px){ .analyticsKpis{grid-template-columns:1fr;}}
-  .kpiPill{
-    background:rgba(18,22,24,0.72);
-    border:1px solid rgba(255,255,255,0.08);
-    border-radius:16px;
-    padding:10px 12px;
-    box-shadow: 0 18px 45px rgba(0,0,0,0.55);
-    backdrop-filter: blur(10px);
-  }
-  .kpiLabel{font-size:12px;color:rgba(154,163,169,0.95);margin-bottom:6px}
-  .kpiVal{font-size:16px;font-weight:900}
-
-  .analyticsGrid{display:grid;grid-template-columns:1fr;gap:12px}
-  .aCard{
-    background:rgba(18,22,24,0.72);
-    border:1px solid rgba(255,255,255,0.08);
-    border-radius:18px;
-    padding:14px;
-    box-shadow: 0 20px 55px rgba(0,0,0,0.6);
-    backdrop-filter: blur(10px);
-  }
-  .aCardHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
-  .aCardTitle{font-size:14px;font-weight:900}
-  .analyticsLine{min-height:240px}
-  #analyticsFullChart{min-height:320px}
-
-  .donutWrap{position:relative;display:flex;align-items:center;justify-content:center;padding:8px 0 2px}
-  .donutSvg{width:220px;max-width:100%;height:220px}
-  .donutCenter{
-    position:absolute;inset:0;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    pointer-events:none;
-  }
-  .donutValue{font-size:18px;font-weight:900}
-  .donutSub{font-size:12px;color:rgba(154,163,169,0.95);margin-top:2px}
-
-  .catList{margin-top:10px;display:flex;flex-direction:column;gap:10px}
-  .catRow{display:flex;align-items:center;gap:10px}
-  .catDot{width:10px;height:10px;border-radius:999px;flex:0 0 auto;background:rgba(71,181,0,0.9);box-shadow:0 0 0 4px rgba(71,181,0,0.12)}
-  .catName{flex:1 1 auto;font-size:13px;font-weight:700;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .catAmt{flex:0 0 auto;font-size:13px;font-weight:900}
-  .catBar{height:8px;border-radius:999px;background:rgba(255,255,255,0.06);overflow:hidden;border:1px solid rgba(255,255,255,0.06);margin-top:6px}
-  .catBar > i{display:block;height:100%;width:0;background:linear-gradient(90deg, rgba(71,181,0,0.95), rgba(71,181,0,0.45));border-radius:999px}
-
-  .analyticsModalCard{max-width:520px;width:92%}
 </style>
 
 <style id="otd-safe-offsets">
@@ -1006,7 +934,7 @@
 <div class="homeTileTitle" data-i18n="home.tile_docs_title"></div>
 <div class="homeTileDesc" data-i18n="home.tile_docs_desc"></div>
 </button>
-<button class="homeTile" onclick="appGoSection('wyciag')" type="button">
+<button class="homeTile" onclick="appGoSection('pulpit')" type="button">
 <div class="homeTileIcon">💸</div>
 <div class="homeTileTitle" data-i18n="home.tile_money_title"></div>
 <div class="homeTileDesc" data-i18n="home.tile_money_desc"></div>
@@ -1300,79 +1228,19 @@
 </div><div class="modal-overlay" id="accountantToolsModal"><div class="modal-card"><h3 data-i18n="documents.accountant_modal_title"></h3><div class="muted small" data-i18n="documents.accountant_modal_desc" style="margin-bottom:10px"></div><div class="modal-row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-i18n="documents.accountant_tab_exports" id="acctTabExports" type="button"></button><button class="btn secondary" data-i18n="documents.accountant_tab_templates" id="acctTabTemplates" type="button"></button></div><div id="acctPanelExports" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="docExportTxBtn" type="button">Wyciągi (CSV)</button><button class="btn secondary" id="docExportBillsBtn" type="button">Faktury (CSV)</button><button class="btn secondary" id="docExportBookBtn" type="button">Księga (CSV)</button><button class="btn secondary" id="docExportCashBtn" type="button">Kasa (CSV)</button></div><div id="acctPanelTemplates" style="margin-top:10px;display:none;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="openInvoiceTplBtn" type="button">Szablon faktury</button><button class="btn secondary" id="openInventoryTplBtn" type="button">Szablon inwentaryzacji</button></div><div class="muted small" data-i18n="documents.accountant_modal_hint" style="margin-top:10px"></div><div class="modal-row" style="margin-top:12px;display:flex;gap:8px"><button class="btn ghost" data-i18n="buttons.close" id="accountantToolsClose" style="flex:1" type="button">Zamknij</button></div></div></div>
 <!-- ANALYTICS -->
 <div class="section" id="analytics" style="display:none">
-  <div class="analyticsWrap">
-    <div class="analyticsHead">
-      <div>
-        <div class="analyticsTitle">Analityka</div>
-        <div class="muted small" id="analyticsRangeLabel">Ostatnie 30 dni</div>
-      </div>
-      <button class="btn ghost analyticsFullBtn" id="analyticsFullBtn" type="button">Pełny wykres</button>
+  <div class="card" style="margin:10px 0">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div style="font-weight:700">Analityka</div>
+      <div class="muted small" id="analyticsRangeLabel">Ostatnie 12 miesięcy</div>
     </div>
-
-    <div class="analyticsSeg" role="tablist" aria-label="Zakres czasu">
-      <button class="segBtn on" id="analyticsRange30" type="button" role="tab" aria-selected="true">30d</button>
-      <button class="segBtn" id="analyticsRange90" type="button" role="tab" aria-selected="false">90d</button>
-      <button class="segBtn" id="analyticsRange365" type="button" role="tab" aria-selected="false">12m</button>
+    <div class="muted small" style="margin-top:6px">
+      Kliknij wykres na ekranie głównym, aby wejść tutaj. Wersja MVP.
     </div>
-
-    <div class="analyticsKpis">
-      <div class="kpiPill">
-        <div class="kpiLabel">Wpływy</div>
-        <div class="kpiVal" id="analyticsIn">—</div>
-      </div>
-      <div class="kpiPill">
-        <div class="kpiLabel">Wydatki</div>
-        <div class="kpiVal" id="analyticsOut">—</div>
-      </div>
-      <div class="kpiPill">
-        <div class="kpiLabel">Netto</div>
-        <div class="kpiVal" id="analyticsNet">—</div>
-      </div>
-    </div>
-
-    <div class="analyticsGrid">
-      <div class="aCard">
-        <div class="aCardHead">
-          <div class="aCardTitle">Wydatki po kategoriach</div>
-          <div class="pill" id="analyticsCatsHint">Top</div>
-        </div>
-
-        <div class="donutWrap">
-          <div class="donutSvg" id="analyticsDonut"></div>
-          <div class="donutCenter">
-            <div class="donutValue" id="analyticsDonutTotal">—</div>
-            <div class="donutSub">wydatki</div>
-          </div>
-        </div>
-
-        <div class="catList" id="analyticsCatList"></div>
-      </div>
-
-      <div class="aCard">
-        <div class="aCardHead">
-          <div class="aCardTitle">Ruch</div>
-          <div class="pill" id="analyticsLineBadge">Ostatnie 30 dni</div>
-        </div>
-
-        <div class="trendChart analyticsLine" id="analyticsChart" role="button" tabindex="0" aria-label="Wykres ruchu"></div>
-        <div class="muted small" style="margin-top:8px">Kliknij wykres, aby powiększyć.</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- FULL ANALYTICS MODAL -->
-<div class="modal-overlay" id="analyticsFullModal" aria-hidden="true">
-  <div class="modal-card analyticsModalCard" role="dialog" aria-modal="true" aria-label="Pełny wykres">
-    <div style="display:flex;align-items:center;gap:10px">
-      <h3 style="margin:0;flex:1">Wykres</h3>
-      <button class="iconBtn" id="analyticsFullClose" type="button" aria-label="Zamknij">✕</button>
-    </div>
-    <div class="muted small" id="analyticsFullLabel" style="margin:6px 0 10px">—</div>
-    <div class="trendChart" id="analyticsFullChart"></div>
-    <div class="row" style="margin-top:12px;justify-content:flex-end">
-      <button class="btn secondary" id="analyticsExportCSV" type="button">Eksport CSV</button>
-      <button class="btn ghost" id="analyticsFullClose2" type="button">Zamknij</button>
+    <div class="trendChart" id="analyticsChart" style="margin-top:10px; height:240px"></div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn ghost" id="analyticsRange30" type="button">30d</button>
+      <button class="btn ghost" id="analyticsRange90" type="button">90d</button>
+      <button class="btn" id="analyticsRange365" type="button">12m</button>
     </div>
   </div>
 </div>
@@ -1390,7 +1258,7 @@
 <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
 <button class="btn secondary" id="docTxCsvBtn">Импорт выписки</button>
 <button class="btn secondary" data-i18n="documents.btn_screenshot" id="docTxImgBtn"></button>
-<button class="btn ghost small" data-i18n="documents.btn_open_statements" onclick="appGoSection('wyciag')" type="button"></button>
+<button class="btn ghost small" data-i18n="documents.btn_open_statements" onclick="appGoSection('pulpit')" type="button"></button>
 </div>
 </div>
 <div class="homeTile" style="padding:12px 10px;border-radius:14px">
@@ -1728,12 +1596,6 @@ application/x-ofx" id="billFile" type="file"/>
 <button class="btn secondary" data-i18n="reports.export_month" id="reportsBook"></button>
 </div>
 </div>
-</div>
-<div id="helperFab">?</div>
-<div id="helperPanel">
-<div id="helperPanelHeader">
-<span data-i18n="helper_title">AI-pomoc dla właściciela</span>
-<button class="btn ghost" id="helperClose" style="padding:2px 6px;font-size:11px">×</button>
 </div>
 <input id="helperSearch" placeholder="Zadaj pytanie (np. ZUS, synchronizacja)" type="text"/>
 <div id="helperTopics">
