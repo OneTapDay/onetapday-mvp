@@ -814,7 +814,7 @@ function initTrendInteractions(){
   wrap.addEventListener('touchend', clearTrendHover);
 }
 
-// ===== Analytics (full trend) =====
+// ===== Analytics (Qalta-like) =====
 let __analyticsDays = 365;
 
 function setAnalyticsDays(d){
@@ -848,18 +848,110 @@ function setAnalyticsButtons(days){
   else if (b365) b365.className = 'btn';
 }
 
-function renderAnalyticsChart(){
-  const wrap = document.getElementById('analyticsChart');
-  if (!wrap) return;
+function _localISODate(dt){
+  const d = new Date(dt);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0,10);
+}
+function _isoAddDays(iso, add){
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + add);
+  return _localISODate(d);
+}
+function _rangeIsoDays(days){
+  days = (days && isFinite(days)) ? Math.max(1, Math.floor(days)) : 30;
+  const end = _localISODate(new Date());
+  const start = _isoAddDays(end, -(days - 1));
+  const list = [];
+  for(let i=0;i<days;i++) list.push(_isoAddDays(start, i));
+  return {start, end, list};
+}
 
+function _formatPLN(x){
+  const v = Number(x || 0);
+  const s = (Math.round(v*100)/100).toFixed(2).replace(/\.00$/,'');
+  return s + ' PLN';
+}
+
+function _buildPeriodPack(days){
+  const {start, end, list} = _rangeIsoDays(days);
+
+  const map = {};
+  const txArr = Array.isArray(tx) ? tx : [];
+  const kasaArr = Array.isArray(kasa) ? kasa : [];
+
+  let income = 0;
+  let expense = 0;
+
+  // BANK TX
+  txArr.forEach(r=>{
+    const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"]));
+    if(!d) return;
+    if(d < start || d > end) return;
+
+    const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+    if(!amt) return;
+
+    map[d] = (map[d] || 0) + amt;
+    if(amt > 0) income += amt;
+    if(amt < 0) expense += Math.abs(amt);
+  });
+
+  // CASH (KASA)
+  kasaArr.forEach(k=>{
+    const d = String(k.date||"").slice(0,10);
+    if(!d) return;
+    if(d < start || d > end) return;
+
+    const signed = (typeof getSignedKasaAmount === 'function')
+      ? getSignedKasaAmount(k)
+      : Number(k.amount||0);
+
+    if(!signed) return;
+
+    map[d] = (map[d] || 0) + signed;
+    if(signed > 0) income += signed;
+    if(signed < 0) expense += Math.abs(signed);
+  });
+
+  const series = list.map(d=>({date:d, value:(map[d]||0)}));
+  const net = income - expense;
+
+  return {days, start, end, list, series, income, expense, net};
+}
+
+function renderAnalytics(){
   const days = getAnalyticsDays();
-  const labelEl = document.getElementById('analyticsRangeLabel');
-  if (labelEl) labelEl.textContent = analyticsLabel(days);
+  setAnalyticsButtons(days);
 
-  const series = buildTrendSeries(days);
-  if (!series || !series.length){
-    wrap.innerHTML = '<div class="muted small">Brak danych do wykresu.</div>';
-    setAnalyticsButtons(days);
+  const labelEl = document.getElementById('analyticsRangeLabel');
+  if(labelEl) labelEl.textContent = analyticsLabel(days);
+
+  const pack = _buildPeriodPack(days);
+
+  renderAnalyticsTrend(pack);
+  renderAnalyticsKpis(pack);
+  renderAnalyticsDonut(pack);
+  renderAnalyticsTopMerchants(pack);
+}
+
+function renderAnalyticsTrend(pack){
+  const wrap = document.getElementById('analyticsChart');
+  if(!wrap) return;
+
+  const chip = document.getElementById('analyticsNetChip');
+  const movementEl = document.getElementById('analyticsMovementTotal');
+
+  const series = pack && Array.isArray(pack.series) ? pack.series : [];
+  const nonZero = series.some(p => !!p.value);
+
+  if(!series.length || !nonZero){
+    wrap.innerHTML = '<div class="analyticsEmpty">Brak danych do wykresu. Załaduj wyciąg lub dodaj ruch w kasie.</div>';
+    if(chip){
+      chip.textContent = '—';
+      chip.className = 'trendChip';
+    }
+    if(movementEl) movementEl.textContent = '—';
     return;
   }
 
@@ -875,31 +967,238 @@ function renderAnalyticsChart(){
     return x.toFixed(2)+','+y.toFixed(2);
   }).join(' ');
 
+  const up = (pack.net || 0) >= 0;
+  const color = up ? 'var(--accent)' : '#ff4f4f';
+
+  if(chip){
+    chip.textContent = (up?'+':'') + _formatPLN(Math.abs(pack.net || 0)).replace(' PLN',' PLN');
+    chip.className = 'trendChip ' + (up ? 'up' : 'down');
+  }
+  if(movementEl){
+    movementEl.textContent = 'Netto: ' + (up?'+':'-') + _formatPLN(Math.abs(pack.net || 0));
+  }
+
   const svg = `
 <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Trend">
   <defs>
-    <linearGradient id="aFill" x1="0" x2="0" y1="0" y2="1">
-      <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35"></stop>
-      <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"></stop>
+    <linearGradient id="aFill2" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
+      <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
     </linearGradient>
   </defs>
-  <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></polyline>
-  <polyline points="${pts} 100,100 0,100" fill="url(#aFill)" stroke="none"></polyline>
+  <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+  <polyline points="${pts} 100,100 0,100" fill="url(#aFill2)" stroke="none"></polyline>
 </svg>`.trim();
 
   wrap.innerHTML = svg;
-  setAnalyticsButtons(days);
+}
+
+function renderAnalyticsKpis(pack){
+  const kpis = document.getElementById('analyticsKpis');
+  if(!kpis) return;
+
+  const income = Number(pack.income || 0);
+  const expense = Number(pack.expense || 0);
+  const net = Number(pack.net || 0);
+  const up = net >= 0;
+
+  const avg = pack.days ? (net / pack.days) : 0;
+
+  const rows = [
+    {label:'Wpływy', value:_formatPLN(income), dot:'var(--accent)'},
+    {label:'Wydatki', value:_formatPLN(expense), dot:'rgba(255,255,255,0.45)'},
+    {label:'Netto', value:(up?'+':'-') + _formatPLN(Math.abs(net)), dot: up ? 'var(--accent)' : '#ff4f4f'},
+    {label:'Średnio / dzień', value:(avg>=0?'+':'-') + _formatPLN(Math.abs(avg)), dot:'rgba(255,255,255,0.25)'}
+  ];
+
+  kpis.innerHTML = rows.map(r=>(
+    `<span class="kpiPill"><span class="kpiDot" style="background:${r.dot}"></span><span>${r.label}:</span><strong>${r.value}</strong></span>`
+  )).join('');
+}
+
+function renderAnalyticsDonut(pack){
+  const donut = document.getElementById('analyticsDonut');
+  const listEl = document.getElementById('analyticsCatList');
+  const totalEl = document.getElementById('analyticsExpenseTotal');
+  const centerValue = document.getElementById('analyticsDonutValue');
+  const centerLabel = document.getElementById('analyticsDonutLabel');
+
+  if(!donut || !listEl) return;
+
+  const days = pack && pack.days ? pack.days : getAnalyticsDays();
+  const {start, end} = _rangeIsoDays(days);
+
+  const totals = {};
+  const txArr = Array.isArray(tx) ? tx : [];
+  const kasaArr = Array.isArray(kasa) ? kasa : [];
+
+  // bank tx expenses
+  txArr.forEach(r=>{
+    const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"]));
+    if(!d) return;
+    if(d < start || d > end) return;
+
+    const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+    if(!amt || amt >= 0) return;
+
+    const cat = (typeof resolveCategoryForTx === 'function') ? (resolveCategoryForTx(r) || 'uncat') : 'uncat';
+    totals[cat] = (totals[cat] || 0) + Math.abs(amt);
+  });
+
+  // kasa expenses
+  kasaArr.forEach(k=>{
+    const d = String(k.date||"").slice(0,10);
+    if(!d) return;
+    if(d < start || d > end) return;
+
+    const signed = (typeof getSignedKasaAmount === 'function') ? getSignedKasaAmount(k) : Number(k.amount||0);
+    if(!signed || signed >= 0) return;
+
+    const cat = (typeof resolveCategoryForKasa === 'function') ? (resolveCategoryForKasa(k) || 'uncat') : 'uncat';
+    totals[cat] = (totals[cat] || 0) + Math.abs(signed);
+  });
+
+  const total = Object.values(totals).reduce((a,b)=>a+b,0);
+
+  if(totalEl) totalEl.textContent = total ? ('Suma: ' + _formatPLN(total)) : '—';
+  if(centerValue) centerValue.textContent = total ? _formatPLN(total) : '—';
+  if(centerLabel) centerLabel.textContent = 'Wydatki';
+
+  if(!total){
+    donut.innerHTML = '<div class="analyticsEmpty">Brak danych wydatków w tym okresie.</div>';
+    listEl.innerHTML = '';
+    return;
+  }
+
+  // prepare parts (top 6 + 'inne')
+  const cats = (typeof getAllSpCats === 'function') ? getAllSpCats() : [];
+  const catMap = {};
+  cats.forEach(c=>{ catMap[c.id] = c; });
+
+  const rows = Object.keys(totals).map(id=>({
+    id,
+    name: (catMap[id] ? ((catMap[id].emoji||'') + ' ' + (catMap[id].label||id)) : (id==='uncat' ? '⚠️ Bez kategorii' : id)),
+    value: totals[id]
+  })).sort((a,b)=>b.value - a.value);
+
+  const top = rows.slice(0,6);
+  const rest = rows.slice(6);
+  if(rest.length){
+    const restSum = rest.reduce((a,b)=>a+b.value,0);
+    top.push({id:'rest', name:'📦 Inne', value:restSum});
+  }
+
+  // green shades
+  const colors = top.map((_,i)=>{
+    const light = 45 + (i*7);
+    return `hsl(110, 90%, ${Math.min(light, 78)}%)`;
+  });
+
+  // svg donut
+  const radius = 15.91549430918954; // 2*pi*r ~ 100
+  let offset = 25; // start at top
+  const segs = top.map((p, i)=>{
+    const perc = Math.max(0.5, (p.value / total) * 100);
+    const dash = `${perc} ${100 - perc}`;
+    const seg = `<circle class="donutSeg" r="${radius}" cx="21" cy="21" fill="transparent"
+      stroke="${colors[i]}" stroke-width="3.6" stroke-linecap="round"
+      stroke-dasharray="${dash}" stroke-dashoffset="${offset}"></circle>`;
+    offset -= perc;
+    return seg;
+  }).join('');
+
+  donut.innerHTML = `
+<svg class="donutSvg" viewBox="0 0 42 42" aria-label="Donut">
+  <circle r="${radius}" cx="21" cy="21" fill="transparent" stroke="rgba(255,255,255,0.08)" stroke-width="3.6"></circle>
+  ${segs}
+</svg>`.trim();
+
+  listEl.innerHTML = top.map((p, i)=>(
+    `<div class="analyticsRow" data-a-cat="${p.id}" data-a-name="${encodeURIComponent(p.name)}" data-a-val="${p.value}">
+      <div class="analyticsRowLeft">
+        <span class="analyticsSwatch" style="background:${colors[i]}"></span>
+        <span class="analyticsRowName">${p.name}</span>
+      </div>
+      <span class="analyticsRowAmt">${_formatPLN(p.value)}</span>
+    </div>`
+  )).join('');
+
+  // click to focus
+  listEl.querySelectorAll('.analyticsRow').forEach(row=>{
+    row.addEventListener('click', ()=>{
+      const val = Number(row.getAttribute('data-a-val')||0);
+      const name = decodeURIComponent(row.getAttribute('data-a-name')||'');
+      if(centerValue) centerValue.textContent = _formatPLN(val);
+      if(centerLabel) centerLabel.textContent = name || 'Wydatki';
+    });
+  });
+}
+
+function renderAnalyticsTopMerchants(pack){
+  const box = document.getElementById('analyticsTopMerchants');
+  const btn = document.getElementById('analyticsOpenSpendingListBtn');
+  if(btn){
+    btn.onclick = ()=>{ try { if(typeof openSpendingList === 'function') openSpendingList(null); } catch(e){} };
+  }
+  if(!box) return;
+
+  const days = pack && pack.days ? pack.days : getAnalyticsDays();
+  const {start, end} = _rangeIsoDays(days);
+
+  const agg = {};
+  const txArr = Array.isArray(tx) ? tx : [];
+  const kasaArr = Array.isArray(kasa) ? kasa : [];
+
+  txArr.forEach(r=>{
+    const d = toISO(getVal(r,["Data księgowania","Data","date","Дата"]));
+    if(!d) return;
+    if(d < start || d > end) return;
+
+    const amt = asNum(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+    if(!amt || amt >= 0) return;
+
+    const m = (typeof getMerchantFromTxRow === 'function') ? (getMerchantFromTxRow(r) || 'Kontrahent') : 'Kontrahent';
+    agg[m] = (agg[m] || 0) + Math.abs(amt);
+  });
+
+  kasaArr.forEach(k=>{
+    const d = String(k.date||"").slice(0,10);
+    if(!d) return;
+    if(d < start || d > end) return;
+
+    const signed = (typeof getSignedKasaAmount === 'function') ? getSignedKasaAmount(k) : Number(k.amount||0);
+    if(!signed || signed >= 0) return;
+
+    const m = (typeof getMerchantFromKasaRow === 'function') ? (getMerchantFromKasaRow(k) || 'Kasa') : 'Kasa';
+    agg[m] = (agg[m] || 0) + Math.abs(signed);
+  });
+
+  const rows = Object.keys(agg).map(k=>({name:k, value:agg[k]})).sort((a,b)=>b.value-a.value).slice(0,6);
+
+  if(!rows.length){
+    box.innerHTML = '<div class="analyticsEmpty">Brak danych wydatków w tym okresie.</div>';
+    return;
+  }
+
+  box.innerHTML = rows.map(r=>(
+    `<div class="analyticsRow">
+      <div class="analyticsRowLeft">
+        <span class="analyticsSwatch" style="background:rgba(71,181,0,0.6)"></span>
+        <span class="analyticsRowName">${escapeHtml(r.name)}</span>
+      </div>
+      <span class="analyticsRowAmt">${_formatPLN(r.value)}</span>
+    </div>`
+  )).join('');
 }
 
 function initAnalyticsUI(){
-  // range buttons
   const b30 = document.getElementById('analyticsRange30');
   const b90 = document.getElementById('analyticsRange90');
   const b365 = document.getElementById('analyticsRange365');
 
-  if (b30) b30.addEventListener('click', ()=>{ setAnalyticsDays(30); renderAnalyticsChart(); });
-  if (b90) b90.addEventListener('click', ()=>{ setAnalyticsDays(90); renderAnalyticsChart(); });
-  if (b365) b365.addEventListener('click', ()=>{ setAnalyticsDays(365); renderAnalyticsChart(); });
+  if (b30) b30.addEventListener('click', ()=>{ setAnalyticsDays(30); renderAnalytics(); });
+  if (b90) b90.addEventListener('click', ()=>{ setAnalyticsDays(90); renderAnalytics(); });
+  if (b365) b365.addEventListener('click', ()=>{ setAnalyticsDays(365); renderAnalytics(); });
 
   // click on home chart -> analytics
   const card = document.getElementById('trendCard') || document.getElementById('trendChart');
@@ -4785,7 +5084,7 @@ window.appGoSection = function (secId) {
 
     // Analytics: render full chart on open
     if (secId === 'analytics') {
-      try { renderAnalyticsChart(); } catch(e){ console.warn('analytics', e); }
+      try { renderAnalytics(); } catch(e){ console.warn('analytics', e); }
     }
 
     // Если есть таб под этот раздел — подсветим его, если нет — просто игнорим
@@ -8234,8 +8533,7 @@ function renderKasaQalta(listKasa){
         st.id = 'otdNotifCss';
         st.textContent = `
           .otdNotifBellBtn{ position:relative; display:inline-flex; align-items:center; justify-content:center; }
-          .otdNotifBellBtn svg{ width:20px; height:20px; }
-          .otdNotifBellBtn .otdNotifBadge{ position:absolute; top:2px; right:2px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#0b1a07; background:#47b500; border:1px solid rgba(0,0,0,.35); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+          .otdNotifBellBtn .otdNotifBadge{ position:absolute; top:-4px; right:-4px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#0b1a07; background:#47b500; border:1px solid rgba(0,0,0,.35); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
           .otdNotifPanel{ position:fixed; top: calc(env(safe-area-inset-top) + 64px); right:12px; width:min(360px, calc(100vw - 24px)); max-height:60vh; overflow:auto; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; }
           .otdNotifPanel header{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); }
           .otdNotifPanel header .h{ font-weight:700; color:#eaffdf; font-size:13px; }
@@ -8260,12 +8558,9 @@ function renderKasaQalta(listKasa){
         const bell = document.createElement('button');
         bell.type = 'button';
         bell.id = 'otdNotifBell';
-        bell.className = 'iconBtn topIconBtn otdNotifBellBtn';
+        bell.className = 'iconBtn otdNotifBellBtn';
         bell.setAttribute('aria-label','Уведомления');
-        bell.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-  <path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-  <path d="M13.73 21a2 2 0 01-3.46 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-</svg><span class="otdNotifBadge" style="display:none">0</span>`;
+        bell.innerHTML = `🔔<span class="otdNotifBadge" style="display:none">0</span>`;
         const panel = document.createElement('div');
         panel.id = 'otdNotifPanel';
         panel.className = 'otdNotifPanel';
@@ -8276,11 +8571,8 @@ function renderKasaQalta(listKasa){
 
         try{
           const top = document.querySelector('.top');
-          const actions = document.getElementById('topActions') || (top ? top.querySelector('.topActions') : null);
           const settingsBtn = document.getElementById('navSettingsBtn');
-          if (actions && settingsBtn) actions.insertBefore(bell, settingsBtn);
-          else if (actions) actions.appendChild(bell);
-          else if (top && settingsBtn) top.insertBefore(bell, settingsBtn);
+          if (top && settingsBtn) top.insertBefore(bell, settingsBtn);
           else if (top) top.appendChild(bell);
           else document.body.appendChild(bell);
         }catch(_){ document.body.appendChild(bell); }
