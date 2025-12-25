@@ -567,6 +567,25 @@
   50%{transform:scaleY(1.0);opacity:1}
   100%{transform:scaleY(0.55);opacity:0.85}
 }
+
+/* --- UI cleanup patch: premium top icons + hide helper suggestions --- */
+.topActions{display:flex;align-items:center;gap:10px}
+.topActions .topIconBtn{
+  width:40px;height:40px;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:999px;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.10);
+  box-shadow: 0 10px 22px rgba(0,0,0,.28);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color:#eaffdf;
+}
+.topActions .topIconBtn:hover{background:rgba(255,255,255,.09);border-color:rgba(71,181,0,.25)}
+.topActions .topIconBtn:active{transform:scale(.94)}
+/* remove forgotten helper questions block on home */
+#helperSearch,#helperTopics,#helperAnswer{display:none !important}
+
 </style>
 <style>
   /* Глобальный фон и контейнер */
@@ -964,7 +983,9 @@
 <div class="top">
 <button aria-label="Menu" class="iconBtn" id="navBtn" type="button">☰</button>
 <div class="brand" id="brandHome" role="button" tabindex="0" aria-label="Home"><b>OneTapDay</b></div>
-<button aria-label="Ustawienia" class="iconBtn" id="navSettingsBtn" type="button">⚙︎</button>
+<div class="topActions" id="topActions">
+  <button aria-label="Ustawienia" class="iconBtn topIconBtn" id="navSettingsBtn" type="button">⚙︎</button>
+</div>
 </div>
 <!-- ACCESS GATE (hidden if demo/sub active) -->
 <div class="gate hidden" id="gate">
