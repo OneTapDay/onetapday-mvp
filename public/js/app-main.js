@@ -8463,7 +8463,7 @@ function renderKasaQalta(listKasa){
     }
 
     // Menu overlay
-    if(t && t.id==='navBtn'){ hide($id('navOverlay')); if(window.appShowHome) window.appShowHome(); else if(window.appGoSection) window.appGoSection('pulpit'); }
+    if(t && t.id==='navBtn'){ const ov=$id('navOverlay'); if(!ov) return; const open = (ov.style.display && ov.style.display!=='none'); if(open){ hide(ov); } else { ov.style.display='flex'; } }
     if(t && t.id==='navClose'){ hide($id('navOverlay')); }
     if(t && (t.id==='navOverlay')){ hide($id('navOverlay')); }
 
@@ -8533,6 +8533,7 @@ function renderKasaQalta(listKasa){
         st.id = 'otdNotifCss';
         st.textContent = `
           .otdNotifBellBtn{ position:relative; display:inline-flex; align-items:center; justify-content:center; }
+          .otdBellIcon{ display:block; }
           .otdNotifBellBtn .otdNotifBadge{ position:absolute; top:-4px; right:-4px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#0b1a07; background:#47b500; border:1px solid rgba(0,0,0,.35); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
           .otdNotifPanel{ position:fixed; top: calc(env(safe-area-inset-top) + 64px); right:12px; width:min(360px, calc(100vw - 24px)); max-height:60vh; overflow:auto; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; }
           .otdNotifPanel header{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); }
@@ -8558,9 +8559,9 @@ function renderKasaQalta(listKasa){
         const bell = document.createElement('button');
         bell.type = 'button';
         bell.id = 'otdNotifBell';
-        bell.className = 'iconBtn otdNotifBellBtn';
+        bell.className = 'iconBtn iconPill otdNotifBellBtn';
         bell.setAttribute('aria-label','Уведомления');
-        bell.innerHTML = `🔔<span class="otdNotifBadge" style="display:none">0</span>`;
+        bell.innerHTML = `<svg class="otdBellIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="otdNotifBadge" aria-label="0" style="display:none">0</span>`;
         const panel = document.createElement('div');
         panel.id = 'otdNotifPanel';
         panel.className = 'otdNotifPanel';
@@ -8572,7 +8573,11 @@ function renderKasaQalta(listKasa){
         try{
           const top = document.querySelector('.top');
           const settingsBtn = document.getElementById('navSettingsBtn');
-          if (top && settingsBtn) top.insertBefore(bell, settingsBtn);
+          const right = document.getElementById('topRight') || (settingsBtn ? settingsBtn.parentElement : null);
+
+          if (right && settingsBtn && settingsBtn.parentElement===right) right.insertBefore(bell, settingsBtn);
+          else if (right) right.appendChild(bell);
+          else if (top && settingsBtn && settingsBtn.parentElement===top) top.insertBefore(bell, settingsBtn);
           else if (top) top.appendChild(bell);
           else document.body.appendChild(bell);
         }catch(_){ document.body.appendChild(bell); }
