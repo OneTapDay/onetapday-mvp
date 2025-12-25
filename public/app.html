@@ -248,6 +248,129 @@
   pointer-events:none;
 }
 
+
+/* ===== Analytics (Qalta-like) ===== */
+.analyticsGrid{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:12px;
+  margin-top:12px;
+}
+@media (min-width:820px){
+  .analyticsGrid{ grid-template-columns:1fr 1fr; }
+}
+.analyticsCard{ border-radius:18px; }
+.analyticsCardHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.analyticsKpis{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:10px;
+}
+.kpiPill{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,0.10);
+  background:rgba(0,0,0,0.18);
+  font-size:12px;
+  color:rgba(255,255,255,0.88);
+}
+.kpiDot{
+  width:8px;height:8px;border-radius:999px;background:var(--accent);
+  box-shadow:0 0 0 2px rgba(71,181,0,0.18);
+}
+.analyticsDonutRow{
+  display:flex;
+  gap:12px;
+  align-items:stretch;
+  margin-top:10px;
+  flex-wrap:wrap;
+}
+.donutWrap{
+  position:relative;
+  width:180px;
+  height:180px;
+  flex:0 0 auto;
+  border-radius:22px;
+  background:rgba(0,0,0,0.12);
+  border:1px solid rgba(255,255,255,0.08);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.donutSvg{ width:170px; height:170px; display:block; }
+.donutCenter{
+  position:absolute;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  pointer-events:none;
+}
+.donutValue{
+  font-weight:900;
+  font-size:18px;
+  color:rgba(255,255,255,0.92);
+}
+.analyticsList{
+  flex:1 1 220px;
+  min-width:220px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.analyticsRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:8px 10px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,0.08);
+  background:rgba(0,0,0,0.12);
+}
+.analyticsRowLeft{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.analyticsSwatch{
+  width:10px;height:10px;border-radius:4px;flex:0 0 auto;
+}
+.analyticsRowName{
+  font-size:12px;
+  font-weight:650;
+  color:rgba(255,255,255,0.90);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.analyticsRowAmt{
+  font-size:12px;
+  font-weight:800;
+  color:rgba(255,255,255,0.92);
+  white-space:nowrap;
+}
+.analyticsEmpty{
+  padding:10px;
+  border-radius:14px;
+  border:1px dashed rgba(255,255,255,0.16);
+  color:rgba(255,255,255,0.62);
+  font-size:12px;
+}
+
     .homeGrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .homeTile{border-radius:18px;border:1px solid #252b30;background:#101214;padding:16px 14px;text-align:left;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;gap:8px;box-shadow:0 0 0 1px rgba(0,0,0,0.4);transition:background 0.12s,border-color 0.12s,transform 0.08s}
     .homeTile:active{transform:scale(0.985);border-color:var(--accent)}
@@ -567,25 +690,6 @@
   50%{transform:scaleY(1.0);opacity:1}
   100%{transform:scaleY(0.55);opacity:0.85}
 }
-
-/* --- UI cleanup patch: premium top icons + hide helper suggestions --- */
-.topActions{display:flex;align-items:center;gap:10px}
-.topActions .topIconBtn{
-  width:40px;height:40px;padding:0;
-  display:inline-flex;align-items:center;justify-content:center;
-  border-radius:999px;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.10);
-  box-shadow: 0 10px 22px rgba(0,0,0,.28);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color:#eaffdf;
-}
-.topActions .topIconBtn:hover{background:rgba(255,255,255,.09);border-color:rgba(71,181,0,.25)}
-.topActions .topIconBtn:active{transform:scale(.94)}
-/* remove forgotten helper questions block on home */
-#helperSearch,#helperTopics,#helperAnswer{display:none !important}
-
 </style>
 <style>
   /* Глобальный фон и контейнер */
@@ -983,9 +1087,7 @@
 <div class="top">
 <button aria-label="Menu" class="iconBtn" id="navBtn" type="button">☰</button>
 <div class="brand" id="brandHome" role="button" tabindex="0" aria-label="Home"><b>OneTapDay</b></div>
-<div class="topActions" id="topActions">
-  <button aria-label="Ustawienia" class="iconBtn topIconBtn" id="navSettingsBtn" type="button">⚙︎</button>
-</div>
+<button aria-label="Ustawienia" class="iconBtn" id="navSettingsBtn" type="button">⚙︎</button>
 </div>
 <!-- ACCESS GATE (hidden if demo/sub active) -->
 <div class="gate hidden" id="gate">
@@ -1247,26 +1349,70 @@
 </div>
 </div>
 </div><div class="modal-overlay" id="accountantToolsModal"><div class="modal-card"><h3 data-i18n="documents.accountant_modal_title"></h3><div class="muted small" data-i18n="documents.accountant_modal_desc" style="margin-bottom:10px"></div><div class="modal-row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-i18n="documents.accountant_tab_exports" id="acctTabExports" type="button"></button><button class="btn secondary" data-i18n="documents.accountant_tab_templates" id="acctTabTemplates" type="button"></button></div><div id="acctPanelExports" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="docExportTxBtn" type="button">Wyciągi (CSV)</button><button class="btn secondary" id="docExportBillsBtn" type="button">Faktury (CSV)</button><button class="btn secondary" id="docExportBookBtn" type="button">Księga (CSV)</button><button class="btn secondary" id="docExportCashBtn" type="button">Kasa (CSV)</button></div><div id="acctPanelTemplates" style="margin-top:10px;display:none;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="openInvoiceTplBtn" type="button">Szablon faktury</button><button class="btn secondary" id="openInventoryTplBtn" type="button">Szablon inwentaryzacji</button></div><div class="muted small" data-i18n="documents.accountant_modal_hint" style="margin-top:10px"></div><div class="modal-row" style="margin-top:12px;display:flex;gap:8px"><button class="btn ghost" data-i18n="buttons.close" id="accountantToolsClose" style="flex:1" type="button">Zamknij</button></div></div></div>
+
 <!-- ANALYTICS -->
 <div class="section" id="analytics" style="display:none">
   <div class="card" style="margin:10px 0">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-      <div style="font-weight:700">Analityka</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="font-weight:800">Analityka</div>
+        <span class="trendChip" id="analyticsNetChip">—</span>
+      </div>
       <div class="muted small" id="analyticsRangeLabel">Ostatnie 12 miesięcy</div>
     </div>
     <div class="muted small" style="margin-top:6px">
       Kliknij wykres na ekranie głównym, aby wejść tutaj. Wersja MVP.
     </div>
-    <div class="trendChart" id="analyticsChart" style="margin-top:10px; height:240px"></div>
+
+    <div class="analyticsKpis" id="analyticsKpis" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"></div>
+
     <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn ghost" id="analyticsRange30" type="button">30d</button>
       <button class="btn ghost" id="analyticsRange90" type="button">90d</button>
       <button class="btn" id="analyticsRange365" type="button">12m</button>
     </div>
   </div>
+
+  <div class="analyticsGrid">
+    <div class="card analyticsCard">
+      <div class="analyticsCardHeader">
+        <div style="font-weight:700">Wydatki</div>
+        <div class="muted small" id="analyticsExpenseTotal">—</div>
+      </div>
+
+      <div class="analyticsDonutRow">
+        <div class="donutWrap">
+          <div id="analyticsDonut"></div>
+          <div class="donutCenter">
+            <div class="donutValue" id="analyticsDonutValue">—</div>
+            <div class="muted small" id="analyticsDonutLabel">Wydatki</div>
+          </div>
+        </div>
+
+        <div class="analyticsList" id="analyticsCatList"></div>
+      </div>
+    </div>
+
+    <div class="card analyticsCard">
+      <div class="analyticsCardHeader">
+        <div style="font-weight:700">Ruch</div>
+        <div class="muted small" id="analyticsMovementTotal">—</div>
+      </div>
+      <div class="trendChart" id="analyticsChart" style="margin-top:10px;height:240px"></div>
+    </div>
+  </div>
+
+  <div class="card analyticsCard" style="margin:12px 0">
+    <div class="analyticsCardHeader">
+      <div style="font-weight:700">Top kontrahenci</div>
+      <button class="btn secondary small" id="analyticsOpenSpendingListBtn" type="button">Otwórz listę</button>
+    </div>
+    <div id="analyticsTopMerchants" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div>
+  </div>
 </div>
 
 <!-- STATEMENT -->
+
 <div class="section" id="docs">
 <div class="card">
 <div data-i18n="documents.title" style="font-weight:700"></div>
