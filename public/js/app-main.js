@@ -5134,21 +5134,33 @@ async function syncUserStatus(){
     } catch(e){}
 
     const status = (user.status || '');
-    // Client-side invite banner (so you don't have to "guess" where it is)
+    // Client-side invite banner (live polling: no need to relogin)
     try {
       const r2 = (role || 'freelance_business');
-      if (r2 !== 'accountant' && !window.__otdInvitesChecked) {
-        window.__otdInvitesChecked = true;
-        fetch('/api/client/invites', { credentials:'include' })
-          .then(r=> r.ok ? r.json() : null)
-          .then(j=>{
-            const invs = j && j.invites;
-            if (!Array.isArray(invs) || !invs.length) return;
+      if (r2 !== 'accountant' && !window.__OTD_INV_POLL_STARTED) {
+        window.__OTD_INV_POLL_STARTED = true;
 
-            // Only show first invite for MVP
+        async function _otdPullInvites(){
+          try{
+            const rr = await fetch('/api/client/invites', { credentials:'include' });
+            if (!rr.ok) return;
+            const jj = await rr.json().catch(()=>({}));
+            const invs = (jj && Array.isArray(jj.invites)) ? jj.invites : [];
+
+            const existing = document.getElementById('otdInviteBar');
+            if (!invs.length){
+              if (existing) existing.remove();
+              return;
+            }
+
             const inv = invs[0];
+            const sig = String((inv && inv.accountantEmail) || '') + '|' + String((inv && inv.createdAt) || '');
+            if (existing && existing.getAttribute('data-sig') === sig) return;
+            if (existing) existing.remove();
+
             const bar = document.createElement('div');
             bar.id = 'otdInviteBar';
+            bar.setAttribute('data-sig', sig);
             bar.style.position = 'fixed';
             bar.style.left = '12px';
             bar.style.right = '12px';
@@ -5163,7 +5175,7 @@ async function syncUserStatus(){
               <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
                 <div style="min-width:220px">
                   <div style="font-weight:800">Приглашение от бухгалтера</div>
-                  <div style="opacity:.8;font-size:12px;margin-top:4px">${inv.accountantEmail}</div>
+                  <div style="opacity:.8;font-size:12px;margin-top:4px">${(inv && inv.accountantEmail) ? inv.accountantEmail : ''}</div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center">
                   <button id="otdInvAccept" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">Принять</button>
@@ -5183,12 +5195,15 @@ async function syncUserStatus(){
             };
             bar.querySelector('#otdInvAccept')?.addEventListener('click', ()=>send('accept'));
             bar.querySelector('#otdInvDecline')?.addEventListener('click', ()=>send('decline'));
-          })
-          .catch(()=>null);
+          }catch(_e){}
+        }
+
+        _otdPullInvites();
+        setInterval(()=>{ try{ if (!document.hidden) _otdPullInvites(); }catch(_){ } }, 15000);
       }
     } catch(e){}
 
-    // Client: accountant requests + file upload (jpg/png/pdf) + attach from Vault
+// Client: accountant requests + file upload (jpg/png/pdf) + attach from Vault
     try {
       if ((role || 'freelance_business') !== 'accountant') {
 
@@ -5224,9 +5239,12 @@ async function syncUserStatus(){
             modal.style.zIndex = '9998';
             modal.style.background = 'rgba(0,0,0,.55)';
             modal.style.backdropFilter = 'blur(6px)';
+            modal.style.overflowY = 'auto';
+            modal.style.webkitOverflowScrolling = 'touch';
             modal.innerHTML = `
-              <div style="max-width:860px;margin:40px auto;padding:0 12px">
-                <div class="card" style="padding:14px;border-radius:16px">
+
+              <div style="max-width:860px;margin:16px auto;padding:0 12px;min-height:calc(100vh - 32px);display:flex;align-items:flex-start">
+                <div class="card" style="padding:14px;border-radius:16px;width:100%;max-height:calc(100vh - 32px);display:flex;flex-direction:column">
                   <div class="row between" style="gap:10px;align-items:center;flex-wrap:wrap">
                     <div>
                       <div style="font-weight:900;font-size:16px">Запросы от бухгалтера</div>
@@ -5236,7 +5254,7 @@ async function syncUserStatus(){
                       <button id="clientRequestsClose" class="btn secondary" type="button">Закрыть</button>
                     </div>
                   </div>
-                  <div id="clientReqList" style="margin-top:12px"></div>
+                  <div id="clientReqList" style="margin-top:12px;overflow:auto;flex:1;min-height:180px;padding-right:6px"></div>
                   <input id="clientReqFileInput" type="file" accept=".jpg,.jpeg,.png,.pdf" multiple style="display:none" />
                 </div>
               </div>
@@ -5254,6 +5272,7 @@ async function syncUserStatus(){
         const fileInput = document.getElementById('clientReqFileInput');
 
         let currentRid = null;
+        let __otdClientReqModalTimer = null;
 
         // ---- Client Requests: visible indicator (badge + top bar) ----
         const __otdClientEmail = String((user && user.email) || localStorage.getItem('otd_user') || '').trim().toLowerCase();
@@ -5447,14 +5466,15 @@ async function syncUserStatus(){
 
               const showAttach = (stRaw !== 'approved');
               const files = normalizeFiles(r);
+                            const filesOpen = (files.length <= 2) ? ' open' : '';
               const fileHtml = files.length
-                ? `<div class="muted small" style="margin-top:8px">
-                     <div style="font-weight:800;margin-bottom:4px">Файлы (${files.length})</div>
-                     <div style="display:flex;flex-direction:column;gap:4px">
+                ? `<details style="margin-top:8px"${filesOpen}>
+                     <summary class="muted small" style="cursor:pointer;font-weight:800;list-style:none">Файлы (${files.length})</summary>
+                     <div class="muted small" style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
                        ${files.slice(0,6).map(f=>`<div>• <a href="${esc(f.fileUrl)}" target="_blank" rel="noopener">${esc(f.fileName || 'download')}</a></div>`).join('')}
                        ${files.length>6 ? `<div class="muted small">… и ещё ${files.length-6}</div>` : ''}
                      </div>
-                   </div>`
+                   </details>`
                 : '';
 
               return `
@@ -5469,9 +5489,8 @@ async function syncUserStatus(){
                       ${fileHtml}
                     </div>
                     <div class="muted small" style="text-align:right">
-                      <div class="clientReqStatus">${esc(st)}</div>
+                      <div class="clientReqStatus" style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;border:1px solid rgba(71,181,0,.35);background:rgba(71,181,0,.10);font-weight:900">${esc(st)}</div>
                       ${dueTxt ? `<div class="muted small" style="margin-top:4px">Срок: ${esc(dueTxt)}${isOverdue ? ' • <span style="color:#ff5050;font-weight:800">Просрочено</span>' : ''}</div>` : ''}
-                      <div style="margin-top:4px">${esc(created)}</div>
                     </div>
                   </div>
                   <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
@@ -5543,8 +5562,14 @@ async function syncUserStatus(){
               _otdUpdateReqIndicators();
             }catch(_){}
           }
+          // Auto-refresh while modal is open (so you don't have to relogin)
+          try{
+            if (__otdClientReqModalTimer) clearInterval(__otdClientReqModalTimer);
+            __otdClientReqModalTimer = setInterval(()=>{ try{ if (modal && modal.style.display==='block') loadAndRender(); }catch(_){ } }, 15000);
+          }catch(_){}
+
         };
-        const close = ()=>{ if(modal) modal.style.display='none'; };
+        const close = ()=>{ if(modal) modal.style.display='none'; try{ if(__otdClientReqModalTimer){ clearInterval(__otdClientReqModalTimer); __otdClientReqModalTimer=null; } }catch(_){ } };
 
         // Expose for notifications deep-link
         window.OTD_OpenClientRequests = open;
