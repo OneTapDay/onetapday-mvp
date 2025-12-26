@@ -311,6 +311,19 @@ const _otdNotif = (function(){
   let clients = [];
   let selectedClientEmail = '';
 
+  // Auto-refresh requests list for selected client (so you see uploads/status without reloading)
+  let __otdReqPollTimer = null;
+  function startReqPoll(){
+    if (__otdReqPollTimer) return;
+    __otdReqPollTimer = setInterval(()=>{ 
+      try{ 
+        if (document.hidden) return;
+        if (selectedClientEmail) loadRequests(); 
+      }catch(_){ }
+    }, 15000);
+  }
+
+
   function pill(status){
     const s = (status||'pending').toLowerCase();
     const cls = (s==='active')?'active':(s==='pending')?'pending':(s==='declined')?'declined':(s==='removed')?'removed':'pending';
@@ -365,6 +378,7 @@ const _otdNotif = (function(){
           if ($('openClientDocsBtn')) $('openClientDocsBtn').disabled = false;
           setText($('reqHint'), '');
           await loadRequests();
+        startReqPoll();
     try{ _otdNotif.start(); }catch(e){}
 
           renderClients();
@@ -397,6 +411,7 @@ const _otdNotif = (function(){
         $('newReqBtn').disabled = false;
           if ($('openClientDocsBtn')) $('openClientDocsBtn').disabled = false;
         await loadRequests();
+        startReqPoll();
     try{ _otdNotif.start(); }catch(e){}
 
         renderClients();
