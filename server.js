@@ -358,6 +358,10 @@ app.post('/register', (req, res) => {
     const email = normalizeEmail(emailRaw);
     const password = passRaw;
 
+    // role is only provided during registration; default to freelance_business
+    const roleRaw = req.body && (req.body.role || req.body.userRole || req.body.accountType || req.body.type || '');
+    const role = String(roleRaw || '').toLowerCase() === 'accountant' ? 'accountant' : 'freelance_business';
+
     if (!email || !password) {
       console.error('[REGISTER] missing email or password');
       return res.status(400).json({ success: false, error: 'Missing email or password' });
@@ -375,6 +379,7 @@ app.post('/register', (req, res) => {
 
     users[email] = {
       email,
+      role,
       salt,
       hash: storedHash,
       status: 'none',
@@ -392,7 +397,7 @@ app.post('/register', (req, res) => {
     setSessionCookie(res, email);
 
     console.log('[REGISTER] success', email);
-    return res.json({ success: true, user: { email, role, status: 'none', demoUsed: false } });
+    return res.json({ success: true, user: { email, role, status: 'none', demoUsed: false, startAt: null, endAt: null } });
   } catch (err) {
     console.error('[REGISTER] error', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: 'internal', detail: String(err && err.message ? err.message : err) });
