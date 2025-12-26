@@ -5255,6 +5255,152 @@ async function syncUserStatus(){
 
         let currentRid = null;
 
+        // ---- Client Requests: visible indicator (badge + top bar) ----
+        const __otdClientEmail = String((user && user.email) || localStorage.getItem('otd_user') || '').trim().toLowerCase();
+        const __otdReqSeenKey = 'otd_req_seen_' + encodeURIComponent(__otdClientEmail || 'anon');
+        const __otdReqLastKey = 'otd_req_last_' + encodeURIComponent(__otdClientEmail || 'anon');
+
+        function _otdGetSeenReqIds(){
+          try { return JSON.parse(localStorage.getItem(__otdReqSeenKey) || '[]'); } catch(_) { return []; }
+        }
+        function _otdSetSeenReqIds(arr){
+          try { localStorage.setItem(__otdReqSeenKey, JSON.stringify((arr||[]).slice(-500))); } catch(_){}
+        }
+        function _otdRememberLastOpen(ids){
+          try { localStorage.setItem(__otdReqLastKey, JSON.stringify((ids||[]).slice(-500))); } catch(_){}
+        }
+        function _otdGetLastOpen(){
+          try { return JSON.parse(localStorage.getItem(__otdReqLastKey) || '[]'); } catch(_) { return []; }
+        }
+
+        function _otdEnsureReqBadge(){
+          const btn = document.getElementById('openClientRequestsBtn');
+          if (!btn) return null;
+          let b = btn.querySelector('.otdReqBadge');
+          if (!b){
+            b = document.createElement('span');
+            b.className = 'otdReqBadge';
+            b.style.marginLeft = '8px';
+            b.style.minWidth = '18px';
+            b.style.height = '18px';
+            b.style.padding = '0 6px';
+            b.style.borderRadius = '999px';
+            b.style.display = 'none';
+            b.style.alignItems = 'center';
+            b.style.justifyContent = 'center';
+            b.style.fontSize = '12px';
+            b.style.fontWeight = '900';
+            b.style.color = '#0b1a07';
+            b.style.background = '#47b500';
+            b.style.boxShadow = '0 6px 18px rgba(0,0,0,.25)';
+            btn.appendChild(b);
+          }
+          return b;
+        }
+
+        function _otdShowReqBar(payload){
+          const existing = document.getElementById('otdReqBar');
+          if (existing) return existing;
+
+          const bar = document.createElement('div');
+          bar.id = 'otdReqBar';
+          bar.style.position = 'fixed';
+          bar.style.left = '12px';
+          bar.style.right = '12px';
+          bar.style.top = '64px';
+          bar.style.zIndex = '9999';
+          bar.style.background = 'rgba(15,18,20,.94)';
+          bar.style.border = '1px solid rgba(71,181,0,.45)';
+          bar.style.borderRadius = '14px';
+          bar.style.padding = '12px';
+          bar.style.boxShadow = '0 12px 40px rgba(0,0,0,.35)';
+
+          const title = payload && payload.title ? payload.title : 'Новый запрос от бухгалтера';
+          const sub = payload && payload.sub ? payload.sub : '';
+
+          bar.innerHTML = `
+            <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
+              <div style="min-width:220px">
+                <div style="font-weight:900">${title}</div>
+                ${sub ? `<div style="opacity:.82;font-size:12px;margin-top:4px">${sub}</div>` : ''}
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button id="otdReqOpen" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:900;cursor:pointer">Открыть</button>
+                <button id="otdReqHide" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">Скрыть</button>
+              </div>
+            </div>
+          `;
+          document.body.appendChild(bar);
+          return bar;
+        }
+
+        function _otdHideReqBar(){
+          try{ document.getElementById('otdReqBar')?.remove(); }catch(_){}
+        }
+
+        async function _otdFetchClientRequests(){
+          const rr = await fetch('/api/client/requests', { credentials:'include' });
+          const js = await rr.json().catch(()=> ({}));
+          if (!rr.ok) throw new Error((js && js.error) || 'Failed to load requests');
+          return (js && js.requests) || [];
+        }
+
+        async function _otdUpdateReqIndicators(){
+          try{
+            const reqs = await _otdFetchClientRequests();
+            const openReqs = reqs.filter(r=>{
+              const st = String((r && r.status) || 'open');
+              return st !== 'approved' && st !== 'rejected';
+            });
+
+            const openIds = openReqs.map(r=> String(r.id||'')).filter(Boolean);
+            _otdRememberLastOpen(openIds);
+
+            // Badge on the "Запросы бухгалтера" button
+            const badge = _otdEnsureReqBadge();
+            if (badge){
+              badge.textContent = String(openReqs.length || 0);
+              badge.style.display = openReqs.length ? 'inline-flex' : 'none';
+            }
+
+            // Top bar only for NEW (not seen before)
+            const seen = new Set(_otdGetSeenReqIds());
+            const newOnes = openReqs.filter(r=> !seen.has(String(r.id||'')));
+            if (!newOnes.length){
+              _otdHideReqBar();
+              return;
+            }
+
+            const first = newOnes[0];
+            const sub = [
+              (first && first.month) ? `Месяц: ${first.month}` : '',
+              (newOnes.length > 1) ? `Ещё: ${newOnes.length-1}` : ''
+            ].filter(Boolean).join(' • ');
+
+            const bar = _otdShowReqBar({ title: `Новый запрос от бухгалтера (${newOnes.length})`, sub });
+            bar.querySelector('#otdReqOpen')?.addEventListener('click', ()=>{
+              try{
+                // mark as seen right away so it doesn't blink forever
+                const next = Array.from(new Set([ ...seen, ...newOnes.map(x=> String(x.id||'')) ]));
+                _otdSetSeenReqIds(next);
+                _otdHideReqBar();
+              }catch(_){}
+              try{ window.OTD_OpenClientRequests ? window.OTD_OpenClientRequests(String(first.id||'')) : document.getElementById('openClientRequestsBtn')?.click(); }catch(_){}
+            }, { once:true });
+
+            bar.querySelector('#otdReqHide')?.addEventListener('click', ()=>{
+              try{
+                const next = Array.from(new Set([ ...seen, ...newOnes.map(x=> String(x.id||'')) ]));
+                _otdSetSeenReqIds(next);
+              }catch(_){}
+              _otdHideReqBar();
+            }, { once:true });
+
+          }catch(_e){
+            // silence for MVP
+          }
+        }
+
         const esc = (s)=> String(s||'')
           .replaceAll('&','&amp;')
           .replaceAll('<','&lt;')
@@ -5379,6 +5525,24 @@ async function syncUserStatus(){
           if (!modal) return;
           modal.style.display = 'block';
           await loadAndRender(focusRid);
+
+          // mark currently open requests as "seen" (so the banner/badge doesn't lie)
+          if (String(role||'') !== 'accountant') {
+            try{
+              const reqs = await _otdFetchClientRequests();
+              const openIds = (reqs||[]).filter(r=>{
+                const st = String((r && r.status) || 'open');
+                return st !== 'approved' && st !== 'rejected';
+              }).map(r=> String(r && r.id || '')).filter(Boolean);
+
+              const prev = _otdGetSeenReqIds();
+              const set = new Set(prev);
+              openIds.forEach(id=> set.add(id));
+              _otdSetSeenReqIds(Array.from(set));
+              _otdHideReqBar();
+              _otdUpdateReqIndicators();
+            }catch(_){}
+          }
         };
         const close = ()=>{ if(modal) modal.style.display='none'; };
 
@@ -5388,6 +5552,14 @@ async function syncUserStatus(){
         btnOpen?.addEventListener('click', ()=>open());
         closeBtn?.addEventListener('click', close);
         modal?.addEventListener('click', (e)=>{ if(e.target===modal) close(); });
+
+        // Start request indicator polling for clients (badge + top bar)
+        if (String(role||'') !== 'accountant' && !window.__OTD_REQ_INDICATORS_STARTED){
+          window.__OTD_REQ_INDICATORS_STARTED = true;
+          try{ _otdUpdateReqIndicators(); }catch(_){}
+          setInterval(()=>{ try{ _otdUpdateReqIndicators(); }catch(_){ } }, 20000);
+        }
+
 
         fileInput?.addEventListener('change', async ()=>{
           const files = Array.from(fileInput.files || []);
