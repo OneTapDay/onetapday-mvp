@@ -31,6 +31,16 @@
     .tab.active{background:var(--accent);color:#08110b;border-color:#49e084}
     .section{display:none;margin-top:18px;position:relative;z-index:1}
     .section.active{display:block}
+
+    /* AI screen: keep phone-like width even if the section ends up outside .wrap */
+    #aiAssist{max-width:520px;margin-left:auto;margin-right:auto;box-sizing:border-box;padding:0 12px}
+    .wrap #aiAssist{padding:0}
+
+
+    /* Reports screen: keep phone-like width even if the section ends up outside .wrap */
+    #reports{max-width:520px;margin-left:auto;margin-right:auto;box-sizing:border-box;padding:0 12px}
+    .wrap #reports{padding:0}
+
     .cards{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:12px}
     .card{background:var(--card);border:1px solid #22282c;border-radius:12px;padding:14px}
     .muted{color:var(--muted);font-size:13px}
@@ -1028,6 +1038,55 @@
 }
 
 
+
+    /* ==== Subscription cards (Settings) ==== */
+    .subBadge{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;
+      font-size:12px;border:1px solid #22282c;background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      color:var(--text);white-space:nowrap}
+    .subBadge::before{content:'';width:8px;height:8px;border-radius:999px;background:rgba(255,255,255,0.25);display:inline-block}
+    .subBadge.ok::before{background:rgba(71,181,0,0.95);box-shadow:0 0 0 3px rgba(71,181,0,0.16)}
+    .subBadge.warn::before{background:rgba(244,208,111,0.95);box-shadow:0 0 0 3px rgba(244,208,111,0.14)}
+    .subBadge.bad::before{background:rgba(255,112,112,0.95);box-shadow:0 0 0 3px rgba(255,112,112,0.14)}
+    .subBadge.ok{border-color:rgba(71,181,0,0.35);box-shadow:0 0 0 1px rgba(71,181,0,0.14) inset}
+    .subBadge.warn{border-color:rgba(244,208,111,0.35);box-shadow:0 0 0 1px rgba(244,208,111,0.12) inset}
+    .subBadge.bad{border-color:rgba(255,112,112,0.35);box-shadow:0 0 0 1px rgba(255,112,112,0.12) inset}
+    .subStatusBox{margin-top:10px;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));box-shadow:0 14px 30px rgba(0,0,0,0.28)}
+    .subStatusBox.ok{border-color:rgba(71,181,0,0.22)}
+    .subStatusBox.warn{border-color:rgba(244,208,111,0.20)}
+    .subStatusBox.bad{border-color:rgba(255,112,112,0.22)}
+    .subStatusMain{font-weight:800}
+    .subStatusMeta{margin-top:6px;color:var(--muted);font-size:12px;display:flex;gap:10px;flex-wrap:wrap}
+    .subPlansGrid{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:10px;margin-top:12px}
+    @media (max-width: 920px){ .subPlansGrid{grid-template-columns:1fr} }
+    .planCard{position:relative;border-radius:14px;border:1px solid rgba(255,255,255,0.10);
+      background:radial-gradient(640px 160px at 10% 0%, rgba(71,181,0,0.18), transparent 62%),
+                 radial-gradient(640px 160px at 90% 100%, rgba(71,181,0,0.11), transparent 62%),
+                 linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015));
+      padding:12px;overflow:hidden;display:flex;flex-direction:column;min-height:268px;cursor:pointer;
+      box-shadow:0 14px 34px rgba(0,0,0,0.28);
+      transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease}
+    .planCard.disabled{opacity:0.92}
+    .planCard:hover{transform:translateY(-1px);border-color:rgba(71,181,0,0.22);box-shadow:0 18px 44px rgba(0,0,0,0.34)}
+    .planCard.disabled{filter:saturate(0.92)}
+    .planCard ul{flex:1}
+    .planCard .row{margin-top:auto}
+    .planCard .subBuyBtn{height:44px;border-radius:999px;font-weight:900}
+    #subTogglePlans{width:100%;height:44px;border-radius:999px;font-weight:900}
+    #subTogglePlans{background:linear-gradient(180deg, rgba(71,181,0,0.92), rgba(38,104,0,0.92));border:1px solid rgba(71,181,0,0.40);box-shadow:0 12px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.16);filter:saturate(1) brightness(1)}
+    #subTogglePlans:hover{filter:saturate(1.05) brightness(1.05)}
+    .planCard .subBuyBtn{background:linear-gradient(180deg, rgba(71,181,0,0.86), rgba(38,104,0,0.86));border:1px solid rgba(71,181,0,0.34);box-shadow:0 10px 18px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.14);filter:saturate(1) brightness(1)}
+    .planCard .subBuyBtn:hover{filter:saturate(1.05) brightness(1.05)}
+
+    .planTitle{font-weight:900}
+    .planPrice{font-size:24px;font-weight:950;margin-top:4px}
+    .planPrice small{font-size:12px;color:var(--muted);font-weight:700}
+    .planPill{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:11px;
+      border:1px solid rgba(255,255,255,0.08);color:var(--muted);background:rgba(0,0,0,0.15)}
+    .planCard ul{margin:10px 0 0 0;padding-left:18px;color:var(--muted);font-size:12px;line-height:1.35;list-style-position:outside}
+    .planCard ul li{margin:0 0 6px 0}
+    .planCard .row{margin-top:10px}
+    .planCard .btn{width:100%}
+
 </style>
 <style>
   /* Глобальный фон и контейнер */
@@ -1994,33 +2053,84 @@ application/x-ofx" id="billFile" type="file"/>
 </div>
 </div>
 <div class="card">
-<div style="font-weight:700">Ustawienia (MVP)</div>
-<div class="muted small" style="margin-top:4px">
-        Zostawiamy tylko to, co ma sens teraz: zapis oraz czyszczenie lokalnej historii.
-      </div>
+<div style="font-weight:700" data-i18n="settings.mvp_title">Ustawienia (MVP)</div>
+<div class="muted small" style="margin-top:4px" data-i18n="settings.mvp_desc">Zostawiamy tylko to, co ma sens teraz: zapis oraz czyszczenie lokalnej historii.</div>
 <div class="row" style="margin-top:10px">
 <button class="btn secondary" data-i18n="btn_save_settings" id="applySettings" type="button">Zapisz</button>
 <button class="btn ghost" data-i18n="btn_clear_all" id="clearAll" type="button">Wyczyść historię (lokalnie)</button>
 </div>
 </div>
-<div class="card">
-<div data-i18n="sub_title" style="font-weight:700">Subskrypcja / Demo</div>
-<div class="muted" id="subStatus">—</div>
-<div class="row" style="margin-top:8px">
-<button class="btn" data-i18n="btn_pay_sub" id="payNow">Opłać subskrypcję</button>
-</div>
-<div class="hint" data-i18n="sub_hint" style="margin-top:6px">
-        Opłata dostępna tylko tutaj. Jeśli masz link Stripe — ustaw <code>localStorage.stripe_link</code>.
+<div class="card" id="subscriptionCard">
+  <div class="row" style="align-items:center;justify-content:space-between;gap:10px">
+    <div data-i18n="sub_title" style="font-weight:700">Subskrypcja / Demo</div>
+    <div id="subBadge" class="subBadge">—</div>
+  </div>
+
+  <div id="subStatus" class="subStatusBox">
+    <div class="subStatusMain">—</div>
+    <div class="subStatusMeta"></div>
+  </div>
+
+  <div class="row" style="margin-top:10px">
+    <button class="btn" id="subTogglePlans" type="button" data-i18n="sub.choose_plan">Wybierz taryfę</button>
+  </div>
+
+  <div id="subPlansWrap" class="subPlansWrap hidden">
+    <div class="subPlansGrid" id="subPlansGrid">
+
+    <div class="planCard" id="planMonthly" data-plan="monthly">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="planTitle" data-i18n="sub.plan_monthly_title">Miesięcznie</div>
+        <span class="planPill" data-i18n="sub.recommended">Polecane</span>
       </div>
-<div class="card" id="workspaceCard">
-<div data-i18n="settings.clients_title" id="workspaceTitle" style="font-weight:700">Klienci</div>
-<div class="muted small" data-i18n="settings.clients_desc" id="workspaceDesc" style="margin-top:4px">Każdy klient = osobny zestaw danych. W Trial do 3 klientów.</div>
-<div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px;align-items:center">
-<select id="workspaceSelect" style="min-width:240px"></select>
-<button class="btn secondary" id="workspaceAdd" style="min-width:140px" type="button" data-i18n="settings.btn_add_client">+ Klient</button>
-<button class="btn ghost" id="workspaceRemove" style="min-width:140px" type="button" data-i18n="settings.btn_remove_client">Usuń</button>
-</div>
-<div class="muted small" id="workspaceLimitHint" style="margin-top:8px"></div>
+      <div class="planPrice"><span id="subPriceMonthly" data-i18n="sub.price_monthly">99 zł</span><small data-i18n="sub.per_month"> / mies.</small></div>
+      <ul>
+        <li data-i18n="sub.f1">Pełny dostęp do aplikacji</li>
+        <li data-i18n="sub.f3">Import CSV/MT940 + dokumenty</li>
+        <li data-i18n="sub.f2">Asystent AI: podpowiedzi i „Rytuał dnia”</li>
+        <li data-i18n="sub.f5">Księgowy w aplikacji: czat, zadania, dokumenty</li>
+      </ul>
+      <div class="row">
+        <button class="btn subBuyBtn" id="payNow" data-plan="monthly" data-i18n="sub.select">Wybierz</button>
+      </div>
+    </div>
+
+    <div class="planCard" id="plan6m" data-plan="6m">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="planTitle" data-i18n="sub.plan_6m_title">6 miesięcy</div>
+        <span class="planPill" data-i18n="sub.save_6m">Oszczędzasz</span>
+      </div>
+      <div class="planPrice"><span id="subPrice6m" data-i18n="sub.price_6m">499 zł</span><small data-i18n="sub.per_6m"> / 6 mies.</small></div>
+      <ul>
+        <li data-i18n="sub.f1">Pełny dostęp do aplikacji</li>
+        <li data-i18n="sub.f3">Import CSV/MT940 + dokumenty</li>
+        <li data-i18n="sub.f2">Asystent AI: podpowiedzi i „Rytuał dnia”</li>
+        <li data-i18n="sub.f5">Księgowy w aplikacji: czat, zadania, dokumenty</li>
+      </ul>
+      <div class="row">
+        <button class="btn subBuyBtn" id="subBuy6m" data-plan="6m" data-i18n="sub.select">Wybierz</button>
+      </div>
+    </div>
+
+    <div class="planCard" id="planYearly" data-plan="yearly">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="planTitle" data-i18n="sub.plan_yearly_title">Rocznie</div>
+        <span class="planPill" data-i18n="sub.save_yearly">Najlepsza cena</span>
+      </div>
+      <div class="planPrice"><span id="subPriceYearly" data-i18n="sub.price_yearly">1059 zł</span><small data-i18n="sub.per_year"> / rok</small></div>
+      <ul>
+        <li data-i18n="sub.f1">Pełny dostęp do aplikacji</li>
+        <li data-i18n="sub.f3">Import CSV/MT940 + dokumenty</li>
+        <li data-i18n="sub.f2">Asystent AI: podpowiedzi i „Rytuał dnia”</li>
+        <li data-i18n="sub.f5">Księgowy w aplikacji: czat, zadania, dokumenty</li>
+      </ul>
+      <div class="row">
+        <button class="btn subBuyBtn" id="subBuyYearly" data-plan="yearly" data-i18n="sub.select">Wybierz</button>
+      </div>
+    </div>
+
+    </div>
+  </div>
 </div>
 </div>
 </div>

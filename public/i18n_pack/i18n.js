@@ -11,6 +11,7 @@
 
 (function () {
   const LS_KEY = 'otd_lang';
+const I18N_VER = '2025-12-28-03'; // cache-bust
   const DEFAULT_LANG = 'pl';
   const SUPPORTED = new Set(['pl','en','ru','uk']);
 
@@ -70,7 +71,7 @@
       localStorage.setItem(LS_KEY, lang);
 
       try {
-        const res = await fetch(`/i18n_pack/i18n/${lang}.json`, { credentials: 'same-origin' });
+        const res = await fetch(`/i18n_pack/i18n/${lang}.json?v=${encodeURIComponent(I18N_VER)}`, { credentials: 'same-origin', cache: 'no-store' });
         if (!res.ok) throw new Error('Missing i18n JSON for ' + lang);
         i18n.data = await res.json();
       } catch (e) {

@@ -40,12 +40,33 @@ let CLOUD_READY = false;
 // Old i18n system (M.* dictionaries) removed - now using i18n.js with JSON files
 
 /* LANGUAGE APPLY */
+function refreshSpendingI18n(){
+  // Spending category chips are rendered dynamically and may appear before i18n JSON is loaded.
+  // When language loads (otd:lang), re-render the spending UI so labels are translated immediately.
+  try{
+    const active = (window._otdSpendingActiveCatId || '');
+    if (typeof renderSpendingFilters === 'function') renderSpendingFilters(active || '');
+    if (typeof renderSpendingStats === 'function') renderSpendingStats(active ? active : null);
+    if (typeof window._otdUpdateUncatBadge === 'function') window._otdUpdateUncatBadge();
+  }catch(e){}
+}
+
+(function bindLangRerender(){
+  if (window.__otd_lang_rerender_bound) return;
+  window.__otd_lang_rerender_bound = true;
+  document.addEventListener('otd:lang', () => {
+    try{ refreshSpendingI18n(); }catch(e){}
+  });
+})();
+
+/* LANGUAGE APPLY */
 function applyLang(lang){
   // Use the new i18n system
   if (window.i18n) {
     window.i18n.load(lang).then(() => {
       // Translations are applied automatically by i18n.apply()
-  if (typeof renderCashExamples==='function') renderCashExamples(lang);
+      if (typeof renderCashExamples==='function') renderCashExamples(lang);
+      try{ refreshSpendingI18n(); }catch(e){}
     });
   }
 }
@@ -3732,6 +3753,21 @@ function demoLeftMs(){
   return 0;
 }
 
+function isSubActive(){
+  try{
+    const flag = localStorage.getItem(SUB_KEY);
+    if (flag !== '1') return false;
+    const to = localStorage.getItem(SUB_TO) || '';
+    if (!to) return true;
+    const end = new Date(to).getTime();
+    if (!isFinite(end)) return true;
+    return end > Date.now();
+  }catch(_e){
+    return false;
+  }
+}
+
+
 function isDemoActive(){ 
   return demoLeftMs() > 0; 
 }
@@ -3777,50 +3813,289 @@ function gateAccess(){
 }
 
 function updateSubUI(){
-  const el = $id('subStatus');
-  if (!el) return;
+  const box = $id('subStatus');
+  if (!box) return;
 
-  const role = localStorage.getItem(ROLE_KEY) || 'freelance_business';
-  const status = localStorage.getItem(STATUS_KEY) || '';
-  const demoUsed = localStorage.getItem(DEMO_USED) === '1';
-  const hasSub = isSubActive();
+  const badge = $id('subBadge');
 
-  let s = '—';
+  const lang = (localStorage.getItem('otd_lang') || 'pl').toLowerCase();
+  const locale = (lang === 'uk') ? 'uk-UA' : (lang === 'ru') ? 'ru-RU' : (lang === 'en') ? 'en-US' : 'pl-PL';
 
-  if (role === 'accountant') {
-    if (hasSub || status === 'active' || status === 'discount_active') {
-      s = `✅ PRO aktywny: ${localStorage.getItem(SUB_FROM)||'—'} → ${localStorage.getItem(SUB_TO)||'—'}`;
-    } else if (isDemoActive()) {
-      const left = demoLeftMs();
-      const h = Math.floor(left/3600000);
-      const m = Math.floor((left%3600000)/60000);
-      if (status === 'acct_pro_trial') {
-        s = `🧪 PRO trial aktywny: ~${h}h ${m}m (klientów bez limitu)`;
-      } else {
-        s = `🧪 Trial aktywny: ~${h}h ${m}m (do 3 klientów)`;
-      }
-    } else if (demoUsed) {
-      s = '⛔ Trial zakończone. Dostęp tylko z PRO.';
-    } else {
-      s = '⛔ Brak dostępu: zaloguj się, aby uruchomić trial.';
+  const fmtDate = (iso) => {
+    try {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return String(iso).slice(0,10);
+      return d.toLocaleDateString(locale, { year:'numeric', month:'2-digit', day:'2-digit' });
+    } catch (e) {
+      return iso ? String(iso).slice(0,10) : '—';
     }
-  } else {
-    if (hasSub){
-      s = `✅ Sub aktywna: ${localStorage.getItem(SUB_FROM)||'—'} → ${localStorage.getItem(SUB_TO)||'—'}`;
-    } else if (isDemoActive()){
-      const left = demoLeftMs();
-      const h = Math.floor(left/3600000);
-      const m = Math.floor((left%3600000)/60000);
-      s = `🧪 Demo aktywne: ~${h}h ${m}m`;
-    } else if (demoUsed) {
-      s = '⛔ Demo zakończone. Dostęp tylko z subskrypcją.';
+  };
+
+  const hasSub  = isSubActive();
+  const hasDemo = isDemoActive();
+
+  let badgeText = '—';
+  let badgeClass = '';
+  let mainText = '—';
+  let metaText = '';
+
+  if (hasSub) {
+    const toStr = fmtDate(localStorage.getItem(SUB_TO));
+    badgeText = TT('sub.badge_active', null, 'ACTIVE');
+    badgeClass = 'ok';
+    mainText = TT('sub.status_active', { to: toStr }, `Active until ${toStr}`);
+    metaText = '';
+  } else if (hasDemo) {
+    // Demo access: show until date if available
+    let endMs = 0;
+    const raw = (localStorage.getItem('otd_demo_until') || '').trim();
+    if (raw) {
+      const n = Number(raw);
+      if (!isNaN(n)) endMs = n;
+      else {
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) endMs = d.getTime();
+      }
+    }
+    if (!endMs) {
+      const t = localStorage.getItem(DEMO_START);
+      if (t) {
+        const start = new Date(t).getTime();
+        if (isFinite(start)) endMs = start + 24*3600*1000;
+      }
+    }
+
+    const toStr = endMs ? fmtDate(new Date(endMs).toISOString()) : '—';
+    badgeText = TT('sub.badge_demo', null, 'DEMO');
+    badgeClass = 'warn';
+
+    if (toStr && toStr !== '—') {
+      mainText = TT('sub.status_demo_until', { to: toStr }, `Demo active until ${toStr}`);
     } else {
-      s = '⛔ Brak dostępu: włącz demo (24h) lub opłać.';
+      mainText = TT('sub.status_demo', { hours: Math.max(1, Math.ceil(demoLeftMs() / 3600000)) }, 'Demo');
+    }
+    metaText = '';
+  } else {
+    badgeText = TT('sub.badge_inactive', null, 'LOCKED');
+    badgeClass = 'bad';
+    mainText = TT('sub.status_locked', null, TT('sub.status_no_access', null, 'Access locked'));
+    metaText = '';
+  }
+
+  // Ensure structure exists
+  let mainEl = box.querySelector('.subStatusMain');
+  let metaEl = box.querySelector('.subStatusMeta');
+  if (!mainEl || !metaEl) {
+    box.innerHTML = '<div class="subStatusMain"></div><div class="subStatusMeta"></div>';
+    mainEl = box.querySelector('.subStatusMain');
+    metaEl = box.querySelector('.subStatusMeta');
+  }
+
+  if (mainEl) mainEl.textContent = mainText;
+  if (metaEl) {
+    metaEl.textContent = metaText;
+    metaEl.style.display = metaText ? 'block' : 'none';
+  }
+
+  box.classList.remove('ok','warn','bad');
+  if (badgeClass) box.classList.add(badgeClass);
+  box.dataset.state = hasSub ? 'active' : hasDemo ? 'demo' : 'locked';
+
+  if (badge) {
+    badge.textContent = badgeText;
+    badge.classList.remove('ok','warn','bad');
+    if (badgeClass) badge.classList.add(badgeClass);
+  }
+
+  // Sync language bar highlight (it was confusing for humans)
+  try {
+    const bar = $id('langBarMain');
+    if (bar) {
+      bar.querySelectorAll('button[data-lang]').forEach(btn => {
+        btn.classList.toggle('on', (btn.dataset.lang || '').toLowerCase() === lang);
+      });
+    }
+  } catch(_e){}
+}
+
+try{ document.addEventListener('otd:lang', ()=>{ try{ updateSubUI(); }catch(_e){} }); }catch(_e){}
+
+// Subscription UI (Settings): plan cards + Stripe redirect
+(function(){
+  async function getStripeConfig(){
+    try{
+      const r = await fetch('/stripe-config', { credentials: 'include' });
+      if (!r.ok) return null;
+      return await r.json();
+    }catch(_e){
+      return null;
     }
   }
 
-  el.textContent = s;
-}
+  const __subEnabled = { monthly: true, m6: true, yearly: true };
+
+  function setEnabled(cardId, enabled){
+    const card = document.getElementById(cardId);
+    if (!card) return;
+
+    const plan = (card.getAttribute('data-plan') || '').toLowerCase();
+    const k = (plan === '6m') ? 'm6' : plan;
+    if (k) __subEnabled[k] = !!enabled;
+
+    card.dataset.enabled = enabled ? '1' : '0';
+
+    const btn = card.querySelector('.subBuyBtn');
+    if (btn){
+      // Always clickable in MVP (even if Stripe isn't configured yet)
+      btn.disabled = false;
+      btn.setAttribute('data-i18n', 'sub.select');
+      if (window.i18n && typeof window.i18n.apply === 'function') window.i18n.apply();
+    }
+    card.classList.toggle('disabled', !enabled);
+  }
+
+
+  async function startCheckout(plan){
+    const p = plan || 'monthly';
+
+    // Optional per-plan direct links (handy for quick MVP):
+    // localStorage.stripe_link (legacy) for monthly,
+    // localStorage.stripe_link_6m / stripe_link_yearly for others.
+    const legacyKey = (p === 'monthly') ? 'stripe_link' : `stripe_link_${p}`;
+    const direct = (localStorage.getItem(legacyKey) || '').trim();
+    if (direct && /^https?:\/\//i.test(direct)){
+      window.location.href = direct;
+      return;
+    }
+
+    let js = null;
+    let resp = null;
+    try{
+      resp = await fetch('/create-checkout-session', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: p })
+      });
+      js = await resp.json().catch(()=>null);
+    }catch(e){
+      alert(TT('sub.pay_error', null, 'Stripe error'));
+      return;
+    }
+
+    if (resp && resp.status === 401){
+      alert(TT('sub.login_required', null, 'Please login first'));
+      return;
+    }
+
+    const url = js && (js.sessionUrl || js.url);
+    if (resp && resp.ok && url){
+      window.location.href = url;
+      return;
+    }
+
+    const msg = (js && (js.error || js.message)) ? (js.error || js.message) : TT('sub.pay_error', null, 'Stripe error');
+    alert(msg);
+  }
+
+  async function handlePlan(plan){
+    const p = (plan || 'monthly').toLowerCase();
+    const k = (p === '6m') ? 'm6' : p;
+
+    if (__subEnabled[k] === false){
+      alert(TT('sub.plan_not_available', null, 'Plan is not available yet'));
+      return;
+    }
+    await startCheckout(p);
+  }
+
+  function bindCards(){
+    const cards = document.querySelectorAll('#subPlansGrid .planCard');
+    cards.forEach((card)=>{
+      if (card.__otd_bound) return;
+      card.__otd_bound = true;
+
+      card.addEventListener('click', (e)=>{
+        // Let buttons handle their own clicks
+        const t = e && e.target;
+        if (t && t.closest && t.closest('button')) return;
+
+        const plan = card.getAttribute('data-plan') || 'monthly';
+        handlePlan(plan);
+      });
+    });
+  }
+
+  function bindButtons(){
+    const buttons = document.querySelectorAll('.subBuyBtn');
+    buttons.forEach((btn)=>{
+      if (btn.__otd_bound) return;
+      btn.__otd_bound = true;
+      btn.addEventListener('click', (e)=>{
+        e.preventDefault();
+        const plan = btn.getAttribute('data-plan') || 'monthly';
+        handlePlan(plan);
+      });
+    });
+  }
+
+  function _normPlan(v){
+    if (v && typeof v === 'object') return v;
+    return { enabled: !!v };
+  }
+
+  function applyPrices(cfg){
+    // Prices are fixed in UI/i18n for now (avoid mismatch if Stripe is not configured yet).
+    // We only use Stripe config to enable/disable plan buttons.
+  }
+
+  function bindTogglePlans(){
+    const btn  = document.getElementById('subTogglePlans');
+    const wrap = document.getElementById('subPlansWrap');
+    if (!btn || !wrap) return;
+
+    const syncLabel = () => {
+      btn.setAttribute('data-i18n', wrap.classList.contains('hidden') ? 'sub.choose_plan' : 'sub.hide_plans');
+      if (window.i18n && typeof window.i18n.apply === 'function') window.i18n.apply();
+    };
+
+    if (!btn.__otd_bound){
+      btn.__otd_bound = true;
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        wrap.classList.toggle('hidden');
+        syncLabel();
+      });
+    }
+
+    syncLabel();
+  }
+
+  async function init(){
+    bindButtons();
+    bindCards();
+    bindTogglePlans();
+
+    const cfg = await getStripeConfig();
+    if (cfg && cfg.plans){
+      const p = cfg.plans || {};
+      const m  = _normPlan(p.monthly);
+      const m6 = _normPlan(p.m6);
+      const y  = _normPlan(p.yearly);
+
+      setEnabled('planMonthly', !!m.enabled);
+      setEnabled('plan6m', !!m6.enabled);
+      setEnabled('planYearly', !!y.enabled);
+
+      applyPrices(cfg);
+    }
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
 
 
 

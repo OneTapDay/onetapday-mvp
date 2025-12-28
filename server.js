@@ -1,8 +1,19 @@
 // server.js — working backend with compatibility for legacy users (sha256), no external jwt dependency
 
 require('dotenv').config();
-const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || 'price_1SSHX0KQldLeJYVfxcZe4eKr';
-console.log('[BOOT] STRIPE_PRICE_ID =', STRIPE_PRICE_ID);
+
+// Stripe price IDs (plans)
+// - monthly: required (fallback to STRIPE_PRICE_ID for backward compatibility)
+// - 6m / yearly: optional; set in Render env if you want these buttons enabled
+const STRIPE_PRICE_ID_MONTHLY = process.env.STRIPE_PRICE_ID_MONTHLY || process.env.STRIPE_PRICE_ID || 'price_1SSHX0KQldLeJYVfxcZe4eKr';
+const STRIPE_PRICE_ID_6M = process.env.STRIPE_PRICE_ID_6M || '';
+const STRIPE_PRICE_ID_YEARLY = process.env.STRIPE_PRICE_ID_YEARLY || '';
+
+console.log('[BOOT] STRIPE price IDs =', {
+  monthly: STRIPE_PRICE_ID_MONTHLY,
+  m6: STRIPE_PRICE_ID_6M ? '[set]' : '[not set]',
+  yearly: STRIPE_PRICE_ID_YEARLY ? '[set]' : '[not set]'
+});
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
@@ -21,6 +32,7 @@ try {
 }
 
 const app = express();
+app.set('trust proxy', 1); // needed on Render to get correct protocol/host
 const PORT = process.env.PORT || 10000;
 
 // Путь к файлу с юзерами: по умолчанию __dirname/users.json,
@@ -2278,6 +2290,58 @@ app.post('/app-state/merge', (req, res) => {
   res.json({ ok: true });
 });
 
+
+// Stripe public config (safe to expose)
+app.get('/stripe-config', async (req, res) => {
+  const stripeConfigured = !!(process.env.STRIPE_SECRET_KEY && String(process.env.STRIPE_SECRET_KEY).trim());
+
+  const out = {
+    stripeConfigured,
+    plans: {
+      monthly: { enabled: stripeConfigured && !!STRIPE_PRICE_ID_MONTHLY },
+      m6:      { enabled: stripeConfigured && !!STRIPE_PRICE_ID_6M },
+      yearly:  { enabled: stripeConfigured && !!STRIPE_PRICE_ID_YEARLY }
+    }
+  };
+
+  // Enrich with live prices from Stripe (so UI doesn't lie when you change prices).
+  function formatMoney(unitAmount, currency){
+    const c = String(currency || '').toLowerCase();
+    const raw = (typeof unitAmount === 'string') ? parseFloat(unitAmount) : (unitAmount / 100);
+    if (!isFinite(raw)) return null;
+    // drop trailing .00
+    const n = raw.toFixed(2).replace(/\.00$/, '');
+    if (c === 'pln') return n.replace('.', ',') + ' zł';
+    if (c === 'eur') return '€' + n;
+    if (c === 'usd') return '$' + n;
+    return n + ' ' + String(currency || '').toUpperCase();
+  }
+
+  async function enrich(planKey, priceId){
+    if (!stripeConfigured || !stripe || !priceId) return;
+    try{
+      const price = await stripe.prices.retrieve(priceId);
+      const unit = price && (price.unit_amount != null ? price.unit_amount : price.unit_amount_decimal);
+      const cur  = price && price.currency;
+      const priceText = (unit != null) ? formatMoney(unit, cur) : null;
+      if (priceText) out.plans[planKey].priceText = priceText;
+      if (cur) out.plans[planKey].currency = cur;
+      if (price && price.recurring) {
+        out.plans[planKey].interval = price.recurring.interval;
+        out.plans[planKey].interval_count = price.recurring.interval_count;
+      }
+    }catch(e){
+      console.warn('[STRIPE] cannot retrieve price', planKey, e && e.message ? e.message : e);
+    }
+  }
+
+  await enrich('monthly', STRIPE_PRICE_ID_MONTHLY);
+  await enrich('m6',      STRIPE_PRICE_ID_6M);
+  await enrich('yearly',  STRIPE_PRICE_ID_YEARLY);
+
+  return res.json(out);
+});
+
 // Stripe checkout creation route (requires stripe configured)
 app.post('/create-checkout-session', async (req, res) => {
   const user = getUserBySession(req);
@@ -2287,36 +2351,48 @@ app.post('/create-checkout-session', async (req, res) => {
   try {
     expireStatuses(user);
 
+    const plan = (req.body && req.body.plan) ? String(req.body.plan) : 'monthly';
+
+    let priceId = STRIPE_PRICE_ID_MONTHLY;
+    if (plan === '6m' || plan === 'm6' || plan === 'half_year') priceId = STRIPE_PRICE_ID_6M;
+    if (plan === 'yearly' || plan === 'annual' || plan === 'year') priceId = STRIPE_PRICE_ID_YEARLY;
+
+    if (!priceId) {
+      return res.status(400).json({ success: false, error: 'Plan not configured' });
+    }
+
+    const baseUrl = (process.env.PUBLIC_URL && String(process.env.PUBLIC_URL).trim())
+      ? String(process.env.PUBLIC_URL).replace(/\/+$/, '')
+      : `${req.protocol}://${req.get('host')}`;
+
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
       mode: 'subscription',
-     line_items: [
-  {
-    price: STRIPE_PRICE_ID,
-    quantity: 1
-  }
-],
+      line_items: [{ price: priceId, quantity: 1 }],
       customer_email: user.email,
-      metadata: { email: user.email },
-      success_url: `${req.protocol}://${req.get('host')}/app.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${req.protocol}://${req.get('host')}/?cancel=1`
+      allow_promotion_codes: true,
+      metadata: { email: user.email, plan },
+      success_url: `${baseUrl}/app.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/app.html?cancel=1`
     });
 
-    return res.json({ sessionUrl: session.url, id: session.id, url: session.url });
+    return res.json({ sessionUrl: session.url, id: session.id });
   } catch (err) {
     console.error('[STRIPE] create session error', err && err.stack ? err.stack : err);
     return res.status(500).json({ success: false, error: 'Stripe session creation failed' });
   }
 });
 
+
 // Stripe webhook — use express.raw to verify signature
-app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   if (!stripe) {
     console.warn('[WEBHOOK] stripe not configured');
     return res.status(400).send('stripe not configured');
   }
+
   const sig = req.headers['stripe-signature'];
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET || '');
   } catch (err) {
@@ -2324,26 +2400,60 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     return res.status(400).send(`Webhook Error: ${err && err.message ? err.message : 'invalid'}`);
   }
 
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const email = (session.metadata && session.metadata.email) || (session.customer_details && session.customer_details.email);
-    if (email) {
-      const u = findUserByEmail(email);
-      if (u) {
-        u.status = 'active';
-        u.startAt = new Date().toISOString();
-        const end = new Date();
-end.setMonth(end.getMonth() + 1); // один месяц
-u.endAt = end.toISOString();
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
 
-        u.demoUsed = true; // they paid — treat demo as used
-        saveUsers();
-        console.log(`[WEBHOOK] activated pilot for ${u.email} until ${u.endAt}`);
+      const email =
+        (session.metadata && session.metadata.email) ||
+        (session.customer_details && session.customer_details.email) ||
+        session.customer_email ||
+        '';
+
+      const plan = (session.metadata && session.metadata.plan) ? String(session.metadata.plan) : 'monthly';
+
+      // Prefer Stripe subscription period dates (accurate for monthly / 6m / yearly).
+      let startIso = new Date().toISOString();
+      let endIso = null;
+
+      if (session.subscription) {
+        try {
+          const sub = await stripe.subscriptions.retrieve(session.subscription);
+          if (sub && sub.current_period_start) startIso = new Date(sub.current_period_start * 1000).toISOString();
+          if (sub && sub.current_period_end) endIso = new Date(sub.current_period_end * 1000).toISOString();
+        } catch (e) {
+          console.warn('[WEBHOOK] cannot retrieve subscription', e && e.message ? e.message : e);
+        }
+      }
+
+      // Fallback if Stripe didn't give us the subscription period.
+      if (!endIso) {
+        const end = new Date();
+        if (plan === '6m' || plan === 'm6' || plan === 'half_year') end.setMonth(end.getMonth() + 6);
+        else if (plan === 'yearly' || plan === 'annual' || plan === 'year') end.setFullYear(end.getFullYear() + 1);
+        else end.setMonth(end.getMonth() + 1);
+        endIso = end.toISOString();
+      }
+
+      if (email) {
+        const u = findUserByEmail(email);
+        if (u) {
+          u.status = 'active';
+          u.startAt = startIso;
+          u.endAt = endIso;
+          u.demoUsed = true; // they paid — treat demo as used
+          saveUsers();
+          console.log(`[WEBHOOK] activated subscription for ${u.email} until ${u.endAt}`);
+        }
       }
     }
+  } catch (e) {
+    console.error('[WEBHOOK] handler error', e && e.stack ? e.stack : e);
   }
+
   return res.json({ received: true });
 });
+
 
 // Админ-роут: активировать пользователя по email
 app.get('/admin/activate-user', (req, res) => {
