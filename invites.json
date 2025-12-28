@@ -18,6 +18,15 @@
       "status": "active",
       "createdAt": "2025-12-24T09:50:17.686Z",
       "acceptedAt": "2025-12-24T09:50:48.456Z"
+    },
+    "21tapday@gmail.com::1tapday@gmail.com": {
+      "accountantEmail": "21tapday@gmail.com",
+      "clientEmail": "1tapday@gmail.com",
+      "clientName": "Nikita",
+      "company": "JDG",
+      "status": "active",
+      "createdAt": "2025-12-27T09:45:43.728Z",
+      "acceptedAt": "2025-12-27T09:45:57.096Z"
     }
   }
 }

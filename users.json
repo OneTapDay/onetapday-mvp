@@ -36,7 +36,8 @@
     "demoUsed": true,
     "appState": {},
     "isAdmin": true,
-    "role": "freelance_business"
+    "role": "freelance_business",
+    "lang": "ru"
   },
   "aisoulinc@gmail.com": {
     "email": "aisoulinc@gmail.com",
@@ -136,6 +137,20 @@
     "status": "active",
     "startAt": "2025-12-24T09:50:41.346Z",
     "endAt": "2025-12-25T09:50:41.346Z",
+    "discountUntil": null,
+    "demoUsed": true,
+    "appState": {},
+    "isAdmin": false
+  },
+  "21tapday@gmail.com": {
+    "email": "21tapday@gmail.com",
+    "role": "accountant",
+    "lang": "pl",
+    "salt": "066783cd4316f99a1ee00c1d76e4c417",
+    "hash": "32778e5339f5a8472424bd777c2f9afa5105d1f35489a6e92ef1fb77e07b855d4b67d8165017951a278fa41582eb969e8701f605a0ef92465ffed3dafae1ed90:100000:64:sha512",
+    "status": "active",
+    "startAt": "2025-12-26T18:36:19.781Z",
+    "endAt": "2025-12-27T18:36:19.781Z",
     "discountUntil": null,
     "demoUsed": true,
     "appState": {},

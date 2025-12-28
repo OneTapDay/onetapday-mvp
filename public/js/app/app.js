@@ -14,6 +14,24 @@ const DEMO_START = 'otd_demo_started_at';
 const DEMO_USED  = 'otd_demo_used'; // флаг: демо уже один раз запускали
 const USER_KEY = 'otd_user'; // email
 const ROLE_KEY = 'otd_role';
+// ==== i18n helpers (PL default) ====
+// Uses window.i18n from /public/i18n_pack/i18n.js (returns key when missing).
+function _interp(str, vars){
+  if (!vars || typeof str !== 'string') return str;
+  return str.replace(/\{(\w+)\}/g, (m, k) => (vars[k] !== undefined && vars[k] !== null) ? String(vars[k]) : m);
+}
+function TT(key, vars, fallback){
+  try{
+    if (window.i18n && typeof i18n.t === 'function'){
+      const v = i18n.t(key, vars);
+      if (v === key && fallback != null) return _interp(fallback, vars);
+      return v;
+    }
+  }catch(e){}
+  if (fallback != null) return _interp(fallback, vars);
+  return key;
+}
+
 const STATUS_KEY = 'otd_status';
 let REMOTE_OK = localStorage.getItem('remote_disabled')==='1' ? false : true;
 let CLOUD_READY = false;
@@ -464,16 +482,16 @@ function runTxCsvWizard(header){
   );
 
   const dateIdx = Number(
-    prompt("Номер колонки ДАТЫ:\n\n" + list, String(dateIdxAuto >= 0 ? dateIdxAuto : 0))
+    prompt(TT("prompts.col_date", {list:list}, "Номер колонки ДАТЫ:\n\n{list}"), String(dateIdxAuto >= 0 ? dateIdxAuto : 0))
   );
   const amountIdx = Number(
-    prompt("Номер колонки СУММЫ:\n\n" + list, String(amountIdxAuto >= 0 ? amountIdxAuto : 1))
+    prompt(TT("prompts.col_amount", {list:list}, "Номер колонки СУММЫ:\n\n{list}"), String(amountIdxAuto >= 0 ? amountIdxAuto : 1))
   );
   const descIdx = Number(
-    prompt("Номер колонки ОПИСАНИЯ (можно пусто):\n\n" + list, String(descIdxAuto >= 0 ? descIdxAuto : 2))
+    prompt(TT("prompts.col_desc", {list:list}, "Номер колонки ОПИСАНИЯ (можно пусто):\n\n{list}"), String(descIdxAuto >= 0 ? descIdxAuto : 2))
   );
   const cpIdx = Number(
-    prompt("Номер колонки КОНТРАГЕНТА (можно пусто):\n\n" + list, String(cpIdxAuto >= 0 ? cpIdxAuto : 3))
+    prompt(TT("prompts.col_counterparty", {list:list}, "Номер колонки КОНТРАГЕНТА (можно пусто):\n\n{list}"), String(cpIdxAuto >= 0 ? cpIdxAuto : 3))
   );
 
   if(Number.isNaN(dateIdx) || Number.isNaN(amountIdx)) return null;
@@ -570,7 +588,7 @@ function buildTxPreviewText(rows){
 
 function confirmTxImport(rows){
   const preview = buildTxPreviewText(rows);
-  return confirm(preview + "\n\nИмпортировать эти операции?");
+  return confirm(TT("dialogs.import_txs_confirm", {preview: preview}, preview + "\n\nИмпортировать эти операции?"));
 }
 
 // ===== /TX CSV IMPORT SAFE =====
@@ -581,7 +599,7 @@ async function importTxByFile(f){
   const MAX_IMPORT_BYTES = MAX_IMPORT_MB * 1024 * 1024;
 
   if(f && f.size && f.size > MAX_IMPORT_BYTES){
-    alert("Файл слишком большой для MVP-импорта (" + MAX_IMPORT_MB + "MB). Рекомендуем экспортировать CSV.");
+    alert(TT("alerts.file_too_big_mvp", {mb: MAX_IMPORT_MB}, "Файл слишком большой для MVP-импорта ({mb}MB). Рекомендуем экспортировать CSV."));
     return [];
   }
 
@@ -599,7 +617,7 @@ async function importTxByFile(f){
 
     // лёгкая эвристика
     if(text.includes(":61:") || text.includes(":86:")){
-      alert("Похоже на MT940, но парсер не подключён в этой версии.");
+      alert(TT("alerts.mt940_not_supported", null, "Похоже на MT940, но парсер не подключён в этой версии."));
       return [];
     }
   }
@@ -615,7 +633,7 @@ if(name.endsWith(".xlsx") || name.endsWith(".xls")){
     const table = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
 
     if(!table.length){
-      alert("Пустой XLSX.");
+      alert(TT("alerts.xlsx_empty", null, "Пустой XLSX."));
       return [];
     }
 
@@ -640,7 +658,7 @@ if(name.endsWith(".xlsx") || name.endsWith(".xls")){
     return json;
   }
 
-  alert("XLSX не поддерживается в этой сборке (библиотека не подключена).");
+  alert(TT("alerts.xlsx_not_supported", null, "XLSX не поддерживается в этой сборке (библиотека не подключена)."));
   return [];
 }
 
@@ -1077,7 +1095,7 @@ function renderAnalyticsDonut(pack){
 
   const rows = Object.keys(totals).map(id=>({
     id,
-    name: (catMap[id] ? ((catMap[id].emoji||'') + ' ' + (catMap[id].label||id)) : (id==='uncat' ? '⚠️ Bez kategorii' : id)),
+    name: (catMap[id] ? ((catMap[id].emoji||'') + ' ' + (catMap[id].label||id)) : (id==='uncat' ? ('⚠️ ' + TT('spending.uncat', null, 'Bez kategorii')) : id)),
     value: totals[id]
   })).sort((a,b)=>b.value - a.value);
 
@@ -1219,11 +1237,12 @@ function initAnalyticsUI(){
 // ===== Categories & spending breakdown =====
 
 const DEFAULT_SP_CATS = [
-  {id:'food',  label:'Продукты', emoji:'🍞'},
-  {id:'fuel',  label:'Топливо',   emoji:'⛽'},
-  {id:'home',  label:'Дом',       emoji:'🏠'},
-  {id:'subs',  label:'Подписки',  emoji:'💳'},
-  {id:'other', label:'Другое',    emoji:'📦'}
+  {id:'food',  labelKey:'spending.cat_food',  emoji:'🍞'},
+  {id:'fuel',  labelKey:'spending.cat_fuel',  emoji:'⛽'},
+  {id:'home',  labelKey:'spending.cat_home',  emoji:'🏠'},
+  {id:'subs',  labelKey:'spending.cat_subs',  emoji:'💳'},
+  {id:'other', labelKey:'spending.cat_other', emoji:'📦'},
+  {id:'salary',labelKey:'spending.cat_salary',emoji:'💰'}
 ];
 
 function loadUserSpCats(){
@@ -1247,10 +1266,34 @@ function saveUserSpCats(arr){
 }
 
 function getAllSpCats(){
-  const extra = loadUserSpCats();
+  // user categories are stored in localStorage; make sure default categories stay language-aware
+  let extra = loadUserSpCats();
+
+  try{
+    const defaultIds = new Set((DEFAULT_SP_CATS||[]).map(c=>String(c.id)));
+    const known = {
+      food:   ['Продукты','Produkty','Food','Продукти'],
+      fuel:   ['Топливо','Paliwo','Fuel','Паливо'],
+      home:   ['Дом','Dom','Home','Дім'],
+      subs:   ['Подписки','Subskrypcje','Subscriptions','Підписки'],
+      other:  ['Другое','Inne','Other','Інше'],
+      salary: ['Зарплата','Wynagrodzenie','Salary','Зарплата']
+    };
+    extra = (Array.isArray(extra) ? extra : []).filter(c=>{
+      const id = String((c && c.id) || '');
+      if(!id) return false;
+      if(!defaultIds.has(id)) return true;
+      const lbl = String((c && c.label) || '').trim();
+      if(!lbl) return false;
+      const list = known[id] || [];
+      // if the label equals one of the default translations, drop override and use i18n labelKey
+      return !list.includes(lbl);
+    });
+  }catch(_e){}
+
   const byId = {};
-  DEFAULT_SP_CATS.forEach(c=>byId[c.id]=c);
-  extra.forEach(c=>byId[c.id]=c);
+  (DEFAULT_SP_CATS||[]).forEach(c=>byId[c.id]=c);
+  (extra||[]).forEach(c=>byId[c.id]=c);
   return Object.values(byId);
 }
 
@@ -1259,12 +1302,21 @@ function getCatById(id){
   const cats = getAllSpCats();
   return cats.find(c=>String(c.id)===String(id)) || null;
 }
+function resolveSpCatLabel(cat){
+  if(!cat) return '';
+  if(cat.labelKey){
+    const v = TT(cat.labelKey);
+    if(v && v !== cat.labelKey) return v;
+  }
+  return cat.label || cat.id || '';
+}
+
 function formatCatLabel(id){
   if(!id) return "—";
   const c = getCatById(id);
   if(!c) return id;
   const em = c.emoji || "📦";
-  const lbl = c.label || id;
+  const lbl = resolveSpCatLabel(c) || id;
   return `${em} ${lbl}`;
 }
 
@@ -1274,9 +1326,9 @@ function fillQuickCashCat(){
   const current = sel.value || "";
   const cats = getAllSpCats();
   sel.innerHTML = '';
-  sel.appendChild(new Option("Категория", ""));
+  sel.appendChild(new Option(TT("cash.opt_category", null, "Категория"), ""));
   cats.forEach(c=>{
-    sel.appendChild(new Option(`${c.emoji||"📦"} ${c.label||c.id}`, c.id));
+    sel.appendChild(new Option(`${c.emoji||"📦"} ${resolveSpCatLabel(c)||c.id}`, c.id));
   });
   sel.value = current;
 }
@@ -1457,10 +1509,10 @@ function runCsvMapWizard(header){
     "Колонки:\n" + list
   );
 
-  const dateIdx = Number(prompt("Номер колонки ДАТЫ:\n\n" + list, "0"));
-  const amountIdx = Number(prompt("Номер колонки СУММЫ:\n\n" + list, "1"));
-  const descIdx = Number(prompt("Номер колонки ОПИСАНИЯ (если нет — оставь пустым):\n\n" + list, "2"));
-  const cpIdx = Number(prompt("Номер колонки КОНТРАГЕНТА (если нет — оставь пустым):\n\n" + list, "3"));
+  const dateIdx = Number(prompt(TT("prompts.col_date", {list:list}, "Номер колонки ДАТЫ:\n\n{list}"), "0"));
+  const amountIdx = Number(prompt(TT("prompts.col_amount", {list:list}, "Номер колонки СУММЫ:\n\n{list}"), "1"));
+  const descIdx = Number(prompt(TT("prompts.col_desc2", {list:list}, "Номер колонки ОПИСАНИЯ (если нет — оставь пустым):\n\n{list}"), "2"));
+  const cpIdx = Number(prompt(TT("prompts.col_counterparty2", {list:list}, "Номер колонки КОНТРАГЕНТА (если нет — оставь пустым):\n\n{list}"), "3"));
 
   if(Number.isNaN(dateIdx) || Number.isNaN(amountIdx)){
     throw new Error("Wizard cancelled");
@@ -1836,7 +1888,7 @@ function buildBillsPreviewText(rows){
 
 function confirmBillsImport(rows){
   const preview = buildBillsPreviewText(rows);
-  return confirm(preview + "\n\nИмпортировать эти фактуры?");
+  return confirm(TT("dialogs.import_invoices_confirm", {preview: preview}, preview + "\n\nИмпортировать эти фактуры?"));
 }
 
 // Роутер фактур: используем твой общий импорт файлов
@@ -1845,7 +1897,7 @@ async function importBillsByFile(f){
   const MAX_IMPORT_MB = 5;
   const MAX_IMPORT_BYTES = MAX_IMPORT_MB * 1024 * 1024;
   if(f && f.size && f.size > MAX_IMPORT_BYTES){
-    alert("Файл слишком большой для MVP-импорта (" + MAX_IMPORT_MB + "MB). Рекомендуем CSV.");
+    alert(TT("alerts.file_too_big_mvp_short", {mb: MAX_IMPORT_MB}, "Файл слишком большой для MVP-импорта ({mb}MB). Рекомендуем CSV."));
     return [];
   }
 
@@ -1858,7 +1910,7 @@ async function importBillsByFile(f){
   const name = String(f?.name || "").toLowerCase();
   if(name.endsWith(".xlsx") || name.endsWith(".xls")){
     if(typeof XLSX === "undefined"){
-      alert("XLSX не поддерживается в этой сборке (библиотека не подключена).");
+      alert(TT("alerts.xlsx_not_supported", null, "XLSX не поддерживается в этой сборке (библиотека не подключена)."));
       return [];
     }
     const buf = await f.arrayBuffer();
@@ -2105,10 +2157,10 @@ function renderSpendingFilters(activeId){
   const wrap = document.getElementById('spendingFilters');
   if(!wrap) return;
   const cats = getAllSpCats();
-  let html = '<button type="button" class="spFilterBtn'+(!activeId?' active':'')+'" data-cat="">Все</button>';
+  let html = '<button type="button" class="spFilterBtn'+(!activeId?' active':'')+'" data-cat="">'+TT('spending.filter_all', null, 'All')+'</button>';
   cats.forEach(c=>{
     html += '<button type="button" class="spFilterBtn'+(activeId===c.id?' active':'')+'" data-cat="'+c.id+'">'+
-      '<span class="emoji">'+(c.emoji||'📦')+'</span><span>'+c.label+'</span></button>';
+      '<span class="emoji">'+(c.emoji||'📦')+'</span><span>'+(resolveSpCatLabel(c)||c.id)+'</span></button>';
   });
   wrap.innerHTML = html;
   wrap.querySelectorAll('.spFilterBtn').forEach(btn=>{
@@ -2563,7 +2615,20 @@ function initSpendingUI(){
   // Manager actions via delegation
   if(!window._otdSpCatMgrDelegated){
     window._otdSpCatMgrDelegated = true;
-    document.addEventListener('click', (e)=>{
+    
+
+  // Keyboard: go home from brand title (Enter/Space)
+  const brandHomeKey = $id('brandHome');
+  if(brandHomeKey){
+    brandHomeKey.addEventListener('keydown', (e)=>{
+      if(e.key==='Enter' || e.key===' '){
+        e.preventDefault();
+        if(window.appGoHome) window.appGoHome();
+      }
+    });
+  }
+
+document.addEventListener('click', (e)=>{
     const b = e.target.closest('button');
     if(!b) return;
     const act = b.getAttribute('data-act');
@@ -2773,14 +2838,14 @@ if(btn.id==='spOpenListBtn'){
 
   }, true);
 
-  // Default screen: Home (tiles). Open the panel only from the "Money & payments" tile.
+  // Default screen: Home (tiles). Start on Home after load.
   window.addEventListener('load', () => {
     try {
-      if (window.appShowHome) window.appShowHome();
-      else if (window.appGoSection) window.appGoSection('pulpit');
+      // Always start on Home (tiles) after login/refresh
+      if (window.appGoHome) window.appGoHome();
+      else if (window.appGoSection) window.appGoSection('pulpit'); // fallback
     } catch (_) {}
   }, { once: true });
-
 })();
 
 /* ==== STATE ==== */
@@ -3516,121 +3581,6 @@ function acceptSafe(){
   render(); saveLocal(); pushState();
 }
 
-/* ==== OCR IMPORT (images) ==== */
-async function recognizeImage(file){
-  const { data:{ text } } = await Tesseract.recognize(file, 'pol+eng+rus', { logger:()=>{} });
-  return text.replace(/\u00A0/g,' ').replace(/\r/g,'').replace(/\t/g,' ').replace(/ +/g,' ').trim();
-}
-async function ocrBankFiles(files){
-  for (const f of files){
-    try{
-      thumb($id('txLastThumb'), f);
-      const text = await recognizeImage(f);
-      const rows = parseBankOCR(text);
-      if (rows.length){
-        tx = tx.concat(rows);
-      }
-    }catch(e){
-      console.warn('OCR bank error', e);
-    }
-  }
-
-  // даём транзакциям нормальные ID
-  if (typeof ensureTxIds === "function") {
-    ensureTxIds();
-  }
-
-  // пересчитываем счета по транзакциям
-  if (typeof inferAccounts === "function") {
-    inferAccounts();
-  }
-
-  // чистим мусорные авто-счета вида tx-2025-...
-  if (typeof normalizeAutoAccountsAfterImport === "function") {
-    normalizeAutoAccountsAfterImport();
-  }
-
-  render();
-  saveLocal();
-  pushState();
-}
-
-function parseBankOCR(text){
-  const lines = text.split(/\n+/).map(s=>s.trim()).filter(Boolean);
-  const out = [];
-  let curDate = today();
-  for(let i=0;i<lines.length;i++){
-    const L = lines[i];
-    // Dates like "19 октября 2025", "19 października 2025", "2025-10-19"
-    const d1=L.match(/(\d{1,2}\s+[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻżА-Яа-яё]+\s+\d{4})/);
-    const d2=L.match(/(\d{4}-\d{2}-\d{2})/);
-    if(d1||d2){ curDate = toISO((d1?d1[1]:d2[1])); continue; }
-
-    // Amount + sign rules
-    const amtM = L.match(/([()−\-+]*\s*\d{1,3}(?:[\s ]\d{3})*(?:[.,]\d{2})?)/);
-    if(amtM){
-      const raw = amtM[1];
-      const cur = detectCurrency(L);
-      const n = asNum(raw);
-      if(n!==0){
-        const negHints = /(−|-|\(|obciąż|debet|wypłat|withdraw|charge)/i.test(L);
-        const posHints = /(\+|uznanie|wpływ|przych|credit)/i.test(L);
-        let sign = 0;
-        if(negHints && !posHints) sign = -1;
-        else if(posHints && !negHints) sign = +1;
-        else if(/[()]/.test(raw) || /−|-/.test(raw)) sign = -1;
-        else if(/\+/.test(raw)) sign = +1;
-        else sign = +1; // если нет минуса — считаем как приход
-        const amt = sign * Math.abs(n);
-        const counterparty = (lines[i-1] && !/(PLN|EUR|USD|zł|zl)/i.test(lines[i-1]) ? lines[i-1] : L.replace(raw,'')).toString().trim();
-        out.push({
-          "Data księgowania": curDate || today(),
-          "ID transakcji": 'ocr-'+Date.now()+'-'+out.length,
-          "ID konta": 'UNKNOWN',
-          "Kontrahent": counterparty.replace(/[•·]/g,'').slice(0,120),
-          "Tytuł/Opis": L.slice(0,220),
-          "Kwota": amt.toFixed(2),
-          "Waluta": cur,
-          "Status transakcji":""
-        });
-      }
-    }
-  }
-  return out;
-}
-function parseInvoiceOCR(text){
-  const norm = text.replace(/\n+/g,'\n');
-  const get = (re)=>{ const m=norm.match(re); return m?m[1].trim():''; };
-  // invoice number: классика + общий шаблон вида 147/CS-FR/2025
-  const invClassic = get(/\bFaktura(?:\s*VAT)?\s*(?:numer|nr)?[:\s]*([A-Za-z0-9\-\/\.]+)/i) || get(/\bInvoice\s*(?:No|Number)[:\s]*([A-Za-z0-9\-\/\.]+)/i);
-  const invPattern = (norm.match(/(\d{1,6}\/[A-Z0-9][A-Z0-9\-]*\/\d{4})/)||[])[1] || '';
-  const inv = (invClassic || invPattern || '').replace(/[^\w\/\-\.]/g,'');
-  // supplier (продавец/виставивший)
-  let supplier = get(/Sprzedawca[:\s\n]+([^\n]+)(?:\n|$)/i) || get(/Dostawca[:\s\n]+([^\n]+)(?:\n|$)/i) || get(/Issuer|Seller[:\s\n]+([^\n]+)(?:\n|$)/i);
-  if(!supplier){
-    supplier = norm.split('\n').find(x=>/[A-ZĄĆĘŁŃÓŚŹŻ]{3,}/.test(x))||'';
-  }
-  // due / issue dates
-  const due = toISO(get(/Termin\s*(?:płatności|zapłaty)[:\s]+([^\n]+)/i)) || toISO(get(/Payment\s*(?:due|date)[:\s]+([^\n]+)/i));
-  const issue = toISO(get(/Data\s*wystawienia[:\s]+([^\n]+)/i)) || toISO(get(/Issue\s*date[:\s]+([^\n]+)/i));
-  // total
-  let totalTxt = get(/Do\s*zapłaty[:\s]+([^\n]+)/i) || get(/Razem\s*do\s*zapłaty[:\s]+([^\n]+)/i);
-  if(!totalTxt){
-    const bruttoLine = norm.match(/(?:Wartość|Razem)\s*brutto[^\n]*?(\d{1,3}(?:[\s ]\d{3})*(?:[.,]\d{2}))/i);
-    if(bruttoLine) totalTxt = bruttoLine[1];
-  }
-  const currency = detectCurrency(totalTxt||norm);
-  const total = Math.abs(asNum(totalTxt));
-  return [{
-    "Termin płatności": (due || issue || today()),
-    "Numer faktury": (inv || ('INV-'+Date.now())),
-    "Dostawca": supplier.slice(0,120),
-    "Kwota do zapłaty": total ? total.toFixed(2) : '0.00',
-    "Waluta": currency,
-    "Status faktury": "do zapłaty"
-  }];
-}
-
 /* ==== PERSIST LOCAL ==== */
 /* ==== P0 RELIABILITY: namespaced localStorage + safe JSON backup ==== */
 function _otdSafeEmailKey(email){
@@ -4087,7 +4037,7 @@ async function _otdAddClientWorkspace(){
 
     const started = await _otdStartAccountantProTrial(desired);
     if (!started.ok) {
-      alert('Не удалось включить PRO trial: ' + (started.error || 'unknown'));
+      alert(TT('alerts.pro_trial_enable_failed', {err: (started.error || 'unknown')}, 'Не удалось включить PRO trial: {err}'));
       return;
     }
   }
@@ -4112,12 +4062,12 @@ function _otdRemoveCurrentWorkspace(){
   const { list, current, role } = _otdEnsureWorkspaces();
   if (role !== 'accountant') return;
   if (!current) return;
-  if ((list || []).length <= 1) return alert('Нельзя удалить последнего клиента.');
+  if ((list || []).length <= 1) return alert(TT('alerts.cannot_delete_last_client', null, 'Нельзя удалить последнего клиента.'));
 
   const curObj = (list || []).find(w => w && w.id === current);
   const name = (curObj && curObj.name) ? curObj.name : current;
 
-  const ok = confirm('Удалить клиента "' + name + '"? Данные этого клиента будут стерты локально.');
+  const ok = confirm(TT("dialogs.delete_client", {name:name}, 'Удалить клиента "{name}"? Данные этого клиента будут стерты локально.'));
   if (!ok) return;
 
   const nextList = (list || []).filter(w => w && w.id !== current);
@@ -4266,7 +4216,7 @@ function _otdAskExportPeriod(){
   if(raw === null) return null;
   const p = _otdParsePeriodInput(raw);
   if(!p){
-    alert("Invalid period. Use YYYY-MM or YYYY-MM-DD..YYYY-MM-DD");
+    alert(TT("alerts.invalid_period", null, "Неверный период. Используй YYYY-MM или YYYY-MM-DD..YYYY-MM-DD"));
     return null;
   }
   return p;
@@ -4290,10 +4240,10 @@ function exportBookCSV(){
   const period = _otdAskExportPeriod();
   if(!period) return;
   const rows=bookRows().filter(r=>_otdInPeriod(r.date, period));
-  if(!rows.length){ alert('No data in this period.'); return; }
+  if(!rows.length){ alert(TT('alerts.no_data_period', null, 'Нет данных за этот период.')); return; }
   const head=['date','source','account','counterparty','description','amount','currency','doc_type','doc_no','doc_date','due_date','status'];
   const rowsP = rows.filter(r=>_otdInPeriod(r.date, period));
-  if(!rowsP.length){ alert('No data in this period.'); return; }
+  if(!rowsP.length){ alert(TT('alerts.no_data_period', null, 'Нет данных за этот период.')); return; }
   const csv=[head.join(',')].concat(rowsP.map(r=>[
     r.date,r.source,r.account,(r.counterparty||'').replace(/,/g,' '),(r.desc||'').replace(/,/g,' '),
     (r.amount||0).toFixed(2),r.currency,r.type||'',r.no||'',r.doc_date||'',r.due||'',(r.status||'').replace(/,/g,' ')
@@ -4316,7 +4266,7 @@ function exportTxCSV(){
     status: getVal(r,["Status transakcji","status"])||''
   }));
   const rowsP = rows.filter(r=>_otdInPeriod(r.date, period));
-  if(!rowsP.length){ alert('No data in this period.'); return; }
+  if(!rowsP.length){ alert(TT('alerts.no_data_period', null, 'Нет данных за этот период.')); return; }
   const csv=[head.join(',')].concat(rowsP.map(r=>[
     r.date,
     r.account,
@@ -4343,7 +4293,7 @@ function exportBillsCSV(){
     status: getVal(b,["Status faktury","Status"])||''
   }));
   const rowsP = rows.filter(r=>_otdInPeriod(r.date, period));
-  if(!rowsP.length){ alert('No data in this period.'); return; }
+  if(!rowsP.length){ alert(TT('alerts.no_data_period', null, 'Нет данных за этот период.')); return; }
   const csv=[head.join(',')].concat(rowsP.map(r=>[
     r.due,
     r.no,
@@ -4368,7 +4318,7 @@ function exportCashCSV(){
     comment: k.comment||''
   }));
   const rowsP = rows.filter(r=>_otdInPeriod(r.date, period));
-  if(!rowsP.length){ alert('No data in this period.'); return; }
+  if(!rowsP.length){ alert(TT('alerts.no_data_period', null, 'Нет данных за этот период.')); return; }
   const csv=[head.join(',')].concat(rowsP.map(r=>[
     r.date,
     r.type,
@@ -4926,7 +4876,7 @@ function editRow(kind,id){
   if(kind==='kasa'){
     const idx=kasa.findIndex(x=> String(x.id)===String(id)); if(idx<0) return;
     const k=kasa[idx];
-    const n=prompt("Сумма:", k.amount); if(n===null) return;
+    const n=prompt(TT("prompts.amount", null, "Сумма:"), k.amount); if(n===null) return;
     const c=prompt("Комментарий:", k.comment||""); if(c===null) return;
     kasa[idx].amount=asNum(n); kasa[idx].comment=c;
     saveLocal(); render(); pushState(); return;
@@ -4934,10 +4884,10 @@ function editRow(kind,id){
   if(kind==='tx'){
     const idx=tx.findIndex(x=> (getVal(x,["ID transakcji","ID","id"])||"")===String(id)); if(idx<0) return;
     const r=tx[idx];
-    const d=prompt("Дата (YYYY-MM-DD):", toISO(getVal(r,["Data księgowania","date"])||today())); if(d===null) return;
-    const a=prompt("Сумма:", getVal(r,["Kwota","Kwota_raw","amount"])||""); if(a===null) return;
-    const cp=prompt("Контрагент:", getVal(r,["Kontrahent","Counterparty"])||""); if(cp===null) return;
-    const desc=prompt("Описание:", getVal(r,["Tytuł/Opis","Opis","title"])||""); if(desc===null) return;
+    const d=prompt(TT("prompts.date", null, "Дата (YYYY-MM-DD):"), toISO(getVal(r,["Data księgowania","date"])||today())); if(d===null) return;
+    const a=prompt(TT("prompts.amount", null, "Сумма:"), getVal(r,["Kwota","Kwota_raw","amount"])||""); if(a===null) return;
+    const cp=prompt(TT("prompts.counterparty", null, "Контрагент:"), getVal(r,["Kontrahent","Counterparty"])||""); if(cp===null) return;
+    const desc=prompt(TT("prompts.description", null, "Описание:"), getVal(r,["Tytuł/Opis","Opis","title"])||""); if(desc===null) return;
 
     r["Data księgowania"]=toISO(d)||today();
     r["Kwota"]=asNum(a).toFixed(2);
@@ -4950,9 +4900,9 @@ function editRow(kind,id){
   if(kind==='bill'){
     const idx=bills.findIndex(x=> (getVal(x,["Numer faktury","Numer фактуры","Invoice number"])||"")===String(id)); if(idx<0) return;
     const r=bills[idx];
-    const due=prompt("Срок (YYYY-MM-DD):", toISO(getVal(r,["Termin płatności","Termin"])||today())); if(due===null) return;
-    const amt=prompt("Сумма к оплате:", getVal(r,["Kwota do zapłaty","Kwota"])||""); if(amt===null) return;
-    const sup=prompt("Поставщик/контрагент:", getVal(r,["Dostawca","Supplier"])||""); if(sup===null) return;
+    const due=prompt(TT("prompts.due_date", null, "Срок (YYYY-MM-DD):"), toISO(getVal(r,["Termin płatności","Termin"])||today())); if(due===null) return;
+    const amt=prompt(TT("prompts.amount_to_pay", null, "Сумма к оплате:"), getVal(r,["Kwota do zapłaty","Kwota"])||""); if(amt===null) return;
+    const sup=prompt(TT("prompts.supplier", null, "Поставщик/контрагент:"), getVal(r,["Dostawca","Supplier"])||""); if(sup===null) return;
 
     r["Termin płatności"]=toISO(due)||today();
     r["Kwota do zapłaty"]=asNum(amt).toFixed(2);
@@ -4966,7 +4916,7 @@ function markBillPaid(id){
   const idx=bills.findIndex(x=> (getVal(x,["Numer faktury","Numer фактуры","Invoice number"])||"")===String(id));
   if(idx<0) return;
   const r=bills[idx];
-  const ok = confirm("Отметить эту фактуру как оплачено вручную?");
+  const ok = confirm(TT("dialogs.mark_invoice_paid", null, "Отметить эту фактуру как оплачено вручную?"));
   if(!ok) return;
 
   r["Status faktury"] = "opłacone";
@@ -4992,59 +4942,6 @@ document.addEventListener('click',(e)=>{
   if(act==='cat') openCatModal(kind,id);
   if(act==='pay' && kind==='bill') markBillPaid(id);
 });
-
-function thumb(el,file){ const img=el; if(!img) return; img.src=URL.createObjectURL(file); img.style.display='inline-block'; }
-
-async function ocrBankFiles(files){
-  for(const f of files){
-    try{
-      thumb($id('txLastThumb'), f);
-      const text = await recognizeImage(f);
-      const rows = parseBankOCR(text);
-      if(rows.length){ tx = tx.concat(rows); }
-    }catch(e){ console.warn('OCR bank error', e); }
-  }
-  inferAccounts(); render(); saveLocal(); pushState();
-}
-
-async function ocrInvoiceFiles(files){
-  for(const f of files){
-    try{
-      const text = await recognizeImage(f);
-      const rows = parseInvoiceOCR(text);
-      if(rows.length){ bills = bills.concat(rows); }
-    }catch(e){ console.warn('OCR invoice error', e); }
-  }
-  render(); saveLocal(); pushState();
-}
-
-/* ==== DOM READY ==== */
-// Переход на домашний экран
-window.appShowHome = function () {
-  try {
-    const homeEl = document.getElementById('homeScreen');
-    const topBar = document.querySelector('.top');
-
-    // Скрываем все разделы
-    document.querySelectorAll('.section').forEach(sec => {
-      sec.classList.remove('active');
-      sec.style.display = 'none';
-    });
-
-    // Показываем home
-    if (homeEl) {
-      homeEl.style.display = 'block';
-    }
-
-    // Верхняя панель прячется
-    if (topBar) {
-      topBar.classList.remove('hidden');
-    }
-  } catch (e) {
-    console.warn('appShowHome error', e);
-  }
-};
-
 
 // Переход к конкретному разделу
 window.appGoSection = function (secId) {
@@ -5099,6 +4996,33 @@ window.appGoSection = function (secId) {
     if (topBar) topBar.classList.remove('hidden');
   }
 };
+
+// Переход на главную (домашний экран с плитками)
+window.appGoHome = function () {
+  const homeEl = document.getElementById('homeScreen');
+  const topBar = document.querySelector('.top');
+
+  // Показываем верхнюю панель
+  if (topBar) topBar.classList.remove('hidden');
+
+  // Скрываем все разделы
+  document.querySelectorAll('.section').forEach(s => {
+    s.classList.remove('active');
+    s.style.display = 'none';
+  });
+
+  // Показываем домашку
+  if (homeEl) homeEl.style.display = 'block';
+
+  // Снимаем подсветку табов (если есть)
+  document.querySelectorAll('.tabs .tab').forEach(x => x.classList.remove('active'));
+
+  try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch(_e){ window.scrollTo(0,0); }
+};
+// Backward compatibility: some older code used appShowHome
+try { if (!window.appShowHome && window.appGoHome) window.appShowHome = window.appGoHome; } catch(_e) {}
+
+
 
    
 
@@ -5174,12 +5098,12 @@ async function syncUserStatus(){
             bar.innerHTML = `
               <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
                 <div style="min-width:220px">
-                  <div style="font-weight:800">Приглашение от бухгалтера</div>
+                  <div style="font-weight:800">${TT('documents.invite_title', null, 'Приглашение от бухгалтера')}</div>
                   <div style="opacity:.8;font-size:12px;margin-top:4px">${(inv && inv.accountantEmail) ? inv.accountantEmail : ''}</div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center">
-                  <button id="otdInvAccept" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">Принять</button>
-                  <button id="otdInvDecline" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-weight:700;cursor:pointer">Отклонить</button>
+                  <button id="otdInvAccept" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">${TT('documents.btn_accept', null, 'Принять')}</button>
+                  <button id="otdInvDecline" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-weight:700;cursor:pointer">${TT('documents.btn_decline', null, 'Отклонить')}</button>
                 </div>
               </div>
             `;
@@ -5215,7 +5139,7 @@ async function syncUserStatus(){
             btn.id = 'openClientRequestsBtn';
             btn.className = 'btn secondary';
             btn.type = 'button';
-            btn.textContent = 'Запросы бухгалтера';
+            btn.textContent = TT('documents.req_btn', null, 'Запросы бухгалтера');
             btn.style.marginLeft = '8px';
             if (anchor && anchor.parentNode) {
               // try to place near Vault button
@@ -5247,11 +5171,11 @@ async function syncUserStatus(){
                 <div class="card" style="padding:14px;border-radius:16px;width:100%;max-height:calc(100vh - 32px);display:flex;flex-direction:column">
                   <div class="row between" style="gap:10px;align-items:center;flex-wrap:wrap">
                     <div>
-                      <div style="font-weight:900;font-size:16px">Запросы от бухгалтера</div>
-                      <div class="muted small" style="margin-top:2px">Прикрепляй файлы к конкретному запросу.</div>
+                      <div style="font-weight:900;font-size:16px">${TT('documents.req_title', null, 'Запросы от бухгалтера')}</div>
+                      <div class="muted small" style="margin-top:2px">${TT('documents.req_desc', null, 'Прикрепляй файлы к конкретному запросу.')}</div>
                     </div>
                     <div class="row" style="gap:8px;align-items:center">
-                      <button id="clientRequestsClose" class="btn secondary" type="button">Закрыть</button>
+                      <button id="clientRequestsClose" class="btn secondary" type="button">${TT('buttons.close', null, 'Закрыть')}</button>
                     </div>
                   </div>
                   <div id="clientReqList" style="margin-top:12px;overflow:auto;flex:1;min-height:180px;padding-right:6px"></div>
@@ -5334,7 +5258,7 @@ async function syncUserStatus(){
           bar.style.padding = '12px';
           bar.style.boxShadow = '0 12px 40px rgba(0,0,0,.35)';
 
-          const title = payload && payload.title ? payload.title : 'Новый запрос от бухгалтера';
+          const title = payload && payload.title ? payload.title : TT('documents.req_bar_title', {n:1}, 'Новый запрос от бухгалтера (1)');
           const sub = payload && payload.sub ? payload.sub : '';
 
           bar.innerHTML = `
@@ -5344,8 +5268,8 @@ async function syncUserStatus(){
                 ${sub ? `<div style="opacity:.82;font-size:12px;margin-top:4px">${sub}</div>` : ''}
               </div>
               <div style="display:flex;gap:8px;align-items:center">
-                <button id="otdReqOpen" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:900;cursor:pointer">Открыть</button>
-                <button id="otdReqHide" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">Скрыть</button>
+                <button id="otdReqOpen" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:900;cursor:pointer">${TT('documents.req_bar_btn_open', null, 'Открыть')}</button>
+                <button id="otdReqHide" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">${TT('documents.req_bar_btn_hide', null, 'Скрыть')}</button>
               </div>
             </div>
           `;
@@ -5392,11 +5316,12 @@ async function syncUserStatus(){
 
             const first = newOnes[0];
             const sub = [
-              (first && first.month) ? `Месяц: ${first.month}` : '',
-              (newOnes.length > 1) ? `Ещё: ${newOnes.length-1}` : ''
+              (first && first.month) ? TT('documents.req_month', {month:first.month}, `Месяц: ${first.month}`) : '',
+              (newOnes.length > 1) ? TT('documents.req_more', {n:(newOnes.length-1)}, `Ещё: ${newOnes.length-1}`) : ''
             ].filter(Boolean).join(' • ');
 
-            const bar = _otdShowReqBar({ title: `Новый запрос от бухгалтера (${newOnes.length})`, sub });
+            const barTitle = TT('documents.req_bar_title', { n: newOnes.length }, `Новый запрос от бухгалтера (${newOnes.length})`);
+            const bar = _otdShowReqBar({ title: barTitle, sub });
             bar.querySelector('#otdReqOpen')?.addEventListener('click', ()=>{
               try{
                 // mark as seen right away so it doesn't blink forever
@@ -5429,10 +5354,10 @@ async function syncUserStatus(){
 
         const reqParts = (items)=>{
           const parts = [];
-          if (items && items.bank) parts.push('Выписка');
-          if (items && items.invoices) parts.push('Фактуры');
-          if (items && items.receipts) parts.push('Чеки');
-          if (items && items.other) parts.push('Другое: ' + String(items.other).slice(0,80));
+          if (items && items.bank) parts.push(TT('documents.req_part_statement', null, 'Выписка'));
+          if (items && items.invoices) parts.push(TT('documents.req_part_invoices', null, 'Фактуры'));
+          if (items && items.receipts) parts.push(TT('documents.req_part_receipts', null, 'Чеки'));
+          if (items && items.other) parts.push(TT('documents.req_part_other', null, 'Другое') + ': ' + String(items.other).slice(0,80));
           return parts.join(' • ') || '—';
         };
 
@@ -5444,23 +5369,23 @@ async function syncUserStatus(){
 
         async function loadAndRender(focusRid){
           if (!listEl) return;
-          listEl.innerHTML = '<div class="muted small">Загрузка…</div>';
+          listEl.innerHTML = '<div class="muted small">'+TT('documents.req_loading', null, 'Загрузка…')+'</div>';
           try{
             const rr = await fetch('/api/client/requests', { credentials:'include' });
             const js = await rr.json();
             const reqs = (js && js.requests) || [];
             if (!reqs.length){
-              listEl.innerHTML = '<div class="hintBox">Пока нет запросов от бухгалтера.</div>';
+              listEl.innerHTML = '<div class="hintBox">'+TT('documents.req_empty', null, 'Пока нет запросов от бухгалтера.')+'</div>';
               return;
             }
             listEl.innerHTML = reqs.map(r=>{
               const when = (r.month ? r.month : '—');
               const created = (r.createdAt ? new Date(r.createdAt).toLocaleString() : '');
               const stRaw = String(r.status || 'open');
-              const st = (stRaw === 'received') ? 'Отправлено'
-                : (stRaw === 'approved') ? 'Принято'
-                : (stRaw === 'rejected') ? 'Отклонено'
-                : 'Ожидает';
+              const st = (stRaw === 'received') ? TT('documents.req_status_sent', null, 'Отправлено')
+                : (stRaw === 'approved') ? TT('documents.req_status_approved', null, 'Принято')
+                : (stRaw === 'rejected') ? TT('documents.req_status_rejected', null, 'Отклонено')
+                : TT('documents.req_status_pending', null, 'Ожидает');
               const dueTxt = r.dueAt ? new Date(r.dueAt).toLocaleDateString() : '';
               const isOverdue = !!(r.dueAt && stRaw !== 'approved' && Date.now() > new Date(r.dueAt).getTime());
 
@@ -5469,10 +5394,10 @@ async function syncUserStatus(){
                             const filesOpen = (files.length <= 2) ? ' open' : '';
               const fileHtml = files.length
                 ? `<details style="margin-top:8px"${filesOpen}>
-                     <summary class="muted small" style="cursor:pointer;font-weight:800;list-style:none">Файлы (${files.length})</summary>
+                     <summary class="muted small" style="cursor:pointer;font-weight:800;list-style:none">${TT('documents.req_files', {n: files.length}, 'Файлы ('+files.length+')')}</summary>
                      <div class="muted small" style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
                        ${files.slice(0,6).map(f=>`<div>• <a href="${esc(f.fileUrl)}" target="_blank" rel="noopener">${esc(f.fileName || 'download')}</a></div>`).join('')}
-                       ${files.length>6 ? `<div class="muted small">… и ещё ${files.length-6}</div>` : ''}
+                       ${files.length>6 ? `<div class="muted small">${TT('documents.req_more_files', {n: files.length-6}, '… и ещё '+(files.length-6))}</div>` : ''}
                      </div>
                    </details>`
                 : '';
@@ -5484,20 +5409,20 @@ async function syncUserStatus(){
                       <div style="font-weight:900">${esc(when)}</div>
                       <div class="muted" style="margin-top:4px">${esc(reqParts(r.items||{}))}</div>
                       ${r.note ? `<div class="muted small" style="margin-top:6px">${esc(r.note)}</div>` : ''}
-                      ${(stRaw==='rejected' && r.decisionNote) ? `<div class="muted small" style="margin-top:6px"><b>Бухгалтер:</b> ${esc(r.decisionNote)}</div>` : ''}
-                      ${(stRaw==='approved') ? `<div class="muted small" style="margin-top:6px"><b>Бухгалтер:</b> принято</div>` : ''}
+                      ${(stRaw==='rejected' && r.decisionNote) ? `<div class="muted small" style="margin-top:6px"><b>${TT('common.accountant', null, 'Бухгалтер')}:</b> ${esc(r.decisionNote)}</div>` : ''}
+                      ${(stRaw==='approved') ? `<div class="muted small" style="margin-top:6px"><b>${TT('common.accountant', null, 'Бухгалтер')}:</b> ${TT('documents.req_status_approved', null, 'Принято').toLowerCase()}</div>` : ''}
                       ${fileHtml}
                     </div>
                     <div class="muted small" style="text-align:right">
                       <div class="clientReqStatus" style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;border:1px solid rgba(71,181,0,.35);background:rgba(71,181,0,.10);font-weight:900">${esc(st)}</div>
-                      ${dueTxt ? `<div class="muted small" style="margin-top:4px">Срок: ${esc(dueTxt)}${isOverdue ? ' • <span style="color:#ff5050;font-weight:800">Просрочено</span>' : ''}</div>` : ''}
+                      ${dueTxt ? `<div class="muted small" style="margin-top:4px">${TT('documents.req_due', null, 'Срок')}: ${esc(dueTxt)}${isOverdue ? ' • <span style="color:#ff5050;font-weight:800">' + TT('documents.req_overdue', null, 'Просрочено') + '</span>' : ''}</div>` : ''}
                     </div>
                   </div>
                   <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
                     ${showAttach ? `
-                      <button class="btn secondary" type="button" data-attach="${esc(r.id)}">С телефона</button>
-                      <button class="btn secondary" type="button" data-attach-vault="${esc(r.id)}" data-month="${esc(when)}">Из “Мои документы”</button>
-                    ` : `<div class="muted small">Запрос закрыт.</div>`}
+                      <button class="btn secondary" type="button" data-attach="${esc(r.id)}">${TT('documents.req_btn_from_phone', null, 'С телефона')}</button>
+                      <button class="btn secondary" type="button" data-attach-vault="${esc(r.id)}" data-month="${esc(when)}">${TT('documents.req_btn_from_vault', null, 'Из “Мои документы”')}</button>
+                    ` : `<div class="muted small">${TT('documents.req_closed', null, 'Запрос закрыт.')}</div>`}
                   </div>
                 </div>
               `;
@@ -5523,7 +5448,7 @@ async function syncUserStatus(){
                   await window.OTD_Vault.openPicker({ requestId: rid, suggestedMonth: month });
                   await loadAndRender(rid);
                 } else {
-                  alert('“Мои документы” ещё не готовы в этом билде. Обнови страницу.');
+                  alert(TT('documents.req_vault_not_ready', null, '“Мои документы” ещё не готовы в этом билде. Обнови страницу.'));
                 }
               });
             });
@@ -5536,7 +5461,7 @@ async function syncUserStatus(){
             }
 
           } catch(e){
-            listEl.innerHTML = '<div class="hintBox">Не удалось загрузить запросы.</div>';
+            listEl.innerHTML = '<div class="hintBox">'+TT('documents.req_failed', null, 'Не удалось загрузить запросы.')+'</div>';
           }
         }
 
@@ -5869,9 +5794,8 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     byId('docTxImgBtn')?.addEventListener('click', ()=> byId('txImage')?.click());
     byId('docBillCsvBtn')?.addEventListener('click', ()=> byId('billFile')?.click());
     byId('docBillImgBtn')?.addEventListener('click', ()=> byId('billImage')?.click());
-    byId('docCashImgBtn')?.addEventListener('click', ()=> byId('cashImage')?.click());
-
-    // Docs: accountant tools (no share links)
+    byId('docCashImgBtn')?.addEventListener('click', ()=> byId('cashPhoto')?.click());
+// Docs: accountant tools (no share links)
     byId('docExportTxBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportTxCSV(); }catch(err){ console.warn(err); } });
     byId('docExportBillsBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportBillsCSV(); }catch(err){ console.warn(err); } });
     byId('docExportBookBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportBookCSV(); }catch(err){ console.warn(err); } });
@@ -6104,12 +6028,12 @@ byId('aiChatList')?.addEventListener('click', (e)=>{
     const meta = getChatsMeta();
     const i = meta.findIndex(x=>x.id===id);
     const cur = i>=0 ? (meta[i].title||'Chat') : 'Chat';
-    const nn = prompt('Название чата', cur);
+    const nn = prompt(TT("prompts.chat_name", null, "Название чата"), cur);
     if(nn && i>=0){ meta[i].title = String(nn).trim().slice(0,60) || cur; meta[i].updatedAt=Date.now(); saveChatsMeta(meta); renderChatList(); }
     return;
   }
   if(act==='del'){
-    const ok = confirm('Удалить чат? (только локально)');
+    const ok = confirm(TT('dialogs.delete_chat', null, 'Удалить чат? (только локально)'));
     if(!ok) return;
     const meta = getChatsMeta().filter(x=>x.id!==id);
     saveChatsMeta(meta);
@@ -6152,7 +6076,22 @@ const renderChat = ()=>{
 
   host.innerHTML = msgs.map(m=>{
     const role = (m.role === 'user') ? 'user' : 'bot';
-    return '<div class="aiMsg '+role+'"><div class="aiBubble">'+escHtml(m.text)+'</div></div>';
+    const atts = Array.isArray(m.attachments) ? m.attachments : [];
+    let attHtml = '';
+    if(atts.length){
+      const items = atts.map(a=>{
+        const url = String(a.fileUrl || a.url || '').trim();
+        const name = String(a.fileName || a.name || 'file').trim();
+        const mime = String(a.fileMime || a.mime || '').toLowerCase();
+        const safeUrl = url.replace(/"/g,'&quot;');
+        const thumb = (mime.startsWith('image/') && url)
+          ? '<img class="aiAttachThumb" src="'+safeUrl+'" alt=""/>'
+          : '<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid #242b30;background:#0f1418;font-size:14px">📎</div>';
+        return '<a class="aiAttachItem aiAttachLink" href="'+safeUrl+'" target="_blank" rel="noopener">'+thumb+'<div class="aiAttachName">'+escHtml(name)+'</div></a>';
+      }).join('');
+      attHtml = '<div class="aiAttachList">'+items+'</div>';
+    }
+    return '<div class="aiMsg '+role+'"><div class="aiBubble">'+escHtml(m.text||'')+attHtml+'</div></div>';
   }).join('');
   host.scrollTop = host.scrollHeight;
 };
@@ -6167,37 +6106,161 @@ const pushMsg = (role, text)=>{
   renderChat();
 };
 
-// Quick chips -> send
-const quickPairs = [
-  ['aiQSpending','ai.q_spending'],
-  ['aiQWithdraw','ai.q_withdraw'],
-  ['aiQMonth','ai.q_month']
-];
-quickPairs.forEach(([id,key])=>{
-  const btn = byId(id);
-  if(!btn) return;
-  btn.addEventListener('click', ()=>{
-    const inp = byId('aiChatInput');
-    if(!inp) return;
-    let text = tSafe(key, '');
-    if(!text) text = (btn.innerText || '').trim();
-    inp.value = text;
-    byId('aiChatSend')?.click();
-  });
-});
 
+// --- AI chat attachments + voice (MVP: no OCR/AI required) ---
+let __otdAiPendingAtt = [];
+const __otdAiInboxKey = 'otd_ai_inbox_folder_id';
+
+const __otdAiNowMonth = ()=>{
+  try{ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }catch(_){ return ''; }
+};
+
+async function __otdAiEnsureInboxFolder(){
+  try{
+    const cached = localStorage.getItem(__otdAiInboxKey);
+    if(cached) return cached;
+    const name = TT('ai.inbox_name', null, 'AI Inbox');
+    const r = await fetch('/api/docs/folders/create', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name })
+    });
+    const j = await r.json().catch(()=>null);
+    if(r.ok && j && j.success && j.folder && j.folder.id){
+      localStorage.setItem(__otdAiInboxKey, j.folder.id);
+      return j.folder.id;
+    }
+  }catch(_e){}
+  // fallback: use smart folder for current month/other
+  try{
+    const month = __otdAiNowMonth();
+    const r = await fetch('/api/docs/folders/ensure', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ month, category:'other' })
+    });
+    const j = await r.json().catch(()=>null);
+    if(r.ok && j && j.success && j.folder && j.folder.id){
+      return j.folder.id;
+    }
+  }catch(_e){}
+  return '';
+}
+
+function __otdAiRenderAttachRow(){
+  const row = byId('aiAttachRow');
+  if(!row) return;
+  if(!__otdAiPendingAtt.length){
+    row.style.display = 'none';
+    row.innerHTML = '';
+    return;
+  }
+  row.style.display = 'flex';
+  row.innerHTML = __otdAiPendingAtt.map((a, idx)=>{
+    const name = escHtml(String(a.fileName || 'file'));
+    const mime = String(a.fileMime || '').toLowerCase();
+    const status = a.status || 'ready';
+    const badge = status === 'uploading' ? '⏳' : (status === 'error' ? '⚠️' : '✅');
+    const thumb = (mime.startsWith('image/') && a.fileUrl)
+      ? '<img class="aiAttachThumb" src="'+String(a.fileUrl).replace(/"/g,'&quot;')+'" alt=""/>'
+      : '<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid #242b30;background:#0f1418;font-size:14px">📎</div>';
+    return '<div class="aiAttachItem" data-ai-att-idx="'+idx+'">'+thumb+'<div class="aiAttachName">'+badge+' '+name+'</div><button class="btn ghost aiAttachRemove" type="button" data-ai-att-remove="'+idx+'">×</button></div>';
+  }).join('');
+
+  row.querySelectorAll('[data-ai-att-remove]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const i = parseInt(btn.getAttribute('data-ai-att-remove')||'-1',10);
+      if(isNaN(i) || i<0) return;
+      __otdAiPendingAtt.splice(i,1);
+      __otdAiRenderAttachRow();
+    });
+  });
+}
+
+async function __otdAiUploadFileToDocs(file){
+  const MAX = 9.5 * 1024 * 1024;
+  if(!file) return null;
+  if(file.size > MAX){
+    return { ok:false, error: TT('ai.file_too_large', null, 'Файл слишком большой (макс 10MB).') };
+  }
+  const folderId = await __otdAiEnsureInboxFolder();
+  if(!folderId){
+    return { ok:false, error: TT('ai.file_no_folder', null, 'Не смог создать папку для файлов (Docs).') };
+  }
+  const dataUrl = await new Promise((resolve, reject)=>{
+    const fr = new FileReader();
+    fr.onload = ()=> resolve(String(fr.result||''));
+    fr.onerror = ()=> reject(new Error('read_failed'));
+    fr.readAsDataURL(file);
+  });
+
+  const r = await fetch('/api/docs/upload', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ folderId, fileName: file.name || 'file', dataUrl })
+  });
+  const j = await r.json().catch(()=>null);
+  if(r.ok && j && j.success && j.file){
+    return { ok:true, file: j.file };
+  }
+  return { ok:false, error: (j && j.error) ? j.error : 'upload_failed' };
+}
+
+async function __otdAiHandleFiles(files){
+  const list = Array.from(files || []).slice(0, 6); // MVP: limit burst
+  for(const f of list){
+    const tmp = { fileName: f.name, fileMime: f.type, fileSize: f.size, status:'uploading' };
+    __otdAiPendingAtt.push(tmp);
+    __otdAiRenderAttachRow();
+    try{
+      const up = await __otdAiUploadFileToDocs(f);
+      if(up && up.ok && up.file){
+        tmp.status = 'ready';
+        tmp.fileId = up.file.id;
+        tmp.fileUrl = up.file.fileUrl || up.file.url || '';
+        tmp.fileMime = up.file.fileMime || tmp.fileMime;
+      }else{
+        tmp.status = 'error';
+        tmp.error = (up && up.error) ? String(up.error) : 'upload_failed';
+      }
+    }catch(e){
+      tmp.status = 'error';
+      tmp.error = (e && e.message) ? e.message : 'upload_failed';
+    }
+    __otdAiRenderAttachRow();
+  }
+}
+
+function __otdAiAnyUploading(){
+  return __otdAiPendingAtt.some(a=>a && a.status === 'uploading');
+}
+
+function __otdAiGetReadyAttachments(){
+  return __otdAiPendingAtt
+    .filter(a=>a && a.status === 'ready' && a.fileUrl)
+    .map(a=>({ fileId:a.fileId || '', fileUrl:a.fileUrl || '', fileName:a.fileName || 'file', fileMime:a.fileMime || '' }));
+}
+// --- end attachments ---
 const sendAiChat = async ()=>{
   const inp = byId('aiChatInput');
   if(!inp) return;
   const q = (inp.value||'').trim();
-  if(!q) return;
+  const hasAtt = Array.isArray(__otdAiPendingAtt) && __otdAiPendingAtt.length;
+  if(!q && !hasAtt) return;
+  if(__otdAiAnyUploading()){
+    pushMsg('assistant', TT('ai.file_uploading_wait', null, 'Подожди: файл ещё загружается.'));
+    return;
+  }
+  const attsReady = __otdAiGetReadyAttachments();
   inp.value = '';
 
   // Write user message and a pending assistant bubble into the active chat
   ensureDefaultChat();
   const activeId = getActiveChatId();
   const msgs0 = loadChat(activeId);
-  msgs0.push({ role:'user', text:q, ts: Date.now() });
+  msgs0.push({ role:'user', text:(q||TT('ai.sent_files', null, '📎 Файлы')), ts: Date.now(), attachments: attsReady });
+  __otdAiPendingAtt = [];
+  __otdAiRenderAttachRow();
   msgs0.push({ role:'assistant', text:'⌛ Думаю…', ts: Date.now(), _pending:true });
   saveChat(activeId, msgs0);
   touchChatMeta(activeId);
@@ -6207,7 +6270,7 @@ const sendAiChat = async ()=>{
     const profile = getProfile();
     let ans = '';
     if(window.OTD_AI && typeof window.OTD_AI.answer === 'function'){
-      ans = await window.OTD_AI.answer(q, { profile });
+      ans = await window.OTD_AI.answer(String(q||''), { profile, attachments: attsReady });
     }else{
       ans = 'AI модуль не подключен. Проверь, что загружается /js/ai/ai-client.js.';
     }
@@ -6246,6 +6309,88 @@ byId('aiChatInput')?.addEventListener('keydown', (e)=>{
   }
 });
 
+
+// Attachments UI
+byId('aiAttachBtn')?.addEventListener('click', ()=>{
+  byId('aiFileInput')?.click();
+});
+byId('aiFileInput')?.addEventListener('change', (e)=>{
+  try{
+    const files = e && e.target && e.target.files ? e.target.files : [];
+    if(files && files.length) __otdAiHandleFiles(files);
+  }catch(_e){}
+  try{ e.target.value = ''; }catch(_){}
+});
+
+// Voice input (Web Speech API - Chrome)
+(function(){
+  const btn = byId('aiVoiceBtn');
+  const inp = byId('aiChatInput');
+  if(!btn || !inp) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){
+    btn.style.opacity = '0.55';
+    btn.title = TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере');
+    return;
+  }
+  let rec = null;
+  let active = false;
+
+  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
+  const getLang = ()=>{
+    try{
+      const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
+      return langMap[k] || 'pl-PL';
+    }catch(_){ return 'pl-PL'; }
+  };
+
+  function stop(){
+    try{ if(rec) rec.stop(); }catch(_){}
+    active = false;
+    btn.classList.remove('is-recording');
+    btn.textContent = '🎤';
+  }
+
+  function start(){
+    try{
+      rec = new SR();
+      rec.lang = getLang();
+      rec.interimResults = true;
+      rec.continuous = false;
+
+      let finalText = '';
+      rec.onresult = (ev)=>{
+        try{
+          let interim = '';
+          for(let i=ev.resultIndex;i<ev.results.length;i++){
+            const tr = ev.results[i] && ev.results[i][0] ? ev.results[i][0].transcript : '';
+            if(ev.results[i].isFinal) finalText += tr;
+            else interim += tr;
+          }
+          // show interim in input without destroying current text
+          const base = inp.value.replace(/\s*\[.*?\]\s*$/,'');
+          const combined = (base + ' ' + (finalText + interim)).replace(/\s+/g,' ').trim();
+          inp.value = combined;
+        }catch(_){}
+      };
+      rec.onerror = ()=> stop();
+      rec.onend = ()=> stop();
+
+      rec.start();
+      active = true;
+      btn.classList.add('is-recording');
+      btn.textContent = '⏹';
+    }catch(_e){
+      stop();
+      pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог включить голосовой ввод.'));
+    }
+  }
+
+  btn.addEventListener('click', ()=>{
+    if(active) stop();
+    else start();
+  });
+})();
 // Initial render
 renderChat();
 
@@ -6278,7 +6423,7 @@ renderChat();
   });
 
   // Buttons
-  $id('backHomeBtn')?.addEventListener('click', ()=> window.appShowHome && appShowHome());
+  $id('backHomeBtn')?.addEventListener('click', ()=> { try{ if(window.appGoHome) window.appGoHome(); }catch(_e){} });
   $id('settingsBtn')?.addEventListener('click', ()=> window.appGoSection && appGoSection('ustawienia'));
   $id('runAIAll')?.addEventListener('click', runAIAll);
   $id('makePlan')?.addEventListener('click', renderPlan);
@@ -6493,7 +6638,26 @@ if(typeof ensureTxIds === "function") ensureTxIds();
 
 
 
-  $id('txImage')?.addEventListener('change', async e=>{ const files=[...e.target.files]; if(!files.length) return; await ocrBankFiles(files); });
+  $id('txImage')?.addEventListener('change', async (e)=>{ 
+    const files = [...(e.target.files || [])];
+    if(!files.length) return;
+    try{
+      if(window.OTD_DocVault?.addFiles){
+        await window.OTD_DocVault.addFiles(files, { source:'image', type:'statement' });
+        try{ await window.OTD_DocVault.refresh?.(null); }catch(_){}
+        try{ window.appGoSection?.('docs'); }catch(_){}
+        try{ toast?.('Dodano do Dokumentów (OCR wyłączony)'); }catch(_){}
+      }else{
+        alert('Dokumenty: moduł DocVault nie jest gotowy.');
+      }
+    }catch(err){
+      console.warn('txImage->DocVault error', err);
+      alert('Nie udało się dodać plików do Dokumentów.');
+    }finally{
+      try{ e.target.value = ''; }catch(_){}
+    }
+  });
+
   $$id('billFile')?.addEventListener('change', async e=>{
   const f = e.target.files[0];
   if(!f) return;
@@ -6517,7 +6681,7 @@ if(typeof ensureTxIds === "function") ensureTxIds();
 
   const ok = (typeof confirmBillsImport === "function")
     ? confirmBillsImport(normalized)
-    : confirm("Импортировать фактуры из файла?");
+    : confirm(TT("dialogs.import_invoices_from_file", null, "Импортировать фактуры из файла?"));
 
   if(!ok){
     alert("Импорт отменён.");
@@ -6537,7 +6701,25 @@ if(typeof ensureTxIds === "function") ensureTxIds();
 });
 
 
-  $id('billImage')?.addEventListener('change', async e=>{ const files=[...e.target.files]; if(!files.length) return; await ocrInvoiceFiles(files); });
+  $id('billImage')?.addEventListener('change', async (e)=>{ 
+    const files = [...(e.target.files || [])];
+    if(!files.length) return;
+    try{
+      if(window.OTD_DocVault?.addFiles){
+        await window.OTD_DocVault.addFiles(files, { source:'image', type:'invoice' });
+        try{ await window.OTD_DocVault.refresh?.(null); }catch(_){}
+        try{ window.appGoSection?.('docs'); }catch(_){}
+        try{ toast?.('Dodano do Dokumentów (OCR wyłączony)'); }catch(_){}
+      }else{
+        alert('Dokumenty: moduł DocVault nie jest gotowy.');
+      }
+    }catch(err){
+      console.warn('billImage->DocVault error', err);
+      alert('Nie udało się dodać plików do Dokumentów.');
+    }finally{
+      try{ e.target.value = ''; }catch(_){}
+    }
+  });
 
   // Cash quick & ops
 function quickCashReadAmount(){
@@ -6767,7 +6949,7 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
 
   function doClearHistoryLocal(){
     try{
-      const ok = confirm('Wyczyścić lokalną historię? (Transakcje, faktury, kasa)\n\nKategorie zostaną.');
+      const ok = confirm(TT('dialogs.clear_local_history', null, 'Wyczyścić lokalną historię? (Transakcje, faktury, kasa)\n\nKategorie zostaną.'));
       if(!ok) return;
 
       try{ window.tx = []; }catch(e){}
@@ -7677,7 +7859,7 @@ if(s){
     els.reqList.querySelectorAll('[data-del-req]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const rid = btn.getAttribute('data-del-req');
-        if(!confirm('Usunąć prośbę?')) return;
+        if(!confirm(TT('dialogs.delete_request', null, 'Usunąć prośbę?'))) return;
         await del(storeNames.requests, rid);
         await refreshRequests();
       });
@@ -7977,7 +8159,12 @@ ${note?`<div class="muted" style="margin-top:12px">Uwagi: ${escapeHtml(note)}</d
     });
   }
 
-    VAULT.init = async function(){
+      VAULT.addFiles = addFiles;
+  VAULT.refresh = refresh;
+  VAULT.setView = setView;
+  VAULT.open = setView;
+
+  VAULT.init = async function(){
     if(!bindUI()) return;
     await refresh(null);
   };
@@ -8504,43 +8691,6 @@ function _otdFmtPLN(n){
     return v.toFixed(2);
   }catch(_){ return String(n||"0.00"); }
 }
-function _otdReceiptParse(text){
-  const lines = String(text||"").split(/\n+/).map(s=>s.trim()).filter(Boolean);
-  const merchant = (lines.find(l=>/^[\p{L}0-9].{2,}$/u.test(l)) || "").slice(0,48);
-
-  function numsFromLine(L){
-    const out = [];
-    // capture like "1 234,56" or "1234.56"
-    const reNum = /(?:^|\D)(\d{1,3}(?:[\s.]\d{3})*(?:[.,]\d{2})|\d+(?:[.,]\d{2})?)(?:\D|$)/g;
-    let m;
-    while((m=reNum.exec(L))){ out.push(m[1]); }
-    return out;
-  }
-  function toNum(s){
-    return Number(String(s).replace(/\s/g,'').replace(',','.'));
-  }
-
-  const pri = /(total|suma|razem|do zap|należ|kwota|summa|to pay|zapłaty|zaplaty)/i;
-  const cand = [];
-  lines.forEach(L=>{
-    const nums = numsFromLine(L);
-    if(!nums.length) return;
-    const hit = pri.test(L);
-    nums.forEach(n=>{
-      const v = toNum(n);
-      if(!isFinite(v) || v<=0) return;
-      if(v>1000000) return;
-      cand.push({v, hit});
-    });
-  });
-
-  let amount = null;
-  const hitCand = cand.filter(x=>x.hit).sort((a,b)=>b.v-a.v);
-  if(hitCand.length) amount = hitCand[0].v;
-  else if(cand.length) amount = cand.sort((a,b)=>b.v-a.v)[0].v;
-
-  return {merchant, amount};
-}
 
 function renderKasaQalta(listKasa){
   const balEl = $id('cashBalanceBig');
@@ -8608,7 +8758,7 @@ function renderKasaQalta(listKasa){
         <div class="q-right">
           <div class="q-amt ${cls}">${sign}${_otdFmtPLN(amt)}</div>
           <div class="q-miniRow">
-            <button class="q-mini" data-act="cat" data-kind="kasa" data-id="${k.id}">Кат.</button>
+            <button class="q-mini" data-act="cat" data-kind="kasa" data-id="${k.id}">${TT("cash.btn_cat_short", null, "Кат.")}</button>
             <button class="q-mini" data-act="edit" data-kind="kasa" data-id="${k.id}">✎</button>
             <button class="q-mini" data-act="del" data-kind="kasa" data-id="${k.id}">🗑</button>
           </div>
@@ -8649,13 +8799,26 @@ function renderKasaQalta(listKasa){
     hide($id('cashSheetBackdrop'));
   }
 
-  document.addEventListener('click', (e)=>{
+  // Keyboard support: Enter/Space on brand opens the main menu
+  document.addEventListener('keydown', (e)=>{
+    const a = document.activeElement;
+    if(!a) return;
+    if(a.id==='brandHome' && (e.key==='Enter' || e.key===' ')){
+      e.preventDefault();
+      if(window.appGoHome) window.appGoHome();
+    }
+  });
+
+document.addEventListener('click', (e)=>{
     const t = e.target;
 
 
-    // Brand click -> home
+    // Brand click -> go Home
     if(t && (t.id==='brandHome' || (t.closest && t.closest('#brandHome')))){
-      if(window.appShowHome) window.appShowHome();
+      // Если меню открыто — закроем, чтобы не путало
+      const ov = $id('navOverlay');
+      if(ov) hide(ov);
+      if(window.appGoHome) window.appGoHome();
       return;
     }
 
@@ -8668,6 +8831,7 @@ function renderKasaQalta(listKasa){
     if(t && t.classList && t.classList.contains('navItem')){
       const sec = t.getAttribute('data-nav');
       hide($id('navOverlay'));
+      if(sec==='home'){ if(window.appGoHome) window.appGoHome(); return; }
       if(window.appGoSection) window.appGoSection(sec);
     }
 
@@ -8686,29 +8850,24 @@ function renderKasaQalta(listKasa){
   });
 
   // Receipt photo OCR -> prefill sheet
-  $id('cashPhoto')?.addEventListener('change', async (e)=>{
+  $id('cashPhoto')?.addEventListener('change', async (e)=>{ 
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
     try{
-      const f = e.target.files && e.target.files[0];
-      if(!f) return;
-      if(typeof recognizeImage !== 'function'){ openSheet('wydanie'); return; }
-      const txt = await recognizeImage(f);
-      const parsed = _otdReceiptParse(txt);
-      if(parsed && parsed.amount){
-        const a = $id('quickAmt'); if(a) a.value = String(parsed.amount.toFixed(2));
+      // OCR removed. We store the photo as a document for later AI processing / accountant review.
+      if(window.OTD_DocVault?.addFiles){
+        await window.OTD_DocVault.addFiles([f], { source:'cash', type:'receipt' });
+        try{ await window.OTD_DocVault.refresh?.(null); }catch(_){}
       }
-      if(parsed && parsed.merchant){
-        const n = $id('quickNote'); if(n) n.value = parsed.merchant;
-      }
-      openSheet('wydanie');
     }catch(err){
-      console.warn('cash receipt OCR error', err);
-      openSheet('wydanie');
-    }finally{
-      try{ e.target.value = ''; }catch(_){}
+      console.warn('cashPhoto->DocVault error', err);
     }
+    // Manual entry instead of OCR prefill
+    try{ openSheet('wydanie'); }catch(_){}
+    try{ e.target.value = ''; }catch(_){}
   });
 
-})();
+  })();
 
 
 /* ==== OTD_NOTIF_V1: in-app notifications (client) ==== */
@@ -8757,12 +8916,12 @@ function renderKasaQalta(listKasa){
         bell.type = 'button';
         bell.id = 'otdNotifBell';
         bell.className = 'iconBtn iconPill otdNotifBellBtn';
-        bell.setAttribute('aria-label','Уведомления');
+        bell.setAttribute('aria-label', TT('client.notifs.aria', null, 'Powiadomienia'));
         bell.innerHTML = `<svg class="otdBellIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="otdNotifBadge" aria-label="0" style="display:none">0</span>`;
         const panel = document.createElement('div');
         panel.id = 'otdNotifPanel';
         panel.className = 'otdNotifPanel';
-        panel.innerHTML = `<header><div class="h">Уведомления</div><div class="otdNotifTabs"><button id="otdNotifShowNew" class="active">Новые</button><button id="otdNotifShowAll">История</button><button id="otdNotifMarkAll">Прочитано</button></div></header><div id="otdNotifList"></div>`;
+        panel.innerHTML = `<header><div class="h">${TT('client.notifs.title', null, 'Powiadomienia')}</div><div class="otdNotifTabs"><button id="otdNotifShowNew" class="active">${TT('client.notifs.tab_new', null, 'Nowe')}</button><button id="otdNotifShowAll">${TT('client.notifs.tab_history', null, 'Historia')}</button><button id="otdNotifMarkAll">${TT('client.notifs.tab_read', null, 'Przeczytane')}</button></div></header><div id="otdNotifList"></div>`;
         const toast = document.createElement('div');
         toast.id = 'otdNotifToast';
         toast.className = 'otdNotifToast';
@@ -8823,7 +8982,7 @@ bell.addEventListener('click', async ()=>{
       function showToast(msg){
         const t = document.getElementById('otdNotifToast');
         if (!t) return;
-        t.innerHTML = `<b>Уведомление:</b> ${esc(msg)}`;
+        t.innerHTML = `<b>${TT('client.notifs.toast_prefix', null, 'Powiadomienie')}:</b> ${esc(msg)}`;
         t.style.display = 'block';
         clearTimeout(showToast._tm);
         showToast._tm = setTimeout(()=>{ t.style.display = 'none'; }, 4500);
@@ -8852,11 +9011,14 @@ bell.addEventListener('click', async ()=>{
         }
         if (!listEl) return;
         if (!cnt){
-          listEl.innerHTML = `<div class="otdNotifItem" style="cursor:default"><div class="m">${mode==='all' ? 'История пуста.' : 'Пока нет новых уведомлений.'}</div></div>`;
+          listEl.innerHTML = `<div class="otdNotifItem" style="cursor:default"><div class="m">${mode==='all' ? TT('client.notifs.empty_all', null, 'Historia jest pusta.') : TT('client.notifs.empty_new', null, 'Brak nowych powiadomień.')}</div></div>`;
           return;
         }
         listEl.innerHTML = list.map(n=>{
-          const msg = esc(n.message || '');
+          let rawMsg = String(n.message || '');
+    // language-neutral notifications (preferred)
+    if (n.i18nKey) rawMsg = TT(String(n.i18nKey), (n.vars && typeof n.vars === 'object') ? n.vars : null, rawMsg);
+    const msg = esc(rawMsg);
           const dt = fmtDate(n.createdAt);
           const readCls = (mode==='all' && n.read) ? ' read' : '';
           return `<div class="otdNotifItem${readCls}" data-id="${esc(n.id)}" data-request="${esc(n.requestId||'')}">
@@ -8907,7 +9069,10 @@ bell.addEventListener('click', async ()=>{
         const seen = new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'));
         const newly = unread.filter(n=> n && n.id && !seen.has(n.id));
         if (newly.length){
-          showToast((newly[0] && newly[0].message) ? newly[0].message : 'Новое уведомление');
+          const n0 = newly[0] || {};
+          let msg = (n0 && n0.message) ? String(n0.message) : '';
+          if (n0 && n0.i18nKey) msg = TT(String(n0.i18nKey), (n0.vars || null), msg);
+          showToast(msg || TT('client.notifs.toast_prefix', null, 'Powiadomienie'));
           newly.forEach(n=> seen.add(n.id));
           localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(seen).slice(-200)));
         }
@@ -8969,12 +9134,12 @@ bell.addEventListener('click', async ()=>{
     bar.style.display = 'flex';
     const pickMode = !!(vaultPickCtx && vaultPickCtx.requestId);
     bar.innerHTML = `
-      <span class="muted small" style="opacity:.85">Выбрано: ${selected}</span>
-      <button type="button" class="btn ghost small" data-bulkact="all">Выбрать все (${total})</button>
-      <button type="button" class="btn ghost small" data-bulkact="clear">Сброс</button>
-      ${pickMode ? `<button type="button" class="btn small" data-bulkact="attach">Прикрепить к запросу</button>
-      <button type="button" class="btn ghost small" data-bulkact="cancelPick">Отмена</button>` : `<button type="button" class="btn small" data-bulkact="move">Переместить</button>
-      <button type="button" class="btn secondary small" data-bulkact="delete">Удалить</button>`}
+      <span class="muted small" style="opacity:.85">${TT('vault.bulk.selected', { n: selected }, 'Wybrano: ' + selected)}</span>
+      <button type="button" class="btn ghost small" data-bulkact="all">${TT('vault.bulk.select_all', { n: total }, 'Zaznacz wszystko (' + total + ')')}</button>
+      <button type="button" class="btn ghost small" data-bulkact="clear">${TT('vault.bulk.reset', null, 'Reset')}</button>
+      ${pickMode ? `<button type="button" class="btn small" data-bulkact="attach">${TT('vault.bulk.attach_to_request', null, 'Dołącz do prośby')}</button>
+      <button type="button" class="btn ghost small" data-bulkact="cancelPick">${TT('buttons.cancel', null, 'Anuluj')}</button>` : `<button type="button" class="btn small" data-bulkact="move">${TT('buttons.move', null, 'Przenieś')}</button>
+      <button type="button" class="btn secondary small" data-bulkact="delete">${TT('buttons.delete', null, 'Usuń')}</button>`}
     `;
   }
 
@@ -9318,7 +9483,7 @@ bell.addEventListener('click', async ()=>{
         }
         if (act === 'delete'){
           if (!bulkSelected.size) return;
-          const ok = confirm('Удалить выбранные файлы (' + bulkSelected.size + ')?');
+          const ok = confirm(TT('dialogs.delete_files', {n: bulkSelected.size}, 'Удалить выбранные файлы ({n})?'));
           if (!ok) return;
           try{
             setStatus('Удаляю...');
@@ -9353,7 +9518,7 @@ bell.addEventListener('click', async ()=>{
               <a class="btn ghost small" href="${esc(f.fileUrl||'#')}" target="_blank" rel="noopener">Открыть</a>
               <button class="btn ghost small" type="button" data-docact="rename" data-fid="${esc(f.id)}">Имя</button>
               <button class="btn ghost small" type="button" data-docact="move" data-fid="${esc(f.id)}">Раздел</button>
-              <button class="btn ghost small" type="button" data-docact="delete" data-fid="${esc(f.id)}">Удалить</button>
+              <button class="btn ghost small" type="button" data-docact="delete" data-fid="${esc(f.id)}">${TT('buttons.delete', null, 'Usuń')}</button>
             </div>
           </div>
         </div>
@@ -9393,7 +9558,7 @@ bell.addEventListener('click', async ()=>{
           setTimeout(()=>setStatus(''), 900);
         }
         if (act === 'delete') {
-          const ok = confirm('Удалить файл? Он исчезнет из OneTapDay.');
+          const ok = confirm(TT('dialogs.delete_file', null, 'Удалить файл? Он исчезнет из OneTapDay.'));
           if (!ok) return;
           setStatus('Удаляю...');
           await apiJson('/api/docs/files/delete','POST',{ fileId: fid });
@@ -9448,7 +9613,7 @@ bell.addEventListener('click', async ()=>{
         </div>
 
         <div style="margin-top:14px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
-          <button id="otdMoveDo" class="btn" type="button">Переместить</button>
+          <button id="otdMoveDo" class="btn" type="button">${TT('buttons.move', null, 'Przenieś')}</button>
         </div>
       </div>
     `;
@@ -9550,21 +9715,21 @@ bell.addEventListener('click', async ()=>{
     }
     const shared = getFolderShared(fid);
     btn.disabled = false;
-    btn.textContent = shared ? 'Закрыть доступ' : 'Открыть доступ';
-    st.textContent = shared ? 'Бухгалтер видит эту папку' : 'Бухгалтер НЕ видит эту папку';
+    btn.textContent = shared ? TT('vault.share_close_access', null, 'Закрыть доступ') : TT('vault.share_open_access', null, 'Открыть доступ');
+    st.textContent = shared ? TT('vault.share_status_on', null, 'Бухгалтер видит эту папку') : TT('vault.share_status_off', null, 'Бухгалтер НЕ видит эту папку');
   }
 
   async function onToggleShare(){
     const sel = modal && modal.querySelector('#otdVaultFolderSel');
     const folderId = sel && sel.value ? sel.value : '';
-    if (!folderId) { setStatus('Выберите папку'); return; }
+    if (!folderId) { setStatus(TT('vault.share_choose_folder', null, 'Выберите папку')); return; }
     const cur = getFolderShared(folderId);
     const next = !cur;
-    setStatus(next ? 'Открываю доступ...' : 'Закрываю доступ...');
+    setStatus(next ? TT('vault.share_opening', null, 'Открываю доступ...') : TT('vault.share_closing', null, 'Закрываю доступ...'));
     await apiJson('/api/docs/folders/share', 'POST', { folderId, shared: next });
     await refresh(folderId);
     renderShare(folderId);
-    setStatus(next ? 'Доступ открыт' : 'Доступ закрыт');
+    setStatus(next ? TT('vault.share_opened', null, 'Доступ открыт') : TT('vault.share_closed', null, 'Доступ закрыт'));
     setTimeout(()=>setStatus(''), 1200);
   }
 
@@ -9611,6 +9776,14 @@ async function onCreateFolder(){
     setTimeout(()=>setStatus(''), 1200);
   }
 
+
+  // Expose Vault API for other modules (e.g., Client Requests: attach from "My documents")
+  try{
+    window.OTD_Vault = window.OTD_Vault || {};
+    window.OTD_Vault.open = open;
+    window.OTD_Vault.openPicker = openPicker;
+  }catch(_e){}
+
   function bind(){
     const btn = document.getElementById('openVaultBtn');
     if (btn && !btn.__otd_bound){
@@ -9621,4 +9794,3 @@ async function onCreateFolder(){
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();
 })();
-

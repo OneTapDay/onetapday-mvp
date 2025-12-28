@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="pl">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -237,7 +237,13 @@
     <div class="top">
       <div class="brand">OneTapDay <span class="badge">ACCOUNTANT</span></div>
       <div class="row">
-        <button class="btn ghost" id="logoutBtn">Выйти</button>
+        <div class="lang" style="display:flex;gap:6px;align-items:center">
+  <button class="smallBtn" data-lang="pl" type="button">PL</button>
+  <button class="smallBtn" data-lang="en" type="button">EN</button>
+  <button class="smallBtn" data-lang="ru" type="button">RU</button>
+  <button class="smallBtn" data-lang="uk" type="button">UKR</button>
+</div>
+<button class="btn ghost" id="logoutBtn" data-i18n="accountant.btn_logout">Wyloguj</button>
       </div>
     </div>
 
@@ -245,20 +251,20 @@
       <section class="card">
         <div class="row between">
           <div>
-            <h2>Клиенты</h2>
-            <div class="muted">Добавляешь email клиента → он видит приглашение в приложении → принимает → статус становится “Активен”.</div>
+            <h2 data-i18n="accountant.h_clients">Klienci</h2>
+            <div class="muted" data-i18n="accountant.clients_desc">Dodajesz email klienta → on widzi zaproszenie w aplikacji → akceptuje → status „Aktywny”.</div>
           </div>
-          <button class="btn" id="addClientBtn">+ Добавить клиента</button>
+          <button class="btn" id="addClientBtn" data-i18n="accountant.btn_add_client">+ Dodaj klienta</button>
         </div>
 
-        <div class="hintBox" id="clientsHint">Нажми “Добавить клиента”. Это и есть вход. Никаких “вычинок”, кассы и фактур тут не будет.</div>
+        <div class="hintBox" id="clientsHint" data-i18n="accountant.clients_hint">Dodaj klienta, żeby miał dostęp do zaproszenia. Tu jest tylko komunikacja i prośby o dokumenty.</div>
 
         <table id="clientsTable" style="display:none">
           <thead>
             <tr>
-              <th>Клиент</th>
-              <th>Статус</th>
-              <th>Действия</th>
+              <th data-i18n="accountant.th_client">Klient</th>
+              <th data-i18n="accountant.th_status">Status</th>
+              <th data-i18n="accountant.th_actions">Działania</th>
             </tr>
           </thead>
           <tbody id="clientsTbody"></tbody>
@@ -268,14 +274,14 @@
       <section class="card">
         <div class="row between">
           <div>
-            <h2>Запросы документов</h2>
-            <div class="muted">Пока объясняем ценность чеклистом (без загрузок). Это достаточно, чтобы продать пилот.</div>
+            <h2 data-i18n="accountant.h_requests">Prośby o dokumenty</h2>
+            <div class="muted" data-i18n="accountant.requests_desc">Twórz checklistę dokumentów i deadline. Bez chaosu w wiadomościach.</div>
           </div>
-          <button class="btn secondary" id="openClientDocsBtn" disabled>Документы</button>
-          <button class="btn" id="newReqBtn" disabled>+ Новый запрос</button>
+          <button class="btn secondary" id="openClientDocsBtn" disabled data-i18n="accountant.btn_documents">Dokumenty</button>
+          <button class="btn" id="newReqBtn" disabled data-i18n="accountant.btn_new_request">+ Nowa prośba</button>
         </div>
 
-        <div class="hintBox" id="reqHint">Выбери клиента слева, чтобы создать запрос.</div>
+        <div class="hintBox" id="reqHint" data-i18n="accountant.hint_select_client">Wybierz klienta po lewej, aby utworzyć prośbę.</div>
         <div id="reqDeadlineBar" style="display:none;margin-top:10px"></div>
         <div id="reqList" style="margin-top:10px"></div>
       </section>
@@ -286,25 +292,25 @@
   <div class="modalBack" id="clientModalBack">
     <div class="modal">
       <div class="row between">
-        <div style="font-weight:900">Добавить клиента</div>
-        <button class="smallBtn" id="closeClientModal">Закрыть</button>
+        <div style="font-weight:900" data-i18n="accountant.modal_add_client_title">Dodaj klienta</div>
+        <button class="smallBtn" id="closeClientModal" data-i18n="common.close">Zamknij</button>
       </div>
       <div class="field">
-        <label>Email клиента</label>
+        <label data-i18n="accountant.lbl_client_email">Email klienta</label>
         <input id="clientEmail" type="email" placeholder="client@email.com" />
       </div>
       <div class="field">
-        <label>Имя (опционально)</label>
-        <input id="clientName" type="text" placeholder="Иван / Anna / …" />
+        <label data-i18n="accountant.lbl_name_opt">Imię (opcjonalnie)</label>
+        <input id="clientName" type="text" data-i18n-ph="accountant.ph_name_any" placeholder="Jan / Anna / …" />
       </div>
       <div class="field">
-        <label>Компания (опционально)</label>
-        <input id="clientCompany" type="text" placeholder="ООО / JDG / …" />
+        <label data-i18n="accountant.lbl_company_opt">Firma (opcjonalnie)</label>
+        <input id="clientCompany" type="text" data-i18n-ph="accountant.ph_company" placeholder="sp. z o.o. / JDG / …" />
       </div>
       <div class="err" id="clientErr"></div>
       <div class="ok" id="clientOk"></div>
       <div class="row" style="margin-top:12px;justify-content:flex-end">
-        <button class="btn" id="saveClientBtn">Отправить приглашение</button>
+        <button class="btn" id="saveClientBtn" data-i18n="accountant.btn_send_invite">Wyślij zaproszenie</button>
       </div>
     </div>
   </div>
@@ -313,46 +319,47 @@
   <div class="modalBack" id="reqModalBack">
     <div class="modal">
       <div class="row between">
-        <div style="font-weight:900">Новый запрос документов</div>
-        <button class="smallBtn" id="closeReqModal">Закрыть</button>
+        <div style="font-weight:900" data-i18n="accountant.modal_new_req_title">Nowa prośba o dokumenty</div>
+        <button class="smallBtn" id="closeReqModal" data-i18n="common.close">Zamknij</button>
       </div>
       <div class="muted" id="reqClientLine" style="margin-top:6px"></div>
 
       <div class="field">
-        <label>Месяц</label>
+        <label data-i18n="accountant.lbl_month">Miesiąc</label>
         <select id="reqMonth"></select>
-        <div class="muted small" style="margin-top:6px">Список начинается с 2025 года (YYYY-MM).</div>
+        <div class="muted small" style="margin-top:6px" data-i18n="accountant.month_hint">Lista zaczyna się od 2025 (YYYY-MM).</div>
       </div>
 
       <div class="field">
-        <label>Срок (до) (опционально)</label>
+        <label data-i18n="accountant.lbl_deadline_opt">Termin (do) (opcjonalnie)</label>
         <input id="reqDue" type="date" />
       </div>
 
       <div class="checkRow">
-        <label class="check"><input id="itBank" type="checkbox" checked /> Выписка банка</label>
-        <label class="check"><input id="itInvoices" type="checkbox" checked /> Фактуры</label>
-        <label class="check"><input id="itReceipts" type="checkbox" /> Чеки</label>
+        <label class="check"><input id="itBank" type="checkbox" checked />  <span data-i18n="accountant.it_bank">Wyciąg bankowy</span></label>
+        <label class="check"><input id="itInvoices" type="checkbox" checked />  <span data-i18n="accountant.it_invoices">Faktury</span></label>
+        <label class="check"><input id="itReceipts" type="checkbox" />  <span data-i18n="accountant.it_receipts">Paragony</span></label>
       </div>
 
       <div class="field">
-        <label>Другое (опционально)</label>
-        <input id="itOther" type="text" placeholder="Например: договоры, акты, Z-raport" />
+        <label data-i18n="accountant.lbl_other_opt">Inne (opcjonalnie)</label>
+        <input id="itOther" type="text" data-i18n-ph="accountant.ph_other" placeholder="Np.: umowy, protokoły, raport Z" />
       </div>
 
       <div class="field">
-        <label>Комментарий (опционально)</label>
-        <textarea id="reqNote" placeholder="Коротко: что именно нужно, крайний срок, формат…"></textarea>
+        <label data-i18n="accountant.lbl_comment_opt">Komentarz (opcjonalnie)</label>
+        <textarea id="reqNote" data-i18n-ph="accountant.ph_note" placeholder="Krótko: co potrzeba, termin, format…"></textarea>
       </div>
 
       <div class="err" id="reqErr"></div>
       <div class="ok" id="reqOk"></div>
       <div class="row" style="margin-top:12px;justify-content:flex-end">
-        <button class="btn" id="createReqBtn">Создать запрос</button>
+        <button class="btn" id="createReqBtn" data-i18n="accountant.btn_create_req">Utwórz prośbę</button>
       </div>
     </div>
   </div>
 
-  <script src="/js/accountant.js" defer></script>
+  <script src="/i18n_pack/i18n.js"></script>
+<script src="/js/pages/accountant.js" defer></script>
 </body>
 </html>

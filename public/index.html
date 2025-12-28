@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>OneTapDay — MVP access</title>
+<title>OneTapDay — Access</title>
 <link rel="icon" href="/favicon.ico" />
 <style>
   :root{
@@ -26,9 +26,9 @@
     position:relative;
     min-height:100vh;
     background:
-      radial-gradient(1200px 800px at 10% 0%, rgba(71,181,0,0.20), transparent 60%),
-      radial-gradient(900px 700px at 90% 100%, rgba(71,181,0,0.14), transparent 62%),
-      radial-gradient(700px 600px at 50% 40%, rgba(71,181,0,0.06), transparent 65%),
+      radial-gradient(1200px 800px at 10% 0%, rgba(71,181,0,0.12), transparent 60%),
+      radial-gradient(900px 700px at 90% 100%, rgba(71,181,0,0.08), transparent 62%),
+      radial-gradient(700px 600px at 50% 40%, rgba(71,181,0,0.03), transparent 65%),
       linear-gradient(180deg, rgba(5,7,8,0.00) 0%, rgba(5,7,8,0.20) 55%, rgba(5,7,8,0.00) 100%),
       #050708;
     background-attachment:fixed;
@@ -65,28 +65,46 @@
     mix-blend-mode:overlay;
   }
 
-  .wrap{max-width:980px;margin:28px auto;padding:18px; position:relative; z-index:1}
-  header{display:flex;gap:12px;align-items:center;margin-bottom:18px}
-  .brand{font-weight:800;color:var(--accent);font-size:20px}
+  .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px; position:relative; z-index:1}
+
+
+.titleRow{display:flex;align-items:center;gap:12px;margin:2px 0 12px}
+  .titleRow h3{margin:0;font-size:18px;letter-spacing:0.2px}
+  .lang.langInline{gap:6px}
+  .lang.langInline button{padding:5px 9px;font-size:12px}
+
   .lang{margin-left:auto;display:flex;gap:8px}
   .lang button{
     background:transparent;border:1px solid var(--stroke);color:var(--muted);
     padding:6px 10px;border-radius:999px;cursor:pointer;font-weight:700;
     backdrop-filter: blur(4px);
   }
-  .lang button.on{background:var(--accent);color:#052e24;border-color:var(--accent)}
-  .grid{display:grid;grid-template-columns:1fr 360px;gap:18px}
-  @media(max-width:880px){.grid{grid-template-columns:1fr;}}
+  .lang button.on{
+    background: rgba(71,181,0,0.16);
+    border-color: rgba(71,181,0,0.35);
+    color: rgba(232,246,238,0.96);
+    box-shadow: 0 12px 28px rgba(0,0,0,0.58), inset 0 0 0 1px rgba(71,181,0,0.28);
+  }
+  .grid{display:flex;justify-content:center;width:100%}
+  @media(max-width:880px){.grid{display:flex;}}
   .card{
     background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
     border-radius:var(--radius);padding:16px;border:1px solid var(--stroke);
     box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    width:100%;max-width:480px;
   }
   h3{margin:0 0 12px;font-size:18px}
   .tabs{display:flex;gap:8px;margin-bottom:12px}
   .tabs button{flex:1;padding:8px;border-radius:10px;border:1px solid var(--stroke);
     background:transparent;color:var(--muted);cursor:pointer;font-weight:700}
-  .tabs button.on{background:var(--accent);color:#052e24}
+  .tabs button.on{
+    background: rgba(71,181,0,0.16);
+    color: rgba(232,246,238,0.96);
+    box-shadow:
+      0 12px 28px rgba(0,0,0,0.62),
+      inset 0 0 0 1px rgba(71,181,0,0.35),
+      inset 0 1px 0 rgba(255,255,255,0.08);
+  }
   .input{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
   input[type=email],input[type=password]{
     padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);
@@ -111,28 +129,182 @@
     .roleCard input{ position:absolute; opacity:0; pointer-events:none; }
     .roleTitle{ font-weight:800; margin-bottom:6px; }
     .roleDesc{ font-size:12px; color: rgba(255,255,255,.72); line-height:1.35; }
-    .roleCard:has(input:checked){ border-color: var(--accent); box-shadow: 0 0 0 2px rgba(71,181,0,.25) inset; }
+    .roleCard:has(input:checked){
+    background:
+      linear-gradient(180deg, rgba(71,181,0,0.08), rgba(255,255,255,0.02)) padding-box,
+      linear-gradient(135deg, rgba(71,181,0,0.22), rgba(255,255,255,0.10), rgba(71,181,0,0.10)) border-box;
+    border: 1px solid transparent;
+    box-shadow: 0 0 0 2px rgba(71,181,0,0.14) inset, 0 14px 32px rgba(0,0,0,0.62);
+  }
+  /* --- Premium mobile auth UI overrides (v2025-12-28) --- */
+  .wrap{
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 22px 16px 28px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    justify-content: center;
+  }
 
+  .lang button{
+    border-color: rgba(255,255,255,0.10);
+    background: rgba(255,255,255,0.02);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  .lang button.on{
+    box-shadow: 0 10px 18px rgba(71,181,0,0.22), 0 18px 46px rgba(0,0,0,0.45);
+  }
+
+  .card{
+    border-radius: 22px;
+    padding: 18px 16px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.012)) padding-box,
+      linear-gradient(135deg, rgba(71,181,0,0.16), rgba(255,255,255,0.08), rgba(71,181,0,0.06)) border-box;
+    border: 1px solid transparent;
+    box-shadow:
+      0 18px 60px rgba(0,0,0,0.74),
+      inset 0 1px 0 rgba(255,255,255,0.06);
+    backdrop-filter: blur(16px) saturate(160%);
+  }
+h3{font-size: 18px; letter-spacing: 0.1px;}
+
+  .tabs{
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 4px;
+    border-radius: 16px;
+  }
+
+  .tabs button{
+    border: 0;
+    border-radius: 13px;
+    padding: 12px 10px;
+    font-size: 14px;
+    background: transparent;
+    color: rgba(255,255,255,0.70);
+  }
+
+  .tabs button.on{
+    background: linear-gradient(180deg, rgba(71,181,0,1), rgba(43,145,0,1));
+    color: #052e24;
+    box-shadow: 0 10px 20px rgba(71,181,0,0.22), 0 16px 44px rgba(0,0,0,0.55);
+  }
+
+  .input{gap: 12px;}
+
+  input[type=email],input[type=password]{
+    height: 48px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(0,0,0,0.30);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    font-size: 15px;
+  }
+  input[type=email]::placeholder,input[type=password]::placeholder{ color: rgba(255,255,255,0.42); }
+  input[type=email]:focus,input[type=password]:focus{
+    border-color: rgba(71,181,0,0.62);
+    box-shadow: 0 0 0 3px rgba(71,181,0,0.18), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+
+  .btn{
+    height: 54px;
+    border-radius: 18px;
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(180deg, rgba(82,205,0,1) 0%, rgba(71,181,0,1) 55%, rgba(35,130,0,1) 100%);
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow:
+      0 18px 70px rgba(0,0,0,0.78),
+      0 12px 26px rgba(71,181,0,0.10),
+      inset 0 1px 0 rgba(255,255,255,0.22),
+      inset 0 -10px 22px rgba(0,0,0,0.25);
+    letter-spacing: 0.25px;
+    font-size: 15px;
+  }
+.btn::before{
+    content:"";
+    position:absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.26), rgba(255,255,255,0.00) 42%);
+    opacity: 0.38;
+    pointer-events:none;
+  }
+  .btn::after{
+    content:"";
+    position:absolute;
+    left: -30%;
+    top: -60%;
+    width: 60%;
+    height: 220%;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.35), rgba(255,255,255,0.00) 60%);
+    transform: rotate(18deg);
+    opacity: 0.55;
+    pointer-events:none;
+  }
+  .btn:hover{
+    filter: brightness(1.03);
+  }
+  .btn:active{
+    transform: translateY(1px);
+    filter: brightness(0.98);
+    box-shadow:
+      0 10px 22px rgba(71,181,0,0.16),
+      0 20px 60px rgba(0,0,0,0.68),
+      inset 0 1px 0 rgba(255,255,255,0.22),
+      inset 0 -12px 26px rgba(0,0,0,0.26);
+  }
+
+  .row{gap: 12px;}
+
+  .ctaRow{ margin-top: 16px; }
+
+  /* Google button alignment (GSI renders an iframe) */
+  #googleLoginWrap, #googleRegWrap{ justify-content: center; }
+  #gLoginBtn, #gRegBtn{ width: 100%; display: flex; justify-content: center; }
+
+  .roleGrid{ gap: 12px; }
+  .roleCard{
+    padding: 14px 14px;
+    border-radius: 18px;
+    border-color: rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.03);
+    box-shadow: 0 10px 26px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  .roleTitle{ font-size: 14px; }
+  .roleDesc{ font-size: 12px; color: rgba(255,255,255,0.70); }
+  .roleCard:has(input:checked){
+    background:
+      linear-gradient(180deg, rgba(71,181,0,0.10), rgba(255,255,255,0.02)) padding-box,
+      linear-gradient(135deg, rgba(71,181,0,0.48), rgba(255,255,255,0.10), rgba(71,181,0,0.18)) border-box;
+    border: 1px solid transparent;
+    box-shadow: 0 0 0 2px rgba(71,181,0,0.12) inset, 0 14px 32px rgba(0,0,0,0.62);
+  }
+
+  /* Reduce visual noise on very small screens */
+  @media (max-width: 360px){
+    .wrap{ padding: 18px 12px 22px; }
+    .tabs button{ padding: 11px 8px; }
+  }
 </style>
 </head>
 <body>
   <div class="wrap">
-    <header>
-      <div class="brand">OneTapDay</div>
-
-      <!-- Language order left→right: PL, EN, UK, RU -->
-      <div class="lang" id="langBar">
-        <button data-lang="pl" class="on">PL</button>
-        <button data-lang="en">EN</button>
-        <button data-lang="uk">UK</button>
-        <button data-lang="ru">RU</button>
-      </div>
-    </header>
-
-    <div class="grid">
+<div class="grid">
       <!-- LEFT: auth -->
       <section class="card">
-        <h3 data-i="access_title">Доступ к MVP</h3>
+        <div class="titleRow">
+          <h3 data-i="access_title">Вход в OneTapDay</h3>
+          <!-- Language order left→right: PL, EN, UKR, RU -->
+          <div class="lang langInline" id="langBar">
+            <button data-lang="pl" class="on">PL</button>
+            <button data-lang="en">EN</button>
+            <button data-lang="uk">UKR</button>
+            <button data-lang="ru">RU</button>
+          </div>
+        </div>
 
         <div class="tabs" role="tablist">
           <button data-tab="login" class="on">Вход</button>
@@ -143,9 +315,19 @@
           <input id="email" type="email" placeholder="Email" />
           <input id="pass" type="password" placeholder="Пароль" />
         </div>
+        <!-- Google Sign-In (shows in both Login and Registration tabs) -->
+        <div class="row" id="googleLoginWrap" style="margin-top:14px">
+          <div id="gLoginBtn"></div>
+        </div>
+        <div class="row" id="googleRegWrap" style="display:none;margin-top:14px">
+          <div id="gRegBtn"></div>
+        </div>
+        <div class="muted" id="googleHint" style="display:none;margin-top:8px;font-size:12px">
+          Google доступен только если на сервере задан GOOGLE_CLIENT_ID.
+        </div>
 
-        <div id="roleWrap" class="roleWrap" style="display:none;margin-top:12px">
-          <div class="muted small" style="margin-bottom:8px" data-i="role_hint">Выберите роль (только при регистрации)</div>
+
+        <div id="roleWrap" class="roleWrap" style="display:none;margin-top:14px">
           <div class="roleGrid">
             <label class="roleCard">
               <input type="radio" name="role" value="freelance_business" checked />
@@ -161,7 +343,7 @@
         </div>
 
 
-        <div class="row">
+        <div class="row ctaRow">
           <button class="btn" id="doLogin">Войти</button>
 </div>
 </section>
@@ -170,7 +352,8 @@
     <footer></footer>
   </div>
 
-  <script src="/main.js" defer></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="/js/pages/index.js" defer></script>
   <script type="module">
   // Import the functions you need from the SDKs you need
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
@@ -195,10 +378,9 @@
   const app = initializeApp(firebaseConfig);
   const analytics = getAnalytics(app);
 </script>
-  <script type="module" src="/sync-cloud.js"></script>
+  <script type="module" src="/js/app/sync-cloud.js"></script>
 </body>
 </html>
-
 
 
 

@@ -10,6 +10,23 @@
       .replace(/'/g,'&#039;');
   }
 
+// ==== i18n helpers (PL default) ====
+function _interp(str, vars){
+  if (!vars || typeof str !== 'string') return str;
+  return str.replace(/\{(\w+)\}/g, (m, k) => (vars[k] !== undefined && vars[k] !== null) ? String(vars[k]) : m);
+}
+function TT(key, vars, fallback){
+  try{
+    if (window.i18n && typeof i18n.t === 'function'){
+      const v = i18n.t(key, vars);
+      if (v === key && fallback != null) return _interp(fallback, vars);
+      return v;
+    }
+  }catch(e){}
+  if (fallback != null) return _interp(fallback, vars);
+  return key;
+}
+
 
   async function jget(url){
     const r = await fetch(url, { credentials:'include' });
@@ -105,18 +122,18 @@ const _otdNotif = (function(){
     const bell = document.createElement('div');
     bell.id = 'otdNotifBellAcc';
     bell.className = 'otdNotifBell';
-    bell.innerHTML = `<span class="t">🔔</span><span class="t">Уведомления</span><span class="otdNotifBadge" style="display:none">0</span>`;
+    bell.innerHTML = `<span class="t">🔔</span><span class="t">${TT('accountant.notifs.title', null, 'Powiadomienia')}</span><span class="otdNotifBadge" style="display:none">0</span>`;
 
     const panel = document.createElement('div');
     panel.id = 'otdNotifPanelAcc';
     panel.className = 'otdNotifPanel';
     panel.innerHTML = `
       <header>
-        <div class="h">Уведомления</div>
+        <div class="h">${TT('accountant.notifs.title', null, 'Powiadomienia')}</div>
         <div class="otdNotifTabs">
-          <button id="otdNotifShowNewAcc" class="active" type="button">Новые</button>
-          <button id="otdNotifShowAllAcc" type="button">История</button>
-          <button id="otdNotifMarkAllAcc" type="button">Прочитано</button>
+          <button id="otdNotifShowNewAcc" class="active" type="button">${TT('accountant.notifs.tab_new', null, 'Nowe')}</button>
+          <button id="otdNotifShowAllAcc" type="button">${TT('accountant.notifs.tab_history', null, 'Historia')}</button>
+          <button id="otdNotifMarkAllAcc" type="button">${TT('accountant.notifs.tab_read', null, 'Przeczytane')}</button>
         </div>
       </header>
       <div id="otdNotifListAcc"></div>
@@ -178,7 +195,7 @@ const _otdNotif = (function(){
   function showToast(msg){
     const t = document.getElementById('otdNotifToastAcc');
     if (!t) return;
-    t.innerHTML = `<b>Уведомление:</b> ${esc(String(msg||''))}`;
+    t.innerHTML = `<b>${TT('accountant.notifs.toast_prefix', null, 'Powiadomienie:')}</b> ${esc(String(msg||''))}`;
     t.style.display = 'block';
     clearTimeout(showToast._tm);
     showToast._tm = setTimeout(()=>{ t.style.display = 'none'; }, 4500);
@@ -216,7 +233,7 @@ const _otdNotif = (function(){
 
     const arr = Array.isArray(list) ? list : [];
     if (!arr.length){
-      listEl.innerHTML = `<div class="otdNotifItem" style="cursor:default"><div class="m">${mode==='all' ? 'История пуста.' : 'Пока нет новых уведомлений.'}</div></div>`;
+      listEl.innerHTML = `<div class="otdNotifItem" style="cursor:default"><div class="m">${mode==='all' ? TT('accountant.notifs.empty_all', null, 'Historia jest pusta.') : TT('accountant.notifs.empty_new', null, 'Brak nowych powiadomień.')}</div></div>`;
       return;
     }
 
@@ -224,7 +241,7 @@ const _otdNotif = (function(){
       const dt = fmtDate(n.createdAt);
       const readCls = (mode==='all' && n.read) ? ' read' : '';
       return `<div class="otdNotifItem${readCls}" data-id="${esc(n.id)}" data-request="${esc(n.requestId||'')}" data-client="${esc(n.clientEmail||'')}">
-                <div class="m">${esc(n.message || '')}</div>
+                <div class="m">${esc((n.i18nKey ? TT(String(n.i18nKey), (n.vars && typeof n.vars==='object')?n.vars:null, String(n.message||'')) : String(n.message||'')) )}</div>
                 <div class="d">${esc(dt)}</div>
               </div>`;
     }).join('');
@@ -287,7 +304,7 @@ const _otdNotif = (function(){
       const seen = new Set(getSeen());
       const newly = unread.filter(n=> n && n.id && !seen.has(n.id));
       if (newly.length){
-        showToast(newly[0].message || 'Новое уведомление');
+        showToast(newly[0].message || TT('accountant.notifs.new', null, 'Новое уведомление'));
         newly.forEach(n=> seen.add(n.id));
         setSeen(Array.from(seen));
       }
@@ -327,7 +344,7 @@ const _otdNotif = (function(){
   function pill(status){
     const s = (status||'pending').toLowerCase();
     const cls = (s==='active')?'active':(s==='pending')?'pending':(s==='declined')?'declined':(s==='removed')?'removed':'pending';
-    const label = (s==='active')?'Активен':(s==='pending')?'Ожидает':(s==='declined')?'Отклонён':(s==='removed')?'Удалён':s;
+    const label = (s==='active')?TT('accountant.status.active', null, 'Aktywny'):(s==='pending')?TT('accountant.status.pending', null, 'Oczekuje'):(s==='declined')?TT('accountant.status.declined', null, 'Odrzucony'):(s==='removed')?TT('accountant.status.removed', null, 'Usunięty'):s;
     return `<span class="pill ${cls}">${label}</span>`;
   }
 
@@ -431,7 +448,7 @@ const _otdNotif = (function(){
     const reqs = Array.isArray(list) ? list : [];
     try { renderDeadlineBar(reqs); } catch(_){ if (dlBar) dlBar.style.display='none'; }
     if (!reqs.length){
-      box.innerHTML = `<div class="hintBox">Пока нет запросов для <b>${selectedClientEmail}</b>. Нажми “Новый запрос”.</div>`;
+      box.innerHTML = `<div class="hintBox">${TT('accountant.hint_no_requests', {email:selectedClientEmail}, 'Brak próśb dla {email}. Kliknij „Nowa prośba”.')}</div>`;
       return;
     }
 
@@ -493,10 +510,10 @@ const _otdNotif = (function(){
           ${(r.status === 'approved') ? `<div class="muted small" style="margin-top:8px"><b>Статус:</b> принято</div>` : ''}
           ${fileHtml}
           <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="smallBtn primary" data-ract="package" data-rid="${escapeHtml(r.id)}" data-month="${escapeHtml(r.month||'')}" ${r.month ? '' : 'disabled'}>Пакет месяца</button>
-            <button class="smallBtn ghost" data-ract="remind" data-rid="${escapeHtml(r.id)}" ${r.status === 'approved' ? 'disabled' : ''}>Напомнить</button>
-            <button class="smallBtn success" data-ract="approve" data-rid="${escapeHtml(r.id)}" ${r.status === 'received' ? '' : 'disabled'}>Принять</button>
-            <button class="smallBtn danger" data-ract="reject" data-rid="${escapeHtml(r.id)}" ${r.status === 'received' ? '' : 'disabled'}>Отклонить</button>
+            <button class="smallBtn primary" data-ract="package" data-rid="${escapeHtml(r.id)}" data-month="${escapeHtml(r.month||'')}" ${r.month ? '' : 'disabled'}>${TT('accountant.btn_month_package', null, 'Pakiet miesiąca')}</button>
+            <button class="smallBtn ghost" data-ract="remind" data-rid="${escapeHtml(r.id)}" ${r.status === 'approved' ? 'disabled' : ''}>${TT('accountant.btn_remind', null, 'Przypomnij')}</button>
+            <button class="smallBtn success" data-ract="approve" data-rid="${escapeHtml(r.id)}" ${r.status === 'received' ? '' : 'disabled'}>${TT('accountant.btn_accept', null, 'Akceptuj')}</button>
+            <button class="smallBtn danger" data-ract="reject" data-rid="${escapeHtml(r.id)}" ${r.status === 'received' ? '' : 'disabled'}>${TT('accountant.btn_reject', null, 'Odrzuć')}</button>
           </div>
         </div>
       `;
@@ -533,7 +550,7 @@ const _otdNotif = (function(){
             if (!confirm('Принять документы?')) return;
             await jpost('/api/accountant/requests/decide', { requestId: rid, action: 'approve' });
           } else if (act === 'reject'){
-            const note = prompt('Причина отклонения (клиент увидит):', '');
+            const note = prompt(TT('accountant.prompt_reject_reason', null, 'Причина отклонения (клиент увидит):'), '');
             if (!note) return;
             await jpost('/api/accountant/requests/decide', { requestId: rid, action: 'reject', note });
           }
@@ -580,7 +597,7 @@ const _otdNotif = (function(){
     bar.innerHTML = `
       <div class="hintBox" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between">
         <div>
-          <div style="font-weight:900">Дедлайны</div>
+          <div style="font-weight:900">${TT('accountant.btn_deadlines', null, 'Deadline')}</div>
           <div class="muted small" style="margin-top:4px">
             Просрочено: <b>${overdue.length}</b> • В ближайшие 3 дня: <b>${soon.length}</b> • Без срока: <b>${noDue.length}</b> • Ближайший: <b>${escapeHtml(nextTxt)}</b>
           </div>
@@ -999,7 +1016,7 @@ function selectDocsSmartFolder(){
       })
       .sort((a,b)=>(String(b.uploadedAt||'').localeCompare(String(a.uploadedAt||''))));
     if (!list.length){
-      box.innerHTML = '<div class="muted small">Пока нет файлов в этой папке.</div>';
+      box.innerHTML = '<div class="muted small">'+TT('accountant.hint_no_files', null, 'Brak plików w tej teczce.')+'</div>';
       return;
     }
     box.innerHTML = list.map(f=>{
