@@ -19,6 +19,7 @@ const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const { execFileSync } = require('child_process');
 // простое in-memory хранилище по email
 const appStateStore = {};
