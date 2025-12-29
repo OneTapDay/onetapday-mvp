@@ -1,166 +1,221 @@
+'use strict';
+
 /**
- * Subscription helpers (Stripe-first, local file second).
- *
- * Why this exists:
- * - server.js grew into a monster.
- * - Paid users were losing access after deploys/updates because the app relied
- *   on locally persisted status fields (users.json) that can reset or get stale.
- *
- * This module provides:
- * - a safe "upgrade-only" Stripe sync (never revokes access)
- * - small utilities to extract subscription periods from Stripe objects
+ * Subscription helpers (Stripe).
+ * Goal: keep server.js thinner and make access resilient after deploys.
+ * - Upgrade-only: we never revoke access here, only restore/extend when Stripe proves it's active.
+ * - Works even when Stripe customer email differs: we fallback to checkout session metadata email.
  */
 
-function _isoFromUnix(sec) {
-  if (!sec) return null;
-  const n = Number(sec);
-  if (!isFinite(n) || n <= 0) return null;
-  return new Date(n * 1000).toISOString();
+function isoFromUnixSeconds(sec) {
+  if (!sec || typeof sec !== 'number') return null;
+  return new Date(sec * 1000).toISOString();
 }
 
-function _nowMs() {
-  return Date.now();
+function isStripeSubActive(status) {
+  const s = String(status || '').toLowerCase();
+  return s === 'active' || s === 'trialing' || s === 'past_due';
 }
 
-function _parseTimeMs(iso) {
-  if (!iso) return 0;
-  const t = new Date(String(iso)).getTime();
-  return isFinite(t) ? t : 0;
+function pickBestSubscription(subs) {
+  if (!subs || !subs.length) return null;
+  // Prefer active/trialing, then the one with the farthest current_period_end.
+  const active = subs.filter(s => isStripeSubActive(s && s.status));
+  const pool = active.length ? active : subs;
+  pool.sort((a, b) => {
+    const ae = (a && a.current_period_end) ? Number(a.current_period_end) : 0;
+    const be = (b && b.current_period_end) ? Number(b.current_period_end) : 0;
+    return be - ae;
+  });
+  return pool[0] || null;
 }
 
-function shouldStripeSync(user, nowMs, minIntervalMs) {
-  if (!user) return false;
-  const status = String(user.status || 'none');
-  const endMs = _parseTimeMs(user.endAt);
-  const last = _parseTimeMs(user.stripeLastSyncAt);
-
-  // If we synced recently, don't spam Stripe.
-  if (last && (nowMs - last) < minIntervalMs) return false;
-
-  // If user is not active, or end is missing/expired, attempt recovery.
-  if (status !== 'active' && status !== 'discount_active') return true;
-  if (!endMs) return true;
-  if (endMs < nowMs) return true;
-  return false;
-}
-
-function pickBestActiveSubscription(subs, nowMs) {
-  const list = Array.isArray(subs) ? subs : [];
-  const okStatuses = new Set(['active', 'trialing', 'past_due']);
-
-  const candidates = list
-    .filter(s => s && okStatuses.has(String(s.status || '')))
-    .map(s => {
-      const endIso = _isoFromUnix(s.current_period_end);
-      const endMs = endIso ? _parseTimeMs(endIso) : 0;
-      return { sub: s, endMs, endIso };
-    })
-    .filter(x => x.endMs && x.endMs > nowMs);
-
-  // Pick the one that ends the latest.
-  candidates.sort((a, b) => (b.endMs - a.endMs));
-  return candidates.length ? candidates[0].sub : null;
-}
-
-async function findActiveSubscriptionByEmail(stripe, email, hintCustomerId) {
-  if (!stripe || !email) return null;
-
-  // 1) Try hinted customer id first (fast path)
-  if (hintCustomerId) {
-    try {
-      const subs = await stripe.subscriptions.list({ customer: hintCustomerId, status: 'all', limit: 20 });
-      const best = pickBestActiveSubscription((subs && subs.data) || [], _nowMs());
-      if (best) return { customerId: hintCustomerId, subscription: best };
-    } catch (_e) {
-      // ignore, fallback to email search
-    }
-  }
-
-  // 2) Find customers by email (Stripe supports filtering customers list by email).
-  let customers = [];
+async function safeRetrieveSubscription(stripe, subId) {
+  if (!stripe || !subId) return null;
   try {
-    const cs = await stripe.customers.list({ email: String(email), limit: 10 });
-    customers = (cs && cs.data) ? cs.data : [];
-  } catch (_e) {
-    customers = [];
+    return await stripe.subscriptions.retrieve(subId);
+  } catch (e) {
+    return null;
+  }
+}
+
+async function listSubscriptionsForCustomer(stripe, customerId) {
+  if (!stripe || !customerId) return [];
+  try {
+    const res = await stripe.subscriptions.list({ customer: customerId, limit: 10 });
+    return (res && res.data) ? res.data : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function findSubscriptionByCustomerEmail(stripe, email) {
+  if (!stripe || !email) return null;
+  try {
+    const cust = await stripe.customers.list({ email, limit: 10 });
+    const customers = (cust && cust.data) ? cust.data : [];
+    for (const c of customers) {
+      const subs = await listSubscriptionsForCustomer(stripe, c.id);
+      const best = pickBestSubscription(subs);
+      if (best) return { customerId: c.id, subscription: best };
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function findSubscriptionByMetadataEmail(stripe, email) {
+  // Requires Stripe Search API (usually enabled). Safe fallback if not available.
+  if (!stripe || !email || !stripe.subscriptions || !stripe.subscriptions.search) return null;
+  try {
+    const q = `metadata['app_email']:'${String(email).replace(/'/g, "\\'")}'`;
+    const res = await stripe.subscriptions.search({ query: q, limit: 5 });
+    const subs = (res && res.data) ? res.data : [];
+    const best = pickBestSubscription(subs);
+    if (!best) return null;
+    return { customerId: best.customer, subscription: best };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function findSubscriptionViaCheckoutSessions(stripe, email, scanLimit) {
+  // Early-stage friendly: scan last N sessions and match metadata.email.
+  if (!stripe || !email) return null;
+  const limit = Math.max(10, Math.min(Number(scanLimit || 100), 100));
+  try {
+    const res = await stripe.checkout.sessions.list({ limit });
+    const sessions = (res && res.data) ? res.data : [];
+    for (const s of sessions) {
+      const metaEmail = (s && s.metadata && (s.metadata.email || s.metadata.app_email)) ? String(s.metadata.email || s.metadata.app_email).toLowerCase() : '';
+      if (!metaEmail) continue;
+      if (metaEmail !== String(email).toLowerCase()) continue;
+      if (!s.subscription) continue;
+      const sub = await safeRetrieveSubscription(stripe, s.subscription);
+      if (!sub) continue;
+      return { customerId: s.customer || sub.customer, subscription: sub, checkoutSessionId: s.id };
+    }
+  } catch (e) {}
+  return null;
+}
+
+function entitlementFromSubscription(sub, customerId) {
+  if (!sub) return null;
+  const startAt = isoFromUnixSeconds(sub.current_period_start) || new Date().toISOString();
+  const endAt = isoFromUnixSeconds(sub.current_period_end);
+  return {
+    active: isStripeSubActive(sub.status) && !!endAt,
+    startAt,
+    endAt,
+    stripeCustomerId: customerId || sub.customer || null,
+    stripeSubscriptionId: sub.id || null,
+    stripeSubStatus: sub.status || null
+  };
+}
+
+function shouldUpgradeCurrentEnd(currentEndIso, newEndIso) {
+  if (!newEndIso) return false;
+  try {
+    const n = new Date(newEndIso).getTime();
+    if (!currentEndIso) return true;
+    const c = new Date(currentEndIso).getTime();
+    return n > c;
+  } catch (e) {
+    return true;
+  }
+}
+
+async function resolveStripeEntitlement(stripe, email, hints) {
+  if (!stripe || !email) return null;
+  const subHint = hints && hints.stripeSubscriptionId;
+  const custHint = hints && hints.stripeCustomerId;
+
+  // 1) direct subscription id
+  if (subHint) {
+    const sub = await safeRetrieveSubscription(stripe, subHint);
+    if (sub) return entitlementFromSubscription(sub, custHint || sub.customer);
   }
 
-  // 3) For each customer, try to find an active subscription.
-  const nowMs = _nowMs();
-  for (const c of customers) {
-    if (!c || !c.id) continue;
-    try {
-      const subs = await stripe.subscriptions.list({ customer: c.id, status: 'all', limit: 20 });
-      const best = pickBestActiveSubscription((subs && subs.data) || [], nowMs);
-      if (best) return { customerId: c.id, subscription: best };
-    } catch (_e) {
-      // continue
-    }
+  // 2) customer id -> subscriptions
+  if (custHint) {
+    const subs = await listSubscriptionsForCustomer(stripe, custHint);
+    const best = pickBestSubscription(subs);
+    if (best) return entitlementFromSubscription(best, custHint);
+  }
+
+  // 3) customers.list by email
+  const byEmail = await findSubscriptionByCustomerEmail(stripe, email);
+  if (byEmail && byEmail.subscription) {
+    return entitlementFromSubscription(byEmail.subscription, byEmail.customerId);
+  }
+
+  // 4) subscriptions.search by metadata (new checkouts)
+  const byMeta = await findSubscriptionByMetadataEmail(stripe, email);
+  if (byMeta && byMeta.subscription) {
+    return entitlementFromSubscription(byMeta.subscription, byMeta.customerId);
+  }
+
+  // 5) fallback: scan last checkout sessions by metadata.email
+  const bySessions = await findSubscriptionViaCheckoutSessions(stripe, email, 100);
+  if (bySessions && bySessions.subscription) {
+    const ent = entitlementFromSubscription(bySessions.subscription, bySessions.customerId);
+    if (ent) ent.checkoutSessionId = bySessions.checkoutSessionId;
+    return ent;
   }
 
   return null;
 }
 
-function extractPeriodFromSubscription(sub) {
-  if (!sub) return { startIso: null, endIso: null };
-  return {
-    startIso: _isoFromUnix(sub.current_period_start) || null,
-    endIso: _isoFromUnix(sub.current_period_end) || null,
-  };
-}
-
 /**
- * Upgrade-only sync:
- * - If Stripe says there's an active subscription, we set user.status=active and update dates.
- * - If Stripe has nothing, we DO NOTHING (no revocation).
+ * Upgrade-only sync: if Stripe proves active, restore user.status/endAt.
+ * @returns {Promise<{updated:boolean, reason?:string, entitlement?:object}>}
  */
-async function maybeSyncStripeForUser({ stripe, stripeConfigured, user, saveUsers, log = console }) {
-  if (!stripeConfigured || !stripe || !user || !user.email) return { synced: false, reason: 'stripe_not_configured' };
+async function maybeSyncStripeForUser(stripe, user, saveUsers, opts) {
+  if (!stripe || !user || !user.email) return { updated: false, reason: 'no_stripe_or_user' };
+  const force = !!(opts && opts.force);
+  const minIntervalMs = (opts && opts.minIntervalMs) ? Number(opts.minIntervalMs) : 60_000;
 
-  const nowMs = _nowMs();
-  const minIntervalMs = 10 * 60 * 1000; // 10 minutes
-  if (!shouldStripeSync(user, nowMs, minIntervalMs)) return { synced: false, reason: 'skip_interval' };
+  try {
+    if (!force && user.stripeLastSyncAt) {
+      const last = new Date(user.stripeLastSyncAt).getTime();
+      if (last && (Date.now() - last) < minIntervalMs) {
+        return { updated: false, reason: 'throttled' };
+      }
+    }
+  } catch (e) {}
 
-  const email = String(user.email);
-  const hintCustomerId = user.stripeCustomerId || null;
+  const ent = await resolveStripeEntitlement(stripe, String(user.email).toLowerCase(), {
+    stripeCustomerId: user.stripeCustomerId,
+    stripeSubscriptionId: user.stripeSubscriptionId
+  });
 
-  const found = await findActiveSubscriptionByEmail(stripe, email, hintCustomerId);
   user.stripeLastSyncAt = new Date().toISOString();
 
-  if (!found || !found.subscription) {
-    try { if (typeof saveUsers === 'function') saveUsers(); } catch(_e) {}
-    return { synced: false, reason: 'no_active_subscription' };
+  if (!ent || !ent.active) {
+    if (saveUsers) saveUsers();
+    return { updated: false, reason: 'no_active_entitlement', entitlement: ent || null };
   }
 
-  const sub = found.subscription;
-  const period = extractPeriodFromSubscription(sub);
-  const startIso = period.startIso || user.startAt || new Date().toISOString();
-  const endIso = period.endIso || user.endAt || null;
+  let changed = false;
 
-  if (!endIso) {
-    // If Stripe didn't provide dates for some reason, don't change access state.
-    try { if (typeof saveUsers === 'function') saveUsers(); } catch(_e) {}
-    return { synced: false, reason: 'missing_period' };
-  }
+  // Upgrade-only: extend endAt if Stripe is later or if user isn't active.
+  if (user.status !== 'active') { user.status = 'active'; changed = true; }
+  if (shouldUpgradeCurrentEnd(user.endAt, ent.endAt)) { user.endAt = ent.endAt; changed = true; }
+  if (!user.startAt || shouldUpgradeCurrentEnd(user.startAt, ent.startAt)) { user.startAt = ent.startAt; changed = true; }
+  if (!user.demoUsed) { user.demoUsed = true; changed = true; }
 
-  // Upgrade access
-  user.status = 'active';
-  user.startAt = startIso;
-  user.endAt = endIso;
-  user.demoUsed = true;
-  user.stripeCustomerId = found.customerId || user.stripeCustomerId || null;
-  user.stripeSubscriptionId = sub.id || user.stripeSubscriptionId || null;
-  user.stripeSubStatus = String(sub.status || '');
+  if (ent.stripeCustomerId && user.stripeCustomerId !== ent.stripeCustomerId) { user.stripeCustomerId = ent.stripeCustomerId; changed = true; }
+  if (ent.stripeSubscriptionId && user.stripeSubscriptionId !== ent.stripeSubscriptionId) { user.stripeSubscriptionId = ent.stripeSubscriptionId; changed = true; }
+  if (ent.stripeSubStatus && user.stripeSubStatus !== ent.stripeSubStatus) { user.stripeSubStatus = ent.stripeSubStatus; changed = true; }
+  if (ent.checkoutSessionId && user.stripeLastCheckoutSessionId !== ent.checkoutSessionId) { user.stripeLastCheckoutSessionId = ent.checkoutSessionId; changed = true; }
 
-  try { if (typeof saveUsers === 'function') saveUsers(); } catch(_e) {}
-  try { log && log.log && log.log(`[STRIPE-SYNC] upgraded ${email} until ${endIso}`); } catch(_e) {}
-
-  return { synced: true, endAt: endIso };
+  if (saveUsers) saveUsers();
+  return { updated: changed, reason: changed ? 'upgraded' : 'already_ok', entitlement: ent };
 }
 
 module.exports = {
-  shouldStripeSync,
-  extractPeriodFromSubscription,
-  findActiveSubscriptionByEmail,
   maybeSyncStripeForUser,
+  resolveStripeEntitlement,
+  entitlementFromSubscription,
+  isoFromUnixSeconds,
+  isStripeSubActive
 };
