@@ -2,6 +2,8 @@
 
 require('dotenv').config();
 
+const { maybeSyncStripeForUser } = require('./server/modules/subscription');
+
 // Stripe price IDs (plans)
 // - monthly: required (fallback to STRIPE_PRICE_ID for backward compatibility)
 // - 6m / yearly: optional; set in Render env if you want these buttons enabled
@@ -31,9 +33,6 @@ try {
 } catch (e) {
   console.warn('[WARN] stripe not configured or package missing — Stripe routes will fail if used.');
 }
-
-// Subscription helpers (Stripe sync + utils)
-const { maybeSyncStripeForUser, extractPeriodFromSubscription } = require('./server/modules/subscription');
 
 const app = express();
 app.set('trust proxy', 1); // needed on Render to get correct protocol/host
@@ -508,6 +507,7 @@ app.post('/register', (req, res) => {
     saveUsers();
 
     // create session cookie (JWT-like)
+
     setSessionCookie(res, email);
 
     console.log('[REGISTER] success', email);
@@ -519,7 +519,7 @@ app.post('/register', (req, res) => {
 });
 
 // Login
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   try {
     const emailRaw = req.body && (req.body.email || req.body.mail || req.body.login || '');
     const passRaw = req.body && (req.body.password || req.body.pass || req.body.pwd || '');
@@ -539,6 +539,16 @@ const u = findUserByEmail(email);
 
     // важно: поднять админ-флаг, если это ADMIN_EMAIL
     user = ensureAdminFlag(user);
+
+  // Stripe resync: restore paid access after deploys / session loss
+  try {
+    const force = String((req.query && req.query.force) || '') === '1';
+    if (stripe) await maybeSyncStripeForUser(stripe, user, saveUsers, { force });
+  } catch (e) {
+    console.warn('[STRIPE] /me resync failed', e && e.message ? e.message : e);
+  }
+
+  expireStatuses(user);
 
 
     if (user.hash && user.salt) {
@@ -580,7 +590,14 @@ const u = findUserByEmail(email);
       saveUsers();
       console.log(`[DEMO] Auto-activated demo for ${user.email} until ${user.endAt}`);
     }
-    
+
+    // Try to restore paid access from Stripe (deploy-safe)
+    try {
+      if (stripe) await maybeSyncStripeForUser(stripe, user, saveUsers, { force: false });
+    } catch (e) {
+      console.warn('[STRIPE] /login resync failed', e && e.message ? e.message : e);
+    }
+
     expireStatuses(user);
 
     return res.json({ success: true, user: { email: user.email, role: user.role || 'freelance_business', lang: user.lang || 'pl', status: user.status, demoUsed: !!user.demoUsed, startAt: user.startAt, endAt: user.endAt } });
@@ -638,42 +655,47 @@ app.get('/session', async (req, res) => {
       u = users[email];
     }
 
-    // если оплата прошла — активируем (берём период из Stripe subscription, если доступен)
+    // если оплата прошла — активируем (по Stripe period; fallback по plan)
+    const plan = (session.metadata && session.metadata.plan) ? String(session.metadata.plan) : 'monthly';
     if (session.payment_status === 'paid' || session.status === 'complete') {
       u.status = 'active';
+      u.demoUsed = true;
 
-      // keep Stripe ids for future recovery
-      if (session.customer) u.stripeCustomerId = String(session.customer);
-      if (session.subscription) u.stripeSubscriptionId = String(session.subscription);
+      // Store Stripe IDs for future resync
+      if (session.customer) u.stripeCustomerId = session.customer;
+      if (session.subscription) u.stripeSubscriptionId = session.subscription;
+      u.stripeLastCheckoutSessionId = session.id;
 
       let startIso = new Date().toISOString();
       let endIso = null;
+
       if (session.subscription) {
         try {
           const sub = await stripe.subscriptions.retrieve(session.subscription);
-          const p = extractPeriodFromSubscription(sub);
-          if (p.startIso) startIso = p.startIso;
-          if (p.endIso) endIso = p.endIso;
-          if (sub && sub.status) u.stripeSubStatus = String(sub.status);
+          if (sub && sub.current_period_start) startIso = new Date(sub.current_period_start * 1000).toISOString();
+          if (sub && sub.current_period_end) endIso = new Date(sub.current_period_end * 1000).toISOString();
+          if (sub && sub.status) u.stripeSubStatus = sub.status;
+          if (sub && sub.customer) u.stripeCustomerId = sub.customer;
         } catch (e) {
-          console.warn('[SESSION] cannot retrieve subscription period', e && e.message ? e.message : e);
+          console.warn('[SESSION] cannot retrieve subscription', e && e.message ? e.message : e);
         }
       }
 
-      // Fallback: 1 month
       if (!endIso) {
         const end = new Date();
-        end.setMonth(end.getMonth() + 1);
+        if (plan === '6m' || plan === 'm6' || plan === 'half_year') end.setMonth(end.getMonth() + 6);
+        else if (plan === 'yearly' || plan === 'annual' || plan === 'year') end.setFullYear(end.getFullYear() + 1);
+        else end.setMonth(end.getMonth() + 1);
         endIso = end.toISOString();
       }
 
       u.startAt = startIso;
       u.endAt = endIso;
-      u.demoUsed = true;      // считаем, что демо уже потрачено
-      u.demoStartAt = null;   // если поле есть - обнуляем
+
       saveUsers();
       console.log(`[SESSION] activated via /session for ${u.email} until ${u.endAt}`);
     }
+
 
     setSessionCookie(res, email);
     return res.json({ success: true, email });
@@ -764,6 +786,15 @@ app.post('/auth/google', async (req, res) => {
       console.log('[GOOGLE] login user', email);
     }
 
+    // Try to restore paid access from Stripe (deploy-safe)
+    try {
+      if (stripe) await maybeSyncStripeForUser(stripe, u, saveUsers, { force: false });
+    } catch (e) {
+      console.warn('[STRIPE] /auth/google resync failed', e && e.message ? e.message : e);
+    }
+
+    expireStatuses(u);
+
     setSessionCookie(res, email);
     return res.json({ success: true, user: { email: u.email, role: u.role, lang: u.lang, status: u.status || 'none', demoUsed: !!u.demoUsed, startAt: u.startAt || null, endAt: u.endAt || null } });
   } catch (err) {
@@ -817,15 +848,6 @@ app.get('/me', async (req, res) => {
   let user = getUserBySession(req);
   if (!user) {
     return res.status(401).json({ success: false, error: 'Not authenticated' });
-  }
-
-  // Recover subscription status from Stripe when local status is missing/stale.
-  // IMPORTANT: upgrade-only (never revokes access).
-  try {
-    const stripeConfigured = !!(stripe && process.env.STRIPE_SECRET_KEY);
-    await maybeSyncStripeForUser({ stripe, stripeConfigured, user, saveUsers, log: console });
-  } catch (e) {
-    console.warn('[STRIPE-SYNC] /me failed', e && e.message ? e.message : e);
   }
 
   expireStatuses(user);
@@ -2457,11 +2479,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
           const sub = await stripe.subscriptions.retrieve(session.subscription);
           if (sub && sub.current_period_start) startIso = new Date(sub.current_period_start * 1000).toISOString();
           if (sub && sub.current_period_end) endIso = new Date(sub.current_period_end * 1000).toISOString();
-          // keep Stripe sub status/id for future recovery
-          if (sub && sub.status && email) {
-            const u0 = findUserByEmail(email);
-            if (u0) u0.stripeSubStatus = String(sub.status);
-          }
         } catch (e) {
           console.warn('[WEBHOOK] cannot retrieve subscription', e && e.message ? e.message : e);
         }
@@ -2477,15 +2494,49 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       }
 
       if (email) {
-        const u = findUserByEmail(email);
+        let u = findUserByEmail(email);
+
+        // If user record doesn't exist (e.g., after deploy without persistent disk),
+        // create it so paid users don't get locked out.
+        if (!u) {
+          const salt = genSalt(16);
+          const fakePwd = genSalt(8);
+          const storedHash = hashPassword(fakePwd, salt);
+          users[email] = {
+            email,
+            lang: 'pl',
+            salt,
+            hash: storedHash,
+            status: 'none',
+            startAt: null,
+            endAt: null,
+            discountUntil: null,
+            demoUsed: false,
+            appState: {},
+            isAdmin: email === ADMIN_EMAIL
+          };
+          saveUsers();
+          u = users[email];
+        }
+
         if (u) {
           u.status = 'active';
           u.startAt = startIso;
           u.endAt = endIso;
           u.demoUsed = true; // they paid — treat demo as used
-          if (session.customer) u.stripeCustomerId = String(session.customer);
-          if (session.subscription) u.stripeSubscriptionId = String(session.subscription);
-          u.stripeLastSyncAt = new Date().toISOString();
+          if (session.customer) u.stripeCustomerId = session.customer;
+          if (session.subscription) u.stripeSubscriptionId = session.subscription;
+          u.stripeLastCheckoutSessionId = session.id;
+
+          // try to store real Stripe status (optional)
+          if (session.subscription) {
+            try {
+              const sub2 = await stripe.subscriptions.retrieve(session.subscription);
+              if (sub2 && sub2.status) u.stripeSubStatus = sub2.status;
+              if (sub2 && sub2.customer) u.stripeCustomerId = sub2.customer;
+            } catch (e) {}
+          }
+
           saveUsers();
           console.log(`[WEBHOOK] activated subscription for ${u.email} until ${u.endAt}`);
         }
@@ -2516,9 +2567,27 @@ app.get('/admin/activate-user', (req, res) => {
     return res.status(400).json({ success: false, error: 'missing email' });
   }
 
-  const u = findUserByEmail(emailQ);
+  let u = findUserByEmail(emailQ);
   if (!u) {
-    return res.status(404).json({ success: false, error: 'user not found' });
+    // allow manual grant even if the user record doesn't exist yet
+    const salt = genSalt(16);
+    const fakePwd = genSalt(8);
+    const storedHash = hashPassword(fakePwd, salt);
+    users[emailQ] = {
+      email: emailQ,
+      lang: 'pl',
+      salt,
+      hash: storedHash,
+      status: 'none',
+      startAt: null,
+      endAt: null,
+      discountUntil: null,
+      demoUsed: false,
+      appState: {},
+      isAdmin: emailQ === ADMIN_EMAIL
+    };
+    saveUsers();
+    u = users[emailQ];
   }
 
   u.status = 'active';
@@ -2580,45 +2649,34 @@ app.get('/admin/grant-free', (req, res) => {
   return res.json({ success: true, user: safe });
 });
 
-// Админ: принудительно пересинхронизировать подписку из Stripe (по email)
-// Полезно, когда webhook не дошёл, или после деплоя/обновления статус в users.json не совпадает со Stripe.
+
+
+// Админ-роут: принудительная синхронизация статуса из Stripe по email
 app.get('/admin/resync-stripe', async (req, res) => {
   const me = getUserBySession(req);
-  if (!me || !me.isAdmin) {
-    return res.status(403).json({ success: false, error: 'Forbidden' });
-  }
-  if (!stripe || !process.env.STRIPE_SECRET_KEY) {
-    return res.status(500).json({ success: false, error: 'Stripe not configured' });
-  }
+  if (!me || !me.isAdmin) return res.status(403).json({ success: false, error: 'Forbidden' });
+
+  if (!stripe) return res.status(501).json({ success: false, error: 'stripe not configured' });
 
   const emailQ = normalizeEmail(
     (req.query && req.query.email) ||
     (req.body && (req.body.email || req.body.mail || req.body.login)) ||
     ''
-  ) || (me && me.email);
+  );
+  if (!emailQ) return res.status(400).json({ success: false, error: 'missing email' });
 
-  const u = emailQ ? findUserByEmail(emailQ) : null;
-  if (!u) {
-    return res.status(404).json({ success: false, error: 'user not found' });
-  }
+  let u = findUserByEmail(emailQ);
+  if (!u) return res.status(404).json({ success: false, error: 'user not found' });
 
-  // Force sync by clearing last sync timestamp
-  try { delete u.stripeLastSyncAt; } catch(_e) {}
-
-  let out = { synced: false };
   try {
-    out = await maybeSyncStripeForUser({ stripe, stripeConfigured: true, user: u, saveUsers, log: console });
+    const r = await maybeSyncStripeForUser(stripe, u, saveUsers, { force: true });
+    const safe = Object.assign({}, u);
+    delete safe.hash; delete safe.salt;
+    return res.json({ success: true, updated: !!r.updated, reason: r.reason, user: safe, entitlement: r.entitlement || null });
   } catch (e) {
-    console.warn('[ADMIN] resync-stripe error', e && e.message ? e.message : e);
+    return res.status(500).json({ success: false, error: e && e.message ? e.message : 'resync failed' });
   }
-
-  const safe = Object.assign({}, u);
-  delete safe.hash;
-  delete safe.salt;
-
-  return res.json({ success: true, result: out, user: safe });
 });
-
 
 // Admin helpers
 app.post('/mark-paid', (req, res) => {
