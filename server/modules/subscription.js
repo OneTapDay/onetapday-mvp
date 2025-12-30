@@ -100,6 +100,36 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
   const needsSync = force || !user.status || user.status === 'ended' || !user.endAt || (isFinite(endMs) && endMs < Date.now());
   if (!needsSync) return false;
 
+  // Prefer stored Stripe IDs (survives email mismatch + lets us recover after deploy)
+  if (user.stripeSubId) {
+    try {
+      const sub = await stripe.subscriptions.retrieve(user.stripeSubId);
+      const custId = (typeof sub.customer === 'string') ? sub.customer : null;
+      const cust = custId ? await stripe.customers.retrieve(custId) : null;
+      applyStripeSubscriptionToUser(user, sub, cust || {});
+      user.lastStripeSyncAt = now.toISOString();
+      await saveUsers();
+      return true;
+    } catch (e) {
+      console.warn('[SYNC] Failed to retrieve subscription by stripeSubId, fallback to email search');
+    }
+  }
+  if (user.stripeCustomerId) {
+    try {
+      const subs = await stripe.subscriptions.list({ customer: user.stripeCustomerId, status: 'all', limit: 20 });
+      const best = pickBestSub(subs.data || []);
+      if (best && ['active','trialing','past_due'].includes(best.status)) {
+        const cust = await stripe.customers.retrieve(user.stripeCustomerId);
+        applyStripeSubscriptionToUser(user, best, cust || {});
+        user.lastStripeSyncAt = now.toISOString();
+        await saveUsers();
+        return true;
+      }
+    } catch (e) {
+      console.warn('[SYNC] Failed to list subscriptions by stripeCustomerId, fallback to email search');
+    }
+  }
+
   const found = await findActiveSubscriptionByEmail(stripe, user.email);
   if (found && found.subscription) {
     const ok = applyStripeSubscriptionToUser(user, found.customer, found.subscription);
@@ -183,7 +213,37 @@ async function handleStripeEvent(event, ctx) {
   }
 
   // 3) Subscription updated (status/period changes)
-  if (type === 'customer.subscription.updated') {
+  
+  // Recurring billing: invoice events are the most reliable "money went through" signal
+  if (type === 'invoice.paid' || type === 'invoice.payment_succeeded') {
+    const inv = event.data.object || {};
+    const subId = inv.subscription;
+    const custId = inv.customer;
+    if (!subId) return null;
+
+    try {
+      const sub = await stripe.subscriptions.retrieve(subId);
+      const cust = custId ? await stripe.customers.retrieve(custId) : null;
+
+      const email = normalizeEmail((cust && cust.email) ? cust.email : (inv.customer_email || ''));
+      if (!email) return null;
+
+      const u = findUserByEmail(email);
+      if (!u) return null;
+
+      applyStripeSubscriptionToUser(u, sub, cust || {});
+      u.stripeCustomerId = custId || u.stripeCustomerId || null;
+      u.stripeSubId = sub.id || u.stripeSubId || null;
+
+      await saveUsers();
+      return { ok: true, type, email, status: u.status, endAt: u.endAt };
+    } catch (e) {
+      console.error('[WEBHOOK] invoice sync failed', e && e.message ? e.message : e);
+      return null;
+    }
+  }
+
+if (type === 'customer.subscription.updated') {
     const sub = event.data && event.data.object;
     if (!sub || !sub.customer) return;
     try {
