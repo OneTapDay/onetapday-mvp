@@ -27,8 +27,15 @@ const appStateStore = {};
 // stripe is optional but kept
 let stripe = null;
 try {
-  stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || '');
+  const sk = String(process.env.STRIPE_SECRET_KEY || '').trim();
+  if (sk && /^sk_(test|live)_/i.test(sk)) {
+    stripe = require('stripe')(sk);
+  } else {
+    stripe = null;
+    console.warn('[WARN] Stripe is NOT configured (missing STRIPE_SECRET_KEY). Subscription sync/webhooks will not work.');
+  }
 } catch (e) {
+  stripe = null;
   console.warn('[WARN] stripe not configured or package missing — Stripe routes will fail if used.');
 }
 
@@ -640,20 +647,48 @@ app.get('/session', async (req, res) => {
       saveUsers();
       u = users[email];
     }
-
-    // если оплата прошла — активируем на месяц
+    // Если оплата прошла — пытаемся привязать РЕАЛЬНУЮ Stripe подписку (а не "подарить месяц")
     if (session.payment_status === 'paid' || session.status === 'complete') {
-      u.status = 'active';
-      u.startAt = new Date().toISOString();
-      const end = new Date();
-      end.setMonth(end.getMonth() + 1); // 1 месяц
-      u.endAt = end.toISOString();
-      u.demoUsed = true;
-      saveUsers();
-      console.log(`[SESSION] activated via /session for ${u.email} until ${u.endAt}`);
-    u.demoUsed = true;      // считаем, что демо уже потрачено
-u.demoStartAt = null;   // если поле есть - обнуляем
-  }
+      try {
+        // Для subscription Checkout обычно есть session.subscription + session.customer
+        if (stripe && session.subscription) {
+          const sub = await stripe.subscriptions.retrieve(session.subscription);
+          const custId = (typeof session.customer === 'string') ? session.customer : (sub.customer || null);
+          const cust = custId ? await stripe.customers.retrieve(custId) : null;
+
+          applyStripeSubscriptionToUser(u, sub, cust || {});
+          u.stripeCustomerId = custId || u.stripeCustomerId || null;
+          u.stripeSubId = sub.id || u.stripeSubId || null;
+          u.demoUsed = true;
+
+          await saveUsers();
+          console.log(`[SESSION] Applied Stripe subscription for ${email}: ${sub.status} until ${u.endAt}`);
+        } else {
+          // Фолбэк: если Stripe не настроен/нет subscription id — активируем на 1 месяц (лучше, чем оставить клиента заблокированным)
+          u.status = 'active';
+          u.startAt = new Date().toISOString();
+          const end = new Date();
+          end.setMonth(end.getMonth() + 1);
+          u.endAt = end.toISOString();
+          u.demoUsed = true;
+          await saveUsers();
+          console.log(`[SESSION] Fallback 1-month activation for ${email} (no Stripe subscription id / Stripe not configured).`);
+        }
+      } catch (e) {
+        console.error('[SESSION] Failed to apply Stripe subscription, fallback activation', e && e.message ? e.message : e);
+        u.status = 'active';
+        u.startAt = new Date().toISOString();
+        const end = new Date();
+        end.setMonth(end.getMonth() + 1);
+        u.endAt = end.toISOString();
+        u.demoUsed = true;
+        await saveUsers();
+      }
+    }
+
+    // считаем, что демо уже потрачено
+    u.demoUsed = true;
+    u.demoStartAt = null;
 
     setSessionCookie(res, email);
     return res.json({ success: true, email });
@@ -799,14 +834,17 @@ app.get('/me', async (req, res) => {
     return res.status(401).json({ success: false, error: 'Not authenticated' });
   }
 
-  // Client can request a hard Stripe resync: /me?sync=1
-  const forceSync = String((req.query && (req.query.sync || req.query.force)) || '') === '1';
-
   // Auto-heal access after deploys / missed webhooks:
   // If Stripe says the user is active, we update local status here.
   try {
     if (stripe) {
-      await maybeSyncUserFromStripe(stripe, user, saveUsers, { force: forceSync });
+      const q = (req.query || {});
+      const syncQ = String(q.sync || '').toLowerCase();
+      const forceQ = (syncQ === '1' || syncQ === 'true' || syncQ === 'yes');
+      const st = String(user.status || '').toLowerCase();
+      const looksActive = (st === 'active' || st === 'discount_active');
+      const opts = (forceQ || !looksActive) ? { force: true, cooldownMs: 0 } : undefined;
+      await maybeSyncUserFromStripe(stripe, user, saveUsers, opts);
     }
   } catch (e) {
     console.warn('[STRIPE] /me autosync failed:', e && e.message ? e.message : e);
