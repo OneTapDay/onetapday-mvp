@@ -20,7 +20,18 @@ function pickBestSub(subscriptions) {
   if (!list.length) return null;
 
   const now = Date.now();
-  const score = (s) => {
+  
+  try {
+    console.log('[SYNC] start', {
+      email: user && user.email,
+      status: user && user.status,
+      force: !!(opts && opts.force),
+      stripeCustomerId: user && user.stripeCustomerId,
+      stripeSubId: user && user.stripeSubId
+    });
+  } catch(_e) {}
+
+const score = (s) => {
     if (!s) return -1;
     const st = String(s.status || '').toLowerCase();
 
@@ -80,7 +91,22 @@ function applyStripeSubscriptionToUser(user, customer, subscription) {
   const startIso = toIsoFromUnixSeconds(subscription.current_period_start) || nowIso();
   const endIso   = toIsoFromUnixSeconds(subscription.current_period_end);
 
-  // IMPORTANT: overwrite endAt when we have it, otherwise old (expired) endAt will keep killing access.
+  
+  // Defensive fallback: if Stripe object is oddly missing period fields but status is active-ish,
+  // do not leave an old expired endAt in place (it would immediately lock the user).
+  const activeish = (st === 'active' || st === 'trialing' || st === 'past_due' || st === 'unpaid');
+  if (!startIso && activeish) {
+    user.startAt = nowIso();
+    user.startAtGuessed = true;
+  }
+  if (!endIso && activeish) {
+    const fallbackEnd = new Date(Date.now() + 35 * 24 * 60 * 60 * 1000).toISOString();
+    user.endAt = fallbackEnd;
+    user.endAtGuessed = true;
+    console.warn('[SYNC] Missing current_period_end; applied fallback endAt for', user.email, '=>', fallbackEnd);
+  }
+
+// IMPORTANT: overwrite endAt when we have it, otherwise old (expired) endAt will keep killing access.
   user.status = 'active';
   user.startAt = startIso;
   if (endIso) user.endAt = endIso;
@@ -113,7 +139,20 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
   if (user.stripeSubId) {
     try {
       const sub = await stripe.subscriptions.retrieve(user.stripeSubId);
-      const st = String(sub && sub.status || '').toLowerCase();
+      
+      try {
+        console.log('[SYNC] retrieved by subId', {
+          id: sub && sub.id,
+          status: sub && sub.status,
+          current_period_start: sub && sub.current_period_start,
+          current_period_end: sub && sub.current_period_end,
+          canceled_at: sub && sub.canceled_at,
+          cancel_at: sub && sub.cancel_at,
+          cancel_at_period_end: sub && sub.cancel_at_period_end
+        });
+      } catch(_e) {}
+
+const st = String(sub && sub.status || '').toLowerCase();
       const subEndMs = sub && sub.current_period_end ? Number(sub.current_period_end) * 1000 : 0;
       const usable = (['active', 'trialing', 'past_due'].includes(st)) || (subEndMs && subEndMs > Date.now());
       if (!usable) throw new Error('Subscription not usable');
@@ -134,7 +173,16 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
   if (user.stripeCustomerId) {
     try {
       const subs = await stripe.subscriptions.list({ customer: user.stripeCustomerId, status: 'all', limit: 20 });
-      const best = pickBestSub(subs && subs.data ? subs.data : []);
+      
+          try {
+            console.log('[SYNC] list subs by customerId', {
+              customerId: user && user.stripeCustomerId,
+              count: subs && subs.data ? subs.data.length : 0,
+              ids: (subs && subs.data ? subs.data.slice(0,5).map(s => ({ id: s.id, status: s.status, end: s.current_period_end })) : [])
+            });
+          } catch(_e) {}
+
+const best = pickBestSub(subs && subs.data ? subs.data : []);
       if (best) {
         const st = String(best.status || '').toLowerCase();
         const bestEndMs = best.current_period_end ? Number(best.current_period_end) * 1000 : 0;
@@ -163,7 +211,9 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
   // No active subscription found. Still record that we checked (so we don't hammer Stripe).
   user.lastStripeSyncAt = nowIso();
   if (typeof saveUsers === 'function') await saveUsers();
-  return false;
+    try { console.warn('[SYNC] no active subscription found for', user && user.email, 'customerId=', user && user.stripeCustomerId, 'subId=', user && user.stripeSubId); } catch(_e) {}
+
+return false;
 }
 
 async function handleStripeEvent(event, ctx) {
