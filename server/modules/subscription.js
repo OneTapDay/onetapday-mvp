@@ -31,10 +31,13 @@ function pickBestSub(subscriptions) {
     // Still likely usable: past_due for a short time (Stripe can keep it active-ish)
     if (st === 'past_due') {
       const end = (s.current_period_end ? Number(s.current_period_end) * 1000 : 0);
-      // If period end is in the future, we treat it as usable.
       if (end && end > now) return 70;
       return 50;
     }
+
+    // If Stripe says it's not active but period end is still in the future, it can still be usable
+    const end = (s.current_period_end ? Number(s.current_period_end) * 1000 : 0);
+    if (end && end > now) return 30;
 
     return 0;
   };
@@ -48,7 +51,6 @@ async function findActiveSubscriptionByEmail(stripe, email) {
   const e = normalizeEmail(email);
   if (!e) return null;
 
-  // Stripe can have multiple customers with the same email (humans are creative).
   const customers = await stripe.customers.list({ email: e, limit: 10 });
   const data = (customers && customers.data) ? customers.data : [];
   if (!data.length) return null;
@@ -57,9 +59,13 @@ async function findActiveSubscriptionByEmail(stripe, email) {
     try {
       const subs = await stripe.subscriptions.list({ customer: c.id, status: 'all', limit: 20 });
       const best = pickBestSub((subs && subs.data) ? subs.data : []);
-      if (best && ['active', 'trialing', 'past_due'].includes(String(best.status || '').toLowerCase())) {
-        return { customer: c, subscription: best };
-      }
+      if (!best) continue;
+
+      const st = String(best.status || '').toLowerCase();
+      const endMs = best.current_period_end ? Number(best.current_period_end) * 1000 : 0;
+      const usable = (['active', 'trialing', 'past_due'].includes(st)) || (endMs && endMs > Date.now());
+
+      if (usable) return { customer: c, subscription: best };
     } catch (_e) {
       // ignore and keep searching other customers
     }
@@ -74,12 +80,15 @@ function applyStripeSubscriptionToUser(user, customer, subscription) {
   const startIso = toIsoFromUnixSeconds(subscription.current_period_start) || nowIso();
   const endIso   = toIsoFromUnixSeconds(subscription.current_period_end);
 
+  // IMPORTANT: overwrite endAt when we have it, otherwise old (expired) endAt will keep killing access.
   user.status = 'active';
   user.startAt = startIso;
   if (endIso) user.endAt = endIso;
+
   user.demoUsed = true;
   if (customer && customer.id) user.stripeCustomerId = customer.id;
-  user.stripeSubId = subscription.id;
+  if (subscription && subscription.id) user.stripeSubId = subscription.id;
+
   user.lastStripeSyncAt = nowIso();
   return true;
 }
@@ -100,56 +109,60 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
   const needsSync = force || !user.status || user.status === 'ended' || !user.endAt || (isFinite(endMs) && endMs < Date.now());
   if (!needsSync) return false;
 
-  // Prefer stored Stripe IDs (survives email mismatch + lets us recover after deploy)
+  // Prefer stored Stripe subscription ID
   if (user.stripeSubId) {
     try {
       const sub = await stripe.subscriptions.retrieve(user.stripeSubId);
-      const subStatus = String(sub && sub.status || '').toLowerCase();
+      const st = String(sub && sub.status || '').toLowerCase();
       const subEndMs = sub && sub.current_period_end ? Number(sub.current_period_end) * 1000 : 0;
-      const usable = (['active','trialing','past_due'].includes(subStatus)) || (subEndMs && subEndMs > Date.now());
-      const custId = (typeof sub.customer === 'string') ? sub.customer : null;
+      const usable = (['active', 'trialing', 'past_due'].includes(st)) || (subEndMs && subEndMs > Date.now());
+      if (!usable) throw new Error('Subscription not usable');
+
+      const custId = (sub && typeof sub.customer === 'string') ? sub.customer : null;
       const cust = custId ? await stripe.customers.retrieve(custId) : null;
-      if (!usable) { throw new Error('Subscription not usable'); }
+
       applyStripeSubscriptionToUser(user, cust || {}, sub);
       user.lastStripeSyncAt = nowIso();
       await saveUsers();
       return true;
-    } catch (e) {
-      console.warn('[SYNC] Failed to retrieve subscription by stripeSubId, fallback to email search');
-    }
-  }
-  if (user.stripeCustomerId) {
-    try {
-      const subs = await stripe.subscriptions.list({ customer: user.stripeCustomerId, status: 'all', limit: 20 });
-      const best = pickBestSub(subs.data || []);
-      if (best) {
-        const st = String(best.status || '').toLowerCase();
-        const endMs = best.current_period_end ? Number(best.current_period_end) * 1000 : 0;
-        const usable = (['active','trialing','past_due'].includes(st)) || (endMs && endMs > Date.now());
-        if (usable) {
-        const cust = await stripe.customers.retrieve(user.stripeCustomerId);
-        applyStripeSubscriptionToUser(user, cust || {}, best);
-        user.lastStripeSyncAt = nowIso();
-        await saveUsers();
-        return true;
-      }
-      }
-      }
-    } catch (e) {
-      console.warn('[SYNC] Failed to list subscriptions by stripeCustomerId, fallback to email search');
+    } catch (_e) {
+      console.warn('[SYNC] stripeSubId retrieve failed/not usable; fallback to customer/email search');
     }
   }
 
+  // Prefer stored Stripe customer ID
+  if (user.stripeCustomerId) {
+    try {
+      const subs = await stripe.subscriptions.list({ customer: user.stripeCustomerId, status: 'all', limit: 20 });
+      const best = pickBestSub(subs && subs.data ? subs.data : []);
+      if (best) {
+        const st = String(best.status || '').toLowerCase();
+        const bestEndMs = best.current_period_end ? Number(best.current_period_end) * 1000 : 0;
+        const usable = (['active', 'trialing', 'past_due'].includes(st)) || (bestEndMs && bestEndMs > Date.now());
+        if (usable) {
+          const cust = await stripe.customers.retrieve(user.stripeCustomerId);
+          applyStripeSubscriptionToUser(user, cust || {}, best);
+          user.lastStripeSyncAt = nowIso();
+          await saveUsers();
+          return true;
+        }
+      }
+    } catch (_e) {
+      console.warn('[SYNC] stripeCustomerId list failed; fallback to email search');
+    }
+  }
+
+  // Fallback: search by email
   const found = await findActiveSubscriptionByEmail(stripe, user.email);
   if (found && found.subscription) {
     const ok = applyStripeSubscriptionToUser(user, found.customer, found.subscription);
-    if (ok && typeof saveUsers === 'function') saveUsers();
+    if (ok && typeof saveUsers === 'function') await saveUsers();
     return ok;
   }
 
   // No active subscription found. Still record that we checked (so we don't hammer Stripe).
   user.lastStripeSyncAt = nowIso();
-  if (typeof saveUsers === 'function') saveUsers();
+  if (typeof saveUsers === 'function') await saveUsers();
   return false;
 }
 
@@ -188,11 +201,10 @@ async function handleStripeEvent(event, ctx) {
 
     if (sub) {
       applyStripeSubscriptionToUser(u, customer, sub);
-      if (typeof saveUsers === 'function') saveUsers();
+      if (typeof saveUsers === 'function') await saveUsers();
       return;
     }
 
-    // Fallback: if subscription retrieval failed, try searching by email.
     try {
       await maybeSyncUserFromStripe(stripe, u, saveUsers, { force: true });
     } catch (_e) {}
@@ -217,16 +229,14 @@ async function handleStripeEvent(event, ctx) {
       if (!sub) return;
 
       applyStripeSubscriptionToUser(u, customer, sub);
-      if (typeof saveUsers === 'function') saveUsers();
+      if (typeof saveUsers === 'function') await saveUsers();
     } catch (_e) {}
     return;
   }
 
-  // 3) Subscription updated (status/period changes)
-  
   // Recurring billing: invoice events are the most reliable "money went through" signal
-  if (type === 'invoice.paid' || type === 'invoice.payment_succeeded') {
-    const inv = event.data.object || {};
+  if (type === 'invoice.payment_succeeded') {
+    const inv = event.data && event.data.object || {};
     const subId = inv.subscription;
     const custId = inv.customer;
     if (!subId) return null;
@@ -245,7 +255,7 @@ async function handleStripeEvent(event, ctx) {
       u.stripeCustomerId = custId || u.stripeCustomerId || null;
       u.stripeSubId = sub.id || u.stripeSubId || null;
 
-      await saveUsers();
+      if (typeof saveUsers === 'function') await saveUsers();
       return { ok: true, type, email, status: u.status, endAt: u.endAt };
     } catch (e) {
       console.error('[WEBHOOK] invoice sync failed', e && e.message ? e.message : e);
@@ -253,7 +263,7 @@ async function handleStripeEvent(event, ctx) {
     }
   }
 
-if (type === 'customer.subscription.updated') {
+  if (type === 'customer.subscription.updated') {
     const sub = event.data && event.data.object;
     if (!sub || !sub.customer) return;
     try {
@@ -264,15 +274,16 @@ if (type === 'customer.subscription.updated') {
       if (!u) return;
 
       const st = String(sub.status || '').toLowerCase();
-      if (['active', 'trialing', 'past_due'].includes(st)) {
+      const endMs = sub.current_period_end ? Number(sub.current_period_end) * 1000 : 0;
+      const usable = (['active', 'trialing', 'past_due'].includes(st)) || (endMs && endMs > Date.now());
+      if (usable) {
         applyStripeSubscriptionToUser(u, customer, sub);
       }
-      if (typeof saveUsers === 'function') saveUsers();
+      if (typeof saveUsers === 'function') await saveUsers();
     } catch (_e) {}
     return;
   }
 
-  // 4) Subscription deleted (cancelled/ended)
   if (type === 'customer.subscription.deleted') {
     const sub = event.data && event.data.object;
     if (!sub || !sub.customer) return;
@@ -286,7 +297,7 @@ if (type === 'customer.subscription.updated') {
       u.status = 'ended';
       u.endAt = nowIso();
       u.lastStripeSyncAt = nowIso();
-      if (typeof saveUsers === 'function') saveUsers();
+      if (typeof saveUsers === 'function') await saveUsers();
     } catch (_e) {}
     return;
   }
