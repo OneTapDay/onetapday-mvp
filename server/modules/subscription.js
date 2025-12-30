@@ -41,8 +41,24 @@ function pickBestSub(subscriptions) {
 
   return list
     .slice()
-    .sort((a, b) => score(b) - score(a))[0] || null;
+    .sort((a, b) => {
+      const ds = score(b) - score(a);
+      if (ds) return ds;
+      const ae = Number(a && a.current_period_end ? a.current_period_end : 0);
+      const be = Number(b && b.current_period_end ? b.current_period_end : 0);
+      return be - ae;
+    })[0] || null;
 }
+
+function isUsableSubscription(sub) {
+  if (!sub) return false;
+  const st = String(sub.status || '').toLowerCase();
+  if (!['active', 'trialing', 'past_due'].includes(st)) return false;
+  const endMs = sub.current_period_end ? (Number(sub.current_period_end) * 1000) : 0;
+  if (endMs && isFinite(endMs) && endMs < Date.now()) return false;
+  return true;
+}
+
 
 async function findActiveSubscriptionByEmail(stripe, email) {
   const e = normalizeEmail(email);
@@ -57,7 +73,7 @@ async function findActiveSubscriptionByEmail(stripe, email) {
     try {
       const subs = await stripe.subscriptions.list({ customer: c.id, status: 'all', limit: 20 });
       const best = pickBestSub((subs && subs.data) ? subs.data : []);
-      if (best && ['active', 'trialing', 'past_due'].includes(String(best.status || '').toLowerCase())) {
+      if (best && isUsableSubscription(best)) {
         return { customer: c, subscription: best };
       }
     } catch (_e) {
@@ -71,18 +87,22 @@ async function findActiveSubscriptionByEmail(stripe, email) {
 function applyStripeSubscriptionToUser(user, customer, subscription) {
   if (!user || !subscription) return false;
 
+  const st = String(subscription.status || '').toLowerCase();
   const startIso = toIsoFromUnixSeconds(subscription.current_period_start) || nowIso();
   const endIso   = toIsoFromUnixSeconds(subscription.current_period_end);
 
-  user.status = 'active';
+  // Map Stripe state to our coarse app states
+  user.status = isUsableSubscription(subscription) ? 'active' : 'ended';
   user.startAt = startIso;
   if (endIso) user.endAt = endIso;
   user.demoUsed = true;
+
   if (customer && customer.id) user.stripeCustomerId = customer.id;
   user.stripeSubId = subscription.id;
   user.lastStripeSyncAt = nowIso();
   return true;
 }
+
 
 async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
   opts = opts || {};
@@ -106,10 +126,17 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
       const sub = await stripe.subscriptions.retrieve(user.stripeSubId);
       const custId = (typeof sub.customer === 'string') ? sub.customer : null;
       const cust = custId ? await stripe.customers.retrieve(custId) : null;
-      applyStripeSubscriptionToUser(user, cust || {}, sub);
-      user.lastStripeSyncAt = now.toISOString();
-      await saveUsers();
-      return true;
+
+      // Keep customer id even if this subscription id is stale.
+      if (custId && !user.stripeCustomerId) user.stripeCustomerId = custId;
+
+      if (isUsableSubscription(sub)) {
+        applyStripeSubscriptionToUser(user, cust || {}, sub);
+        user.lastStripeSyncAt = now.toISOString();
+        await saveUsers();
+        return true;
+      }
+      // Stale subscription id: fall through to find a newer active one.
     } catch (e) {
       console.warn('[SYNC] Failed to retrieve subscription by stripeSubId, fallback to email search');
     }
@@ -118,7 +145,7 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
     try {
       const subs = await stripe.subscriptions.list({ customer: user.stripeCustomerId, status: 'all', limit: 20 });
       const best = pickBestSub(subs.data || []);
-      if (best && ['active','trialing','past_due'].includes(best.status)) {
+      if (best && isUsableSubscription(best)) {
         const cust = await stripe.customers.retrieve(user.stripeCustomerId);
         applyStripeSubscriptionToUser(user, cust || {}, best);
         user.lastStripeSyncAt = now.toISOString();
