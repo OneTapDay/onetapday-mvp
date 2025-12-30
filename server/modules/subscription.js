@@ -100,68 +100,58 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
   const needsSync = force || !user.status || user.status === 'ended' || !user.endAt || (isFinite(endMs) && endMs < Date.now());
   if (!needsSync) return false;
 
-  const isActiveSub = (st) => {
-    const s = String(st || '').toLowerCase();
-    return ['active', 'trialing', 'past_due'].includes(s);
-  };
-
-  const persist = async () => {
-    user.lastStripeSyncAt = nowIso();
-    if (typeof saveUsers === 'function') {
-      try { await saveUsers(); } catch (_e) {}
-    }
-  };
-
-  // 1) Prefer stored subscription id, but ONLY if it's still active.
-  // If it's ended/canceled, we must continue searching (customerId/email) to avoid "stuck on old sub".
+  // Prefer stored Stripe IDs (survives email mismatch + lets us recover after deploy)
   if (user.stripeSubId) {
     try {
       const sub = await stripe.subscriptions.retrieve(user.stripeSubId);
-      if (sub && isActiveSub(sub.status)) {
-        const custId = (typeof sub.customer === 'string') ? sub.customer : (sub.customer && sub.customer.id);
-        let cust = null;
-        try { if (custId) cust = await stripe.customers.retrieve(custId); } catch (_e) {}
-        const ok = applyStripeSubscriptionToUser(user, cust || (custId ? { id: custId } : null), sub);
-        await persist();
-        return ok;
-      }
-      // stale subscription id → continue searching
+      const subStatus = String(sub && sub.status || '').toLowerCase();
+      const subEndMs = sub && sub.current_period_end ? Number(sub.current_period_end) * 1000 : 0;
+      const usable = (['active','trialing','past_due'].includes(subStatus)) || (subEndMs && subEndMs > Date.now());
+      const custId = (typeof sub.customer === 'string') ? sub.customer : null;
+      const cust = custId ? await stripe.customers.retrieve(custId) : null;
+      if (!usable) { throw new Error('Subscription not usable'); }
+      applyStripeSubscriptionToUser(user, cust || {}, sub);
+      user.lastStripeSyncAt = nowIso();
+      await saveUsers();
+      return true;
     } catch (e) {
-      console.warn('[SYNC] Failed to retrieve subscription by stripeSubId, fallback to customer/email search');
+      console.warn('[SYNC] Failed to retrieve subscription by stripeSubId, fallback to email search');
     }
   }
-
-  // 2) Prefer stored customer id next (list subscriptions + pick best active)
   if (user.stripeCustomerId) {
     try {
       const subs = await stripe.subscriptions.list({ customer: user.stripeCustomerId, status: 'all', limit: 20 });
       const best = pickBestSub(subs.data || []);
-      if (best && isActiveSub(best.status)) {
-        let cust = null;
-        try { cust = await stripe.customers.retrieve(user.stripeCustomerId); } catch (_e) {}
-        const ok = applyStripeSubscriptionToUser(user, cust || { id: user.stripeCustomerId }, best);
-        await persist();
-        return ok;
+      if (best) {
+        const st = String(best.status || '').toLowerCase();
+        const endMs = best.current_period_end ? Number(best.current_period_end) * 1000 : 0;
+        const usable = (['active','trialing','past_due'].includes(st)) || (endMs && endMs > Date.now());
+        if (usable) {
+        const cust = await stripe.customers.retrieve(user.stripeCustomerId);
+        applyStripeSubscriptionToUser(user, cust || {}, best);
+        user.lastStripeSyncAt = nowIso();
+        await saveUsers();
+        return true;
       }
-      // no active sub under this customer → continue to email search
+      }
+      }
     } catch (e) {
       console.warn('[SYNC] Failed to list subscriptions by stripeCustomerId, fallback to email search');
     }
   }
 
-  // 3) Fallback: search by email across customers
   const found = await findActiveSubscriptionByEmail(stripe, user.email);
   if (found && found.subscription) {
     const ok = applyStripeSubscriptionToUser(user, found.customer, found.subscription);
-    await persist();
+    if (ok && typeof saveUsers === 'function') saveUsers();
     return ok;
   }
 
   // No active subscription found. Still record that we checked (so we don't hammer Stripe).
-  await persist();
+  user.lastStripeSyncAt = nowIso();
+  if (typeof saveUsers === 'function') saveUsers();
   return false;
 }
-
 
 async function handleStripeEvent(event, ctx) {
   const stripe = ctx && ctx.stripe;
