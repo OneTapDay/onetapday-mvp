@@ -3807,12 +3807,6 @@ function gateAccess(){
   });
 
   if (!ok){
-    // В новом UI навигация идёт через appGoSection(), а не через вкладки с data-sec.
-    // Оставляем совместимость со старым вариантом (tabs), но сначала пытаемся перейти нормально.
-    try {
-      if (typeof appGoSection === 'function') appGoSection('ustawienia');
-    } catch (e) {}
-
     const settingsTab = document.querySelector('[data-sec=ustawienia]');
     if (settingsTab) settingsTab.click();
   }
@@ -5320,12 +5314,7 @@ async function syncUserStatus(){
     // Auto-resync access (Stripe → server → client) once per tab if we look locked.
     // Goal: NO manual buttons. If user paid, access should just unlock.
     try {
-      const isActiveLike = (s) => {
-        const v = String(s || '');
-        return v === 'active' || v === 'discount_active';
-      };
-
-      const looksLocked = (!isActiveLike(user.status)) || !user.endAt;
+      const looksLocked = (String(user.status || '') !== 'active') || !user.endAt;
       const triedKey = 'otd_me_force_sync_tried';
       if (looksLocked && typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(triedKey)) {
         sessionStorage.setItem(triedKey, String(Date.now()));
@@ -5925,21 +5914,16 @@ async function syncUserStatus(){
       // FREELANCE/BUSINESS: keep legacy heuristic (demo ~= 24h, else subscription)
       const dayMs = 24 * 3600 * 1000;
 
-      const activeLike = (status === 'active' || status === 'discount_active');
-
-      if (activeLike && user.endAt) {
-        const startIso = user.startAt || '';
-        const start = startIso ? new Date(startIso).getTime() : NaN;
+      if (status === 'active' && user.endAt && user.startAt) {
+        const start = new Date(user.startAt).getTime();
         const end   = new Date(user.endAt).getTime();
         const now   = Date.now();
-        const span  = (!isNaN(start) && !isNaN(end)) ? (end - start) : NaN;
+        const span  = end - start;
 
-        // Если это явно ~24h период (демо), держим демо-ключи.
-        // Если startAt отсутствует или span невалидный — считаем, что это подписка (чтобы не блокировать оплативших).
-        if (!isNaN(span) && span <= dayMs + 5 * 60 * 1000) {
+        if (span <= dayMs + 5 * 60 * 1000) {
           // ~24h => demo
           if (end > now) {
-            localStorage.setItem(DEMO_START, startIso || new Date().toISOString());
+            localStorage.setItem(DEMO_START, user.startAt);
             localStorage.setItem('otd_demo_until', user.endAt);
             localStorage.setItem(DEMO_USED, user.demoUsed ? '1' : '0');
           } else {
@@ -5947,7 +5931,6 @@ async function syncUserStatus(){
             localStorage.removeItem(DEMO_START);
             localStorage.removeItem('otd_demo_until');
           }
-
           // subscription off
           localStorage.removeItem(SUB_KEY);
           localStorage.removeItem(SUB_FROM);
@@ -5955,7 +5938,7 @@ async function syncUserStatus(){
         } else {
           // subscription
           localStorage.setItem(SUB_KEY,  '1');
-          localStorage.setItem(SUB_FROM, startIso || new Date().toISOString());
+          localStorage.setItem(SUB_FROM, user.startAt || '');
           localStorage.setItem(SUB_TO,   user.endAt   || '');
           localStorage.setItem(DEMO_USED, '1');
           localStorage.removeItem(DEMO_START);
@@ -5988,6 +5971,19 @@ async function syncUserStatus(){
 
 
 document.addEventListener('DOMContentLoaded', async ()=>{
+  // Stripe Checkout return: если пришли с session_id, завершаем сессию на сервере и форсим синк подписки.
+  try {
+    const url = new URL(window.location.href);
+    const sid = url.searchParams.get('session_id');
+    if (sid) {
+      await fetch('/session?session_id=' + encodeURIComponent(sid), { credentials: 'include' });
+      await fetch('/me?sync=1', { credentials: 'include' });
+      url.searchParams.delete('session_id');
+      window.history.replaceState({}, document.title, url.toString());
+    }
+  } catch (e) {
+    console.warn('[Stripe] checkout session finalize failed', e);
+  }
   // Синхронизируем статус пользователя с сервером (для автоматически активированного демо)
   await syncUserStatus();
   
