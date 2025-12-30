@@ -1495,7 +1495,7 @@
       Okres demo zakończony lub brak aktywnej subskrypcji. Przejdź do Ustawień, aby uruchomić demo (24h) lub opłacić dostęp.
     </div>
 <div class="row" style="margin-top:8px">
-<button class="btn secondary" data-i18n="gate_open_settings" onclick="document.querySelector('[data-sec=ustawienia]').click()">Otwórz Ustawienia</button>
+<button class="btn secondary" data-i18n="gate_open_settings" onclick="try{ if (typeof appGoSection==='function') appGoSection('ustawienia'); }catch(e){}">Otwórz Ustawienia</button>
 </div>
 </div>
 <!-- DASHBOARD -->
