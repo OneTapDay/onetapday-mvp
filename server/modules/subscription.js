@@ -15,6 +15,45 @@ function normalizeEmail(e) {
   return String(e || '').toLowerCase().trim();
 }
 
+// When Stripe objects come back without current_period_* (shouldn't happen, but it does in our logs),
+// try to recover period dates from invoices so we can set endAt correctly and not lock paying users.
+async function enrichSubscriptionPeriod(stripe, subscription, customerId) {
+  if (!stripe || !subscription || subscription.current_period_end) return false;
+  const subId = subscription.id;
+  let changed = false;
+
+  // Try latest invoice for this subscription
+  try {
+    const invs = await stripe.invoices.list({ subscription: subId, limit: 1 });
+    const inv = invs && invs.data ? invs.data[0] : null;
+    const line = inv && inv.lines && inv.lines.data ? inv.lines.data[0] : null;
+    const start = line && line.period ? line.period.start : null;
+    const end = line && line.period ? line.period.end : null;
+    if (!subscription.current_period_start && start) { subscription.current_period_start = start; changed = true; }
+    if (!subscription.current_period_end && end) { subscription.current_period_end = end; changed = true; }
+    if (changed) {
+      console.log('[SYNC] derived period from latest invoice', { subId, invId: inv && inv.id, start, end });
+    }
+  } catch (_e) {}
+
+  // Fallback: upcoming invoice (its line.period.start is next period start == current period end)
+  if (!subscription.current_period_end && customerId) {
+    try {
+      const up = await stripe.invoices.retrieveUpcoming({ customer: customerId, subscription: subId });
+      const line = up && up.lines && up.lines.data ? up.lines.data[0] : null;
+      const nextStart = line && line.period ? line.period.start : null;
+      if (nextStart) {
+        subscription.current_period_end = nextStart;
+        changed = true;
+        console.log('[SYNC] derived end from upcoming invoice', { subId, end: nextStart });
+      }
+    } catch (_e) {}
+  }
+
+  return changed;
+}
+
+
 function pickBestSub(subscriptions) {
   const list = Array.isArray(subscriptions) ? subscriptions : [];
   if (!list.length) return null;
@@ -94,6 +133,7 @@ function applyStripeSubscriptionToUser(user, customer, subscription) {
   
   // Defensive fallback: if Stripe object is oddly missing period fields but status is active-ish,
   // do not leave an old expired endAt in place (it would immediately lock the user).
+  const st = String(subscription.status || '').toLowerCase();
   const activeish = (st === 'active' || st === 'trialing' || st === 'past_due' || st === 'unpaid');
   if (!startIso && activeish) {
     user.startAt = nowIso();
@@ -107,7 +147,7 @@ function applyStripeSubscriptionToUser(user, customer, subscription) {
   }
 
 // IMPORTANT: overwrite endAt when we have it, otherwise old (expired) endAt will keep killing access.
-  user.status = 'active';
+  user.status = activeish ? 'active' : String(subscription.status || user.status || 'active');
   user.startAt = startIso;
   if (endIso) user.endAt = endIso;
 
@@ -160,9 +200,13 @@ const st = String(sub && sub.status || '').toLowerCase();
       const custId = (sub && typeof sub.customer === 'string') ? sub.customer : null;
       const cust = custId ? await stripe.customers.retrieve(custId) : null;
 
+      // recover current_period_* if Stripe didn't include it
+      await enrichSubscriptionPeriod(stripe, sub, custId || (cust && cust.id));
+
+
       applyStripeSubscriptionToUser(user, cust || {}, sub);
       user.lastStripeSyncAt = nowIso();
-      await saveUsers();
+      if (typeof saveUsers === 'function') await Promise.resolve(saveUsers());
       return true;
     } catch (_e) {
       console.warn('[SYNC] stripeSubId retrieve failed/not usable; fallback to customer/email search');
@@ -189,9 +233,10 @@ const best = pickBestSub(subs && subs.data ? subs.data : []);
         const usable = (['active', 'trialing', 'past_due'].includes(st)) || (bestEndMs && bestEndMs > Date.now());
         if (usable) {
           const cust = await stripe.customers.retrieve(user.stripeCustomerId);
+          await enrichSubscriptionPeriod(stripe, best, user.stripeCustomerId);
           applyStripeSubscriptionToUser(user, cust || {}, best);
           user.lastStripeSyncAt = nowIso();
-          await saveUsers();
+      if (typeof saveUsers === 'function') await Promise.resolve(saveUsers());
           return true;
         }
       }
@@ -203,6 +248,7 @@ const best = pickBestSub(subs && subs.data ? subs.data : []);
   // Fallback: search by email
   const found = await findActiveSubscriptionByEmail(stripe, user.email);
   if (found && found.subscription) {
+    await enrichSubscriptionPeriod(stripe, found.subscription, found.customer && found.customer.id);
     const ok = applyStripeSubscriptionToUser(user, found.customer, found.subscription);
     if (ok && typeof saveUsers === 'function') await saveUsers();
     return ok;
