@@ -4294,6 +4294,14 @@ async function _otdStartAccountantProTrial(desiredClients){
       localStorage.setItem(DEMO_USED, '1');
     }
 
+    // Start Firebase state sync once we know the session user
+    try {
+      if (!window.__OTD_CLOUD_STARTED && typeof startCloudSync === 'function') {
+        window.__OTD_CLOUD_STARTED = true;
+        startCloudSync();
+      }
+    } catch(e) {}
+
     gateAccess();
     updateSubUI();
     return { ok:true, started:true };
@@ -5311,6 +5319,57 @@ async function syncUserStatus(){
     const user = data && data.user;
     if (!user) return;
 
+
+    // Ensure per-user local state is bound to the current session user (fix: switching accounts on same device).
+    try {
+      const serverEmail = String(user.email || '').trim().toLowerCase();
+      if (serverEmail) {
+        const prevEmail = String(localStorage.getItem(USER_KEY) || '').trim().toLowerCase();
+
+        // If user changed, wipe user-scoped caches to avoid showing/writing the previous user's data.
+        if (prevEmail && prevEmail !== serverEmail) {
+          const wipe = [
+            'tx_manual_import',
+            'bills_manual_import',
+            'kasa',
+            'accMeta',
+            'invoice_templates',
+            'otd_workspaces',
+            'otd_active_ws',
+            'otd_last_ws'
+          ];
+          wipe.forEach(k => { try { localStorage.removeItem(k); } catch(e){} });
+
+          // wipe dynamic per-user "seen" keys
+          try {
+            Object.keys(localStorage).forEach(k => {
+              if (!k) return;
+              if (k.startsWith('otd_req_seen_') || k.startsWith('otd_req_last_')) {
+                try { localStorage.removeItem(k); } catch(e){}
+              }
+            });
+          } catch(e){}
+
+          // access keys must be recomputed for the new user
+          try {
+            localStorage.removeItem(DEMO_START);
+            localStorage.removeItem('otd_demo_until');
+            localStorage.removeItem(DEMO_USED);
+            localStorage.removeItem(SUB_KEY);
+            localStorage.removeItem(SUB_FROM);
+            localStorage.removeItem(SUB_TO);
+          } catch(e){}
+
+          // allow a fresh /me?sync=1 attempt for the new account
+          try { sessionStorage.removeItem('otd_me_force_sync_tried'); } catch(e){}
+        }
+
+        localStorage.setItem(USER_KEY, serverEmail);
+      }
+    } catch(e) {
+      console.warn('[auth] cannot bind local state to user', e);
+    }
+
     // Auto-resync access (Stripe → server → client) once per tab if we look locked.
     // Goal: NO manual buttons. If user paid, access should just unlock.
     try {
@@ -5960,6 +6019,14 @@ async function syncUserStatus(){
       }
     }
 
+    // Start Firebase state sync once we know the session user
+    try {
+      if (!window.__OTD_CLOUD_STARTED && typeof startCloudSync === 'function') {
+        window.__OTD_CLOUD_STARTED = true;
+        startCloudSync();
+      }
+    } catch(e) {}
+
     gateAccess();
     updateSubUI();
     if (typeof renderWorkspaceControls === 'function') renderWorkspaceControls();
@@ -5971,20 +6038,19 @@ async function syncUserStatus(){
 
 
 document.addEventListener('DOMContentLoaded', async ()=>{
-  // Stripe Checkout redirect финализация.
-  // Без этого paid-пользователь может остаться "закрыт" если вебхук не дошёл.
+  // Stripe Checkout return: если пришли с session_id, завершаем сессию на сервере и форсим синк подписки.
   try {
-    const qs = new URLSearchParams(window.location.search || '');
-    const sid = qs.get('session_id');
+    const url = new URL(window.location.href);
+    const sid = url.searchParams.get('session_id');
     if (sid) {
-      await fetch('/session?session_id=' + encodeURIComponent(sid), { credentials: 'include' }).catch(()=>null);
-      qs.delete('session_id');
-      const rest = qs.toString();
-      const cleanUrl = window.location.pathname + (rest ? ('?' + rest) : '') + (window.location.hash || '');
-      try { window.history.replaceState({}, '', cleanUrl); } catch(_e) {}
+      await fetch('/session?session_id=' + encodeURIComponent(sid), { credentials: 'include' });
+      await fetch('/me?sync=1', { credentials: 'include' });
+      url.searchParams.delete('session_id');
+      window.history.replaceState({}, document.title, url.toString());
     }
-  } catch(_e) {}
-
+  } catch (e) {
+    console.warn('[Stripe] checkout session finalize failed', e);
+  }
   // Синхронизируем статус пользователя с сервером (для автоматически активированного демо)
   await syncUserStatus();
   
