@@ -5971,19 +5971,20 @@ async function syncUserStatus(){
 
 
 document.addEventListener('DOMContentLoaded', async ()=>{
-  // Stripe Checkout return: если пришли с session_id, завершаем сессию на сервере и форсим синк подписки.
+  // Stripe Checkout redirect финализация.
+  // Без этого paid-пользователь может остаться "закрыт" если вебхук не дошёл.
   try {
-    const url = new URL(window.location.href);
-    const sid = url.searchParams.get('session_id');
+    const qs = new URLSearchParams(window.location.search || '');
+    const sid = qs.get('session_id');
     if (sid) {
-      await fetch('/session?session_id=' + encodeURIComponent(sid), { credentials: 'include' });
-      await fetch('/me?sync=1', { credentials: 'include' });
-      url.searchParams.delete('session_id');
-      window.history.replaceState({}, document.title, url.toString());
+      await fetch('/session?session_id=' + encodeURIComponent(sid), { credentials: 'include' }).catch(()=>null);
+      qs.delete('session_id');
+      const rest = qs.toString();
+      const cleanUrl = window.location.pathname + (rest ? ('?' + rest) : '') + (window.location.hash || '');
+      try { window.history.replaceState({}, '', cleanUrl); } catch(_e) {}
     }
-  } catch (e) {
-    console.warn('[Stripe] checkout session finalize failed', e);
-  }
+  } catch(_e) {}
+
   // Синхронизируем статус пользователя с сервером (для автоматически активированного демо)
   await syncUserStatus();
   
