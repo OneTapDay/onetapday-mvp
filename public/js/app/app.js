@@ -5311,6 +5311,31 @@ async function syncUserStatus(){
     const user = data && data.user;
     if (!user) return;
 
+    // Auto-resync access (Stripe → server → client) once per tab if we look locked.
+    // Goal: NO manual buttons. If user paid, access should just unlock.
+    try {
+      const looksLocked = (String(user.status || '') !== 'active') || !user.endAt;
+      const triedKey = 'otd_me_force_sync_tried';
+      if (looksLocked && typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(triedKey)) {
+        sessionStorage.setItem(triedKey, String(Date.now()));
+        const rSync = await fetch('/me?sync=1', { credentials: 'include' });
+        if (rSync && rSync.ok) {
+          const dSync = await rSync.json().catch(()=>null);
+          const u2 = dSync && dSync.user;
+          if (u2) {
+            // Merge server truth back into current object
+            if (u2.role) user.role = u2.role;
+            if (u2.status) user.status = u2.status;
+            if (u2.startAt) user.startAt = u2.startAt;
+            if (u2.endAt) user.endAt = u2.endAt;
+            if (u2.discountUntil) user.discountUntil = u2.discountUntil;
+            user.isAdmin = !!u2.isAdmin;
+          }
+        }
+      }
+    } catch(_e) { /* silent */ }
+
+
     // Role + status (server source of truth)
     if (user.role) localStorage.setItem(ROLE_KEY, user.role);
     if (user.status) localStorage.setItem(STATUS_KEY, user.status);
