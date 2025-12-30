@@ -2,8 +2,6 @@
 
 require('dotenv').config();
 
-const { maybeSyncStripeForUser } = require('./server/modules/subscription');
-
 // Stripe price IDs (plans)
 // - monthly: required (fallback to STRIPE_PRICE_ID for backward compatibility)
 // - 6m / yearly: optional; set in Render env if you want these buttons enabled
@@ -34,21 +32,153 @@ try {
   console.warn('[WARN] stripe not configured or package missing — Stripe routes will fail if used.');
 }
 
+// ===== Stripe subscription resync (server-side source of truth) =====
+function _ts(){ return new Date().toISOString(); }
+
+function _pickBestSubscription(subs){
+  if (!Array.isArray(subs) || subs.length === 0) return null;
+  const now = Date.now();
+  const goodStatuses = new Set(['active','trialing','past_due','unpaid']);
+  const scored = subs
+    .filter(s => s && goodStatuses.has(String(s.status||'')))
+    .map(s => {
+      const end = Number(s.current_period_end || 0) * 1000;
+      const alive = end > now ? 1 : 0;
+      const pri = (s.status === 'active') ? 3 : (s.status === 'trialing' ? 2 : 1);
+      return { s, end, alive, pri };
+    })
+    .sort((a,b)=> (b.alive-a.alive) || (b.pri-a.pri) || (b.end-a.end));
+  return scored.length ? scored[0].s : null;
+}
+
+async function _getCustomerEmail(customerId){
+  try{
+    if (!customerId) return '';
+    const c = await stripe.customers.retrieve(customerId);
+    return (c && c.email) ? String(c.email) : '';
+  }catch(e){ return ''; }
+}
+
+function _applyAccessToUser(u, info){
+  if (!u || !info) return false;
+  const nowIso = _ts();
+  u.status = 'active';
+  u.startAt = info.startAt || nowIso;
+  u.endAt = info.endAt || u.endAt || nowIso;
+  u.demoUsed = true;
+  if (info.customerId) u.stripeCustomerId = info.customerId;
+  if (info.subId) u.stripeSubId = info.subId;
+  u.lastStripeSyncAt = nowIso;
+  u.lastStripeSource = info.source || 'stripe';
+  saveUsers();
+  return true;
+}
+
+async function stripeResyncUserFromStripe(user, opts){
+  try{
+    if (!stripe) return { ok:false, reason:'stripe_not_configured' };
+    const o = opts || {};
+    const email = normalizeEmail(user && user.email || '');
+    if (!email) return { ok:false, reason:'no_email' };
+
+    const last = user.lastStripeSyncAt ? Date.parse(user.lastStripeSyncAt) : 0;
+    const now = Date.now();
+    const minGapMs = 5 * 60 * 1000;
+    if (!o.force && last && (now - last) < minGapMs){
+      return { ok:true, skipped:true, reason:'recent' };
+    }
+
+    const customers = await stripe.customers.list({ email, limit: 10 });
+    const custs = (customers && customers.data) ? customers.data : [];
+    const subsAll = [];
+
+    for (const c of custs){
+      if (!c || !c.id) continue;
+      try{
+        const subs = await stripe.subscriptions.list({ customer: c.id, status:'all', limit: 50 });
+        const arr = (subs && subs.data) ? subs.data : [];
+        arr.forEach(s=> subsAll.push(s));
+      }catch(e){
+        console.warn('[STRIPE] subs.list failed', e && e.message ? e.message : e);
+      }
+    }
+
+    const best = _pickBestSubscription(subsAll);
+    if (!best){
+      addWebhookLog({ kind:'resync', email, ok:false, reason:'no_subscriptions_found' });
+      user.lastStripeSyncAt = _ts();
+      user.lastStripeSource = 'stripe_resync_none';
+      saveUsers();
+      return { ok:true, active:false };
+    }
+
+    const startAt = best.current_period_start ? new Date(best.current_period_start * 1000).toISOString() : _ts();
+    const endAt   = best.current_period_end   ? new Date(best.current_period_end * 1000).toISOString()   : null;
+
+    const customerId = String(best.customer || '');
+    const subId = String(best.id || '');
+
+    _applyAccessToUser(user, { startAt, endAt, customerId, subId, source: o.source || 'stripe_resync' });
+    addWebhookLog({ kind:'resync', email, ok:true, status: best.status, subId, customerId, endAt });
+
+    return { ok:true, active:true, status: best.status, subId, customerId, endAt };
+  }catch(e){
+    console.error('[STRIPE] resync error', e && e.stack ? e.stack : e);
+    addWebhookLog({ kind:'resync', ok:false, error: (e && e.message) ? e.message : String(e||'') });
+    return { ok:false, reason:'error' };
+  }
+}
+
+async function stripeSyncFromSubscriptionObject(sub, source){
+  try{
+    if (!sub) return { ok:false, reason:'no_sub' };
+    const customerId = String(sub.customer || '');
+    let email = '';
+    try{ if (sub.customer_email) email = String(sub.customer_email || ''); }catch(_){}
+    if (!email){
+      email = await _getCustomerEmail(customerId);
+    }
+    email = normalizeEmail(email);
+
+    const startAt = sub.current_period_start ? new Date(sub.current_period_start * 1000).toISOString() : _ts();
+    const endAt   = sub.current_period_end   ? new Date(sub.current_period_end * 1000).toISOString()   : null;
+    const subId = String(sub.id || '');
+
+    if (!email){
+      addWebhookLog({ kind:'webhook', ok:false, source, reason:'no_email_in_subscription', subId, customerId });
+      return { ok:false, reason:'no_email' };
+    }
+
+    const u = findUserByEmail(email);
+    if (!u){
+      addWebhookLog({ kind:'webhook', ok:false, source, reason:'user_not_found', email, subId, customerId });
+      return { ok:false, reason:'user_not_found' };
+    }
+
+    _applyAccessToUser(u, { startAt, endAt, customerId, subId, source: source || 'webhook' });
+    addWebhookLog({ kind:'webhook', ok:true, source, email, subId, customerId, endAt });
+    return { ok:true, email, subId, customerId, endAt };
+  }catch(e){
+    console.error('[WEBHOOK] subscription sync error', e && e.stack ? e.stack : e);
+    addWebhookLog({ kind:'webhook', ok:false, source, error: (e && e.message) ? e.message : String(e||'') });
+    return { ok:false, reason:'error' };
+  }
+}
+
 const app = express();
 app.set('trust proxy', 1); // needed on Render to get correct protocol/host
 const PORT = process.env.PORT || 10000;
 
 // Путь к файлу с юзерами: по умолчанию __dirname/users.json,
 // но если прописана USERS_FILE в env — используем её (на Render → /data/users.json)
-const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, 'users.json');
-
-
+const USERS_FILE = process.env.USERS_FILE || (fs.existsSync('/data') ? path.join('/data','users.json') : path.join(__dirname, 'users.json'));
 // Accountants ↔ Clients linking (MVP)
 const INVITES_FILE = process.env.INVITES_FILE || path.join(__dirname, 'invites.json');
 const REQUESTS_FILE = process.env.REQUESTS_FILE || path.join(__dirname, 'requests.json');
 
 const NOTIFICATIONS_FILE = process.env.NOTIFICATIONS_FILE || (fs.existsSync('/data') ? '/data/notifications.json' : path.join(__dirname, 'notifications.json'));
 const DOCUMENTS_FILE = process.env.DOCUMENTS_FILE || (fs.existsSync('/data') ? path.join('/data','documents.json') : path.join(__dirname,'documents.json'));
+const WEBHOOK_LOG_FILE = process.env.WEBHOOK_LOG_FILE || (fs.existsSync('/data') ? path.join('/data','stripe_webhook_log.json') : path.join(__dirname,'stripe_webhook_log.json'));
 
 function loadJsonFile(file, fallback){
   try {
@@ -66,6 +196,21 @@ function saveJsonFile(file, obj){
     fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf-8');
   } catch (e) {
     console.warn('[DATA] failed to save', file, e && e.message ? e.message : e);
+  }
+}
+
+// Stripe webhook log (debug)
+const webhookLogStore = loadJsonFile(WEBHOOK_LOG_FILE, { items: [] });
+function addWebhookLog(entry){
+  try{
+    const items = Array.isArray(webhookLogStore.items) ? webhookLogStore.items : [];
+    const clean = Object.assign({ at: new Date().toISOString() }, entry || {});
+    items.unshift(clean);
+    if (items.length > 200) items.length = 200;
+    webhookLogStore.items = items;
+    saveJsonFile(WEBHOOK_LOG_FILE, webhookLogStore);
+  }catch(e){
+    console.warn('[WEBHOOK] log failed', e && e.message ? e.message : e);
   }
 }
 const invitesStore = loadJsonFile(INVITES_FILE, { links: {} });   // key: "acc::client"
@@ -507,7 +652,6 @@ app.post('/register', (req, res) => {
     saveUsers();
 
     // create session cookie (JWT-like)
-
     setSessionCookie(res, email);
 
     console.log('[REGISTER] success', email);
@@ -519,7 +663,7 @@ app.post('/register', (req, res) => {
 });
 
 // Login
-app.post('/login', async (req, res) => {
+app.post('/login', (req, res) => {
   try {
     const emailRaw = req.body && (req.body.email || req.body.mail || req.body.login || '');
     const passRaw = req.body && (req.body.password || req.body.pass || req.body.pwd || '');
@@ -539,16 +683,6 @@ const u = findUserByEmail(email);
 
     // важно: поднять админ-флаг, если это ADMIN_EMAIL
     user = ensureAdminFlag(user);
-
-  // Stripe resync: restore paid access after deploys / session loss
-  try {
-    const force = String((req.query && req.query.force) || '') === '1';
-    if (stripe) await maybeSyncStripeForUser(stripe, user, saveUsers, { force });
-  } catch (e) {
-    console.warn('[STRIPE] /me resync failed', e && e.message ? e.message : e);
-  }
-
-  expireStatuses(user);
 
 
     if (user.hash && user.salt) {
@@ -590,14 +724,7 @@ const u = findUserByEmail(email);
       saveUsers();
       console.log(`[DEMO] Auto-activated demo for ${user.email} until ${user.endAt}`);
     }
-
-    // Try to restore paid access from Stripe (deploy-safe)
-    try {
-      if (stripe) await maybeSyncStripeForUser(stripe, user, saveUsers, { force: false });
-    } catch (e) {
-      console.warn('[STRIPE] /login resync failed', e && e.message ? e.message : e);
-    }
-
+    
     expireStatuses(user);
 
     return res.json({ success: true, user: { email: user.email, role: user.role || 'freelance_business', lang: user.lang || 'pl', status: user.status, demoUsed: !!user.demoUsed, startAt: user.startAt, endAt: user.endAt } });
@@ -655,47 +782,19 @@ app.get('/session', async (req, res) => {
       u = users[email];
     }
 
-    // если оплата прошла — активируем (по Stripe period; fallback по plan)
-    const plan = (session.metadata && session.metadata.plan) ? String(session.metadata.plan) : 'monthly';
+    // если оплата прошла — активируем на месяц
     if (session.payment_status === 'paid' || session.status === 'complete') {
       u.status = 'active';
+      u.startAt = new Date().toISOString();
+      const end = new Date();
+      end.setMonth(end.getMonth() + 1); // 1 месяц
+      u.endAt = end.toISOString();
       u.demoUsed = true;
-
-      // Store Stripe IDs for future resync
-      if (session.customer) u.stripeCustomerId = session.customer;
-      if (session.subscription) u.stripeSubscriptionId = session.subscription;
-      u.stripeLastCheckoutSessionId = session.id;
-
-      let startIso = new Date().toISOString();
-      let endIso = null;
-
-      if (session.subscription) {
-        try {
-          const sub = await stripe.subscriptions.retrieve(session.subscription);
-          if (sub && sub.current_period_start) startIso = new Date(sub.current_period_start * 1000).toISOString();
-          if (sub && sub.current_period_end) endIso = new Date(sub.current_period_end * 1000).toISOString();
-          if (sub && sub.status) u.stripeSubStatus = sub.status;
-          if (sub && sub.customer) u.stripeCustomerId = sub.customer;
-        } catch (e) {
-          console.warn('[SESSION] cannot retrieve subscription', e && e.message ? e.message : e);
-        }
-      }
-
-      if (!endIso) {
-        const end = new Date();
-        if (plan === '6m' || plan === 'm6' || plan === 'half_year') end.setMonth(end.getMonth() + 6);
-        else if (plan === 'yearly' || plan === 'annual' || plan === 'year') end.setFullYear(end.getFullYear() + 1);
-        else end.setMonth(end.getMonth() + 1);
-        endIso = end.toISOString();
-      }
-
-      u.startAt = startIso;
-      u.endAt = endIso;
-
       saveUsers();
       console.log(`[SESSION] activated via /session for ${u.email} until ${u.endAt}`);
-    }
-
+    u.demoUsed = true;      // считаем, что демо уже потрачено
+u.demoStartAt = null;   // если поле есть - обнуляем
+  }
 
     setSessionCookie(res, email);
     return res.json({ success: true, email });
@@ -786,15 +885,6 @@ app.post('/auth/google', async (req, res) => {
       console.log('[GOOGLE] login user', email);
     }
 
-    // Try to restore paid access from Stripe (deploy-safe)
-    try {
-      if (stripe) await maybeSyncStripeForUser(stripe, u, saveUsers, { force: false });
-    } catch (e) {
-      console.warn('[STRIPE] /auth/google resync failed', e && e.message ? e.message : e);
-    }
-
-    expireStatuses(u);
-
     setSessionCookie(res, email);
     return res.json({ success: true, user: { email: u.email, role: u.role, lang: u.lang, status: u.status || 'none', demoUsed: !!u.demoUsed, startAt: u.startAt || null, endAt: u.endAt || null } });
   } catch (err) {
@@ -844,6 +934,7 @@ app.post('/activate-discount', (req, res) => {
 });
 
 // whoami / me
+
 app.get('/me', async (req, res) => {
   let user = getUserBySession(req);
   if (!user) {
@@ -851,8 +942,21 @@ app.get('/me', async (req, res) => {
   }
 
   expireStatuses(user);
-  // гарантируем, что ADMIN_EMAIL всегда поднимается до админа
   user = ensureAdminFlag(user);
+
+  try{
+    const force = String((req.query && (req.query.sync || req.query.force)) || '') === '1';
+    const endTs = user.endAt ? Date.parse(user.endAt) : 0;
+    const soon = endTs ? ((endTs - Date.now()) < (2 * 24 * 3600 * 1000)) : true; // <2 days
+    const needs = force || (user.status !== 'active') || !user.endAt || soon;
+
+    if (needs) {
+      await stripeResyncUserFromStripe(user, { force, source: 'me_auto' });
+      expireStatuses(user);
+    }
+  }catch(e){
+    console.warn('[STRIPE] /me auto-resync failed', e && e.message ? e.message : e);
+  }
 
   const safe = Object.assign({}, user);
   delete safe.hash;
@@ -2429,6 +2533,7 @@ app.post('/create-checkout-session', async (req, res) => {
       customer_email: user.email,
       allow_promotion_codes: true,
       metadata: { email: user.email, plan },
+      subscription_data: { metadata: { email: user.email, plan } },
       success_url: `${baseUrl}/app.html?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${baseUrl}/app.html?cancel=1`
     });
@@ -2442,6 +2547,7 @@ app.post('/create-checkout-session', async (req, res) => {
 
 
 // Stripe webhook — use express.raw to verify signature
+
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   if (!stripe) {
     console.warn('[WEBHOOK] stripe not configured');
@@ -2455,8 +2561,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET || '');
   } catch (err) {
     console.error('[WEBHOOK] signature verification failed', err && err.message ? err.message : err);
+    addWebhookLog({ kind:'webhook', ok:false, reason:'bad_signature', error: (err && err.message) ? err.message : String(err||'') });
     return res.status(400).send(`Webhook Error: ${err && err.message ? err.message : 'invalid'}`);
   }
+
+  addWebhookLog({ kind:'webhook_in', ok:true, id: event.id, type: event.type, created: event.created });
 
   try {
     if (event.type === 'checkout.session.completed') {
@@ -2470,21 +2579,20 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
       const plan = (session.metadata && session.metadata.plan) ? String(session.metadata.plan) : 'monthly';
 
-      // Prefer Stripe subscription period dates (accurate for monthly / 6m / yearly).
       let startIso = new Date().toISOString();
       let endIso = null;
 
+      let subObj = null;
       if (session.subscription) {
         try {
-          const sub = await stripe.subscriptions.retrieve(session.subscription);
-          if (sub && sub.current_period_start) startIso = new Date(sub.current_period_start * 1000).toISOString();
-          if (sub && sub.current_period_end) endIso = new Date(sub.current_period_end * 1000).toISOString();
+          subObj = await stripe.subscriptions.retrieve(session.subscription);
+          if (subObj && subObj.current_period_start) startIso = new Date(subObj.current_period_start * 1000).toISOString();
+          if (subObj && subObj.current_period_end) endIso = new Date(subObj.current_period_end * 1000).toISOString();
         } catch (e) {
           console.warn('[WEBHOOK] cannot retrieve subscription', e && e.message ? e.message : e);
         }
       }
 
-      // Fallback if Stripe didn't give us the subscription period.
       if (!endIso) {
         const end = new Date();
         if (plan === '6m' || plan === 'm6' || plan === 'half_year') end.setMonth(end.getMonth() + 6);
@@ -2493,62 +2601,100 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         endIso = end.toISOString();
       }
 
-      if (email) {
-        let u = findUserByEmail(email);
-
-        // If user record doesn't exist (e.g., after deploy without persistent disk),
-        // create it so paid users don't get locked out.
-        if (!u) {
-          const salt = genSalt(16);
-          const fakePwd = genSalt(8);
-          const storedHash = hashPassword(fakePwd, salt);
-          users[email] = {
-            email,
-            lang: 'pl',
-            salt,
-            hash: storedHash,
-            status: 'none',
-            startAt: null,
-            endAt: null,
-            discountUntil: null,
-            demoUsed: false,
-            appState: {},
-            isAdmin: email === ADMIN_EMAIL
-          };
-          saveUsers();
-          u = users[email];
-        }
-
+      const em = normalizeEmail(email);
+      if (em) {
+        const u = findUserByEmail(em);
         if (u) {
-          u.status = 'active';
-          u.startAt = startIso;
-          u.endAt = endIso;
-          u.demoUsed = true; // they paid — treat demo as used
-          if (session.customer) u.stripeCustomerId = session.customer;
-          if (session.subscription) u.stripeSubscriptionId = session.subscription;
-          u.stripeLastCheckoutSessionId = session.id;
-
-          // try to store real Stripe status (optional)
-          if (session.subscription) {
-            try {
-              const sub2 = await stripe.subscriptions.retrieve(session.subscription);
-              if (sub2 && sub2.status) u.stripeSubStatus = sub2.status;
-              if (sub2 && sub2.customer) u.stripeCustomerId = sub2.customer;
-            } catch (e) {}
-          }
-
-          saveUsers();
+          _applyAccessToUser(u, {
+            startAt: startIso,
+            endAt: endIso,
+            customerId: (subObj && subObj.customer) ? String(subObj.customer) : '',
+            subId: (subObj && subObj.id) ? String(subObj.id) : '',
+            source: 'webhook_checkout_completed'
+          });
           console.log(`[WEBHOOK] activated subscription for ${u.email} until ${u.endAt}`);
+          addWebhookLog({ kind:'webhook', ok:true, source:'checkout.session.completed', email: em, endAt: endIso });
+        } else {
+          addWebhookLog({ kind:'webhook', ok:false, source:'checkout.session.completed', reason:'user_not_found', email: em });
         }
+      }
+    }
+
+    if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated') {
+      const sub = event.data.object;
+      await stripeSyncFromSubscriptionObject(sub, event.type);
+    }
+
+    if (event.type === 'invoice.paid') {
+      const invoice = event.data.object;
+      if (invoice && invoice.subscription) {
+        try{
+          const sub = await stripe.subscriptions.retrieve(invoice.subscription);
+          await stripeSyncFromSubscriptionObject(sub, 'invoice.paid');
+        }catch(e){
+          console.warn('[WEBHOOK] invoice.paid: cannot retrieve subscription', e && e.message ? e.message : e);
+          addWebhookLog({ kind:'webhook', ok:false, source:'invoice.paid', reason:'cannot_retrieve_subscription', error: (e && e.message) ? e.message : String(e||'') });
+        }
+      } else {
+        addWebhookLog({ kind:'webhook', ok:false, source:'invoice.paid', reason:'no_subscription_on_invoice' });
+      }
+    }
+
+    if (event.type === 'customer.subscription.deleted') {
+      const sub = event.data.object;
+      const customerId = sub ? String(sub.customer || '') : '';
+      const email = normalizeEmail(await _getCustomerEmail(customerId));
+
+      if (email) {
+        const u = findUserByEmail(email);
+        if (u) {
+          u.status = 'ended';
+          u.endAt = new Date().toISOString();
+          u.lastStripeSyncAt = _ts();
+          u.lastStripeSource = 'customer.subscription.deleted';
+          saveUsers();
+          addWebhookLog({ kind:'webhook', ok:true, source:'customer.subscription.deleted', email, customerId });
+        } else {
+          addWebhookLog({ kind:'webhook', ok:false, source:'customer.subscription.deleted', reason:'user_not_found', email, customerId });
+        }
+      } else {
+        addWebhookLog({ kind:'webhook', ok:false, source:'customer.subscription.deleted', reason:'no_email', customerId });
       }
     }
   } catch (e) {
     console.error('[WEBHOOK] handler error', e && e.stack ? e.stack : e);
+    addWebhookLog({ kind:'webhook', ok:false, reason:'handler_error', error: (e && e.message) ? e.message : String(e||'') });
   }
 
   return res.json({ received: true });
 });
 
+
+
+// Админ: посмотреть последние Stripe webhook события (для отладки)
+app.get('/admin/webhook-log', (req, res) => {
+  const me = getUserBySession(req);
+  if (!me || !me.isAdmin) return res.status(403).json({ success:false, error:'Forbidden' });
+  const items = (webhookLogStore && Array.isArray(webhookLogStore.items)) ? webhookLogStore.items : [];
+  return res.json({ success:true, items: items.slice(0, 100) });
+});
+
+// Админ: форс-ресинк подписки пользователя из Stripe (если webhook не дошёл)
+app.get('/admin/stripe-resync', async (req, res) => {
+  const me = getUserBySession(req);
+  if (!me || !me.isAdmin) return res.status(403).json({ success:false, error:'Forbidden' });
+
+  const emailQ = normalizeEmail((req.query && req.query.email) || '');
+  if (!emailQ) return res.status(400).json({ success:false, error:'missing email' });
+
+  const u = findUserByEmail(emailQ);
+  if (!u) return res.status(404).json({ success:false, error:'user not found' });
+
+  const r = await stripeResyncUserFromStripe(u, { force:true, source:'admin_resync' });
+  const safe = Object.assign({}, u);
+  delete safe.hash; delete safe.salt;
+  return res.json({ success:true, result:r, user:safe });
+});
 
 // Админ-роут: активировать пользователя по email
 app.get('/admin/activate-user', (req, res) => {
@@ -2567,27 +2713,9 @@ app.get('/admin/activate-user', (req, res) => {
     return res.status(400).json({ success: false, error: 'missing email' });
   }
 
-  let u = findUserByEmail(emailQ);
+  const u = findUserByEmail(emailQ);
   if (!u) {
-    // allow manual grant even if the user record doesn't exist yet
-    const salt = genSalt(16);
-    const fakePwd = genSalt(8);
-    const storedHash = hashPassword(fakePwd, salt);
-    users[emailQ] = {
-      email: emailQ,
-      lang: 'pl',
-      salt,
-      hash: storedHash,
-      status: 'none',
-      startAt: null,
-      endAt: null,
-      discountUntil: null,
-      demoUsed: false,
-      appState: {},
-      isAdmin: emailQ === ADMIN_EMAIL
-    };
-    saveUsers();
-    u = users[emailQ];
+    return res.status(404).json({ success: false, error: 'user not found' });
   }
 
   u.status = 'active';
@@ -2649,34 +2777,6 @@ app.get('/admin/grant-free', (req, res) => {
   return res.json({ success: true, user: safe });
 });
 
-
-
-// Админ-роут: принудительная синхронизация статуса из Stripe по email
-app.get('/admin/resync-stripe', async (req, res) => {
-  const me = getUserBySession(req);
-  if (!me || !me.isAdmin) return res.status(403).json({ success: false, error: 'Forbidden' });
-
-  if (!stripe) return res.status(501).json({ success: false, error: 'stripe not configured' });
-
-  const emailQ = normalizeEmail(
-    (req.query && req.query.email) ||
-    (req.body && (req.body.email || req.body.mail || req.body.login)) ||
-    ''
-  );
-  if (!emailQ) return res.status(400).json({ success: false, error: 'missing email' });
-
-  let u = findUserByEmail(emailQ);
-  if (!u) return res.status(404).json({ success: false, error: 'user not found' });
-
-  try {
-    const r = await maybeSyncStripeForUser(stripe, u, saveUsers, { force: true });
-    const safe = Object.assign({}, u);
-    delete safe.hash; delete safe.salt;
-    return res.json({ success: true, updated: !!r.updated, reason: r.reason, user: safe, entitlement: r.entitlement || null });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: e && e.message ? e.message : 'resync failed' });
-  }
-});
 
 // Admin helpers
 app.post('/mark-paid', (req, res) => {
