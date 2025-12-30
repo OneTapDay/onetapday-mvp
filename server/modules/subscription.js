@@ -106,7 +106,7 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
       const sub = await stripe.subscriptions.retrieve(user.stripeSubId);
       const custId = (typeof sub.customer === 'string') ? sub.customer : null;
       const cust = custId ? await stripe.customers.retrieve(custId) : null;
-      applyStripeSubscriptionToUser(user, sub, cust || {});
+      applyStripeSubscriptionToUser(user, cust || {}, sub);
       user.lastStripeSyncAt = now.toISOString();
       await saveUsers();
       return true;
@@ -120,7 +120,7 @@ async function maybeSyncUserFromStripe(stripe, user, saveUsers, opts) {
       const best = pickBestSub(subs.data || []);
       if (best && ['active','trialing','past_due'].includes(best.status)) {
         const cust = await stripe.customers.retrieve(user.stripeCustomerId);
-        applyStripeSubscriptionToUser(user, best, cust || {});
+        applyStripeSubscriptionToUser(user, cust || {}, best);
         user.lastStripeSyncAt = now.toISOString();
         await saveUsers();
         return true;
@@ -231,7 +231,7 @@ async function handleStripeEvent(event, ctx) {
       const u = findUserByEmail(email);
       if (!u) return null;
 
-      applyStripeSubscriptionToUser(u, sub, cust || {});
+      applyStripeSubscriptionToUser(u, cust || {}, sub);
       u.stripeCustomerId = custId || u.stripeCustomerId || null;
       u.stripeSubId = sub.id || u.stripeSubId || null;
 
