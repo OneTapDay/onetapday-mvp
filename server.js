@@ -799,11 +799,14 @@ app.get('/me', async (req, res) => {
     return res.status(401).json({ success: false, error: 'Not authenticated' });
   }
 
+  // Client can request a hard Stripe resync: /me?sync=1
+  const forceSync = String((req.query && (req.query.sync || req.query.force)) || '') === '1';
+
   // Auto-heal access after deploys / missed webhooks:
   // If Stripe says the user is active, we update local status here.
   try {
     if (stripe) {
-      await maybeSyncUserFromStripe(stripe, user, saveUsers);
+      await maybeSyncUserFromStripe(stripe, user, saveUsers, { force: forceSync });
     }
   } catch (e) {
     console.warn('[STRIPE] /me autosync failed:', e && e.message ? e.message : e);
