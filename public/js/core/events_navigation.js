@@ -1452,59 +1452,6 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   let chunks = [];
   let opId = 0; // cancel stale callbacks
 
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let sr = null;
-  let srFinal = '';
-  let srInterim = '';
-  let srBase = '';
-
-  function _updateAiPreview(){
-    if(!recording) return;
-    const live = (String(srFinal||'') + ' ' + String(srInterim||'')).trim();
-    const base = String(srBase||'').trim();
-    inp.value = (base ? (base + ' ') : '') + live;
-  }
-
-  function _startAiPreview(){
-    if(!SR) return;
-    try{
-      if(sr) return;
-      srFinal = '';
-      srInterim = '';
-      sr = new SR();
-      sr.lang = getLang();
-      sr.interimResults = true;
-      sr.continuous = true;
-      sr.onresult = (ev)=>{
-        try{
-          let fin = '';
-          let inter = '';
-          for(let i = ev.resultIndex || 0; i < ev.results.length; i++){
-            const res = ev.results[i];
-            const tr = res && res[0] ? String(res[0].transcript || '').trim() : '';
-            if(!tr) continue;
-            if(res.isFinal) fin += (fin ? ' ' : '') + tr;
-            else inter = tr;
-          }
-          if(fin) srFinal = (srFinal ? (srFinal + ' ') : '') + fin;
-          srInterim = inter || '';
-          _updateAiPreview();
-        }catch(_e){}
-      };
-      sr.onerror = ()=>{};
-      sr.onend = ()=>{ sr = null; srInterim = ''; _updateAiPreview(); };
-      sr.start();
-    }catch(_e){
-      sr = null;
-    }
-  }
-
-  function _stopAiPreview(){
-    try{ if(sr) sr.stop(); }catch(_){}
-    sr = null;
-    srInterim = '';
-  }
-
   function setUI(on){
     recording = on;
     btn.classList.toggle('is-recording', !!on);
@@ -1573,34 +1520,25 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     if(recording) return;
     const my = ++opId;
 
-
-    srBase = String(inp.value || '').trim();
-
     // Prefer stable flow: record → server STT
     if(navigator.mediaDevices && window.MediaRecorder){
       try{
         await startMedia();
         setUI(true);
-        _startAiPreview();
         mediaRec.onstop = async ()=>{
           const mine = my;
           const localChunks = chunks.slice();
           const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
           setUI(false);
           stopTracks();
-          _cashPreviewStop();
-
-          _cashPreviewStop();
-
-          _stopAiPreview();
 
           if(mine !== opId) return; // cancelled
           try{
             const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
             const text = await transcribe(blob, mime);
             if(!text) return;
-            const base = String(srBase || '').trim();
-            inp.value = (base ? (base + ' ') : '') + text;
+            const prev = String(inp.value || '').trim();
+            inp.value = (prev ? (prev + ' ') : '') + text;
             try{ inp.focus(); }catch(_){}
           }catch(e){
             // If STT is not available, do not spam the chat. Just show a minimal error.
@@ -1615,11 +1553,11 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
         // fallthrough to Web Speech if available
         stopTracks();
         setUI(false);
-        _stopAiPreview();
       }
     }
 
-    // Fallback: Web Speech API (device-dependent) with live preview
+    // Fallback: Web Speech API (device-dependent)
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SR){
       if(typeof pushMsg === 'function'){
         pushMsg('assistant', TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере.'));
@@ -1628,9 +1566,26 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     }
 
     try{
+      const rec = new SR();
+      rec.lang = getLang();
+      rec.interimResults = false;
+      rec.continuous = false;
+
       setUI(true);
-      _startAiPreview();
-      return;
+      rec.onresult = (ev)=>{
+        try{
+          const t = ev.results && ev.results[0] && ev.results[0][0] ? ev.results[0][0].transcript : '';
+          const text = String(t || '').trim();
+          if(text){
+            const prev = String(inp.value || '').trim();
+            inp.value = (prev ? (prev + ' ') : '') + text;
+            try{ inp.focus(); }catch(_){}
+          }
+        }catch(_){}
+      };
+      rec.onerror = ()=> setUI(false);
+      rec.onend = ()=> setUI(false);
+      rec.start();
     }catch(_e){
       setUI(false);
       if(typeof pushMsg === 'function'){
@@ -1642,7 +1597,6 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   function stop(){
     // Stop either MediaRecorder or SpeechRecognition (if running)
     const my = ++opId;
-    _stopAiPreview();
     try{
       if(mediaRec && mediaRec.state !== 'inactive'){
         mediaRec.stop();
@@ -2065,79 +2019,55 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
   });
 });// Speech
 
-// Cash voice (stable): record → transcribe → prefill cash sheet (NO auto-save)
+// Cash voice (live): show transcript while speaking → on Stop prefill cash sheet (NO auto-save)
 (function(){
-  const micBtn    = $id('micBtn');
-  const micStatus = $id('micStatus');
-
+  const micBtn = $id('micBtn');
   if(!micBtn) return;
 
   // Prevent duplicate listeners after re-renders / re-inits
   if(micBtn.dataset && micBtn.dataset.voiceBound === '1') return;
   try{ micBtn.dataset.voiceBound = '1'; }catch(_){}
 
-  let recording = false;
-  let mediaRec = null;
-  let mediaStream = null;
-  let chunks = [];
-  let opId = 0;
-
-  const SR_CASH = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let cashSr = null;
-  let cashFinal = '';
-  let cashInterim = '';
-
-  function _cashPreviewUpdate(){
-    if(!recording) return;
-    const live = (String(cashFinal||'') + ' ' + String(cashInterim||'')).trim();
-    if(live) setStatus('🎙️ ' + live);
+  // ---------- UI: small dark overlay with live text ----------
+  function ensureOverlay(){
+    let el = document.getElementById('cashVoiceOverlay');
+    if(el) return el;
+    el = document.createElement('div');
+    el.id = 'cashVoiceOverlay';
+    el.style.cssText = [
+      'position:fixed',
+      'left:50%',
+      'transform:translateX(-50%)',
+      'bottom:110px',
+      'max-width:min(92vw,520px)',
+      'padding:10px 12px',
+      'background:rgba(0,0,0,.58)',
+      'color:#fff',
+      'border:1px solid rgba(255,255,255,.12)',
+      'border-radius:14px',
+      'font-size:14px',
+      'line-height:1.25',
+      'z-index:9999',
+      'backdrop-filter:blur(10px)',
+      'display:none',
+      'white-space:pre-wrap'
+    ].join(';');
+    document.body.appendChild(el);
+    return el;
   }
-
-  function _cashPreviewStart(){
-    if(!SR_CASH) return;
+  function setStatus(t, keepOpen){
     try{
-      if(cashSr) return;
-      cashFinal = '';
-      cashInterim = '';
-      cashSr = new SR_CASH();
-      cashSr.lang = localStorage.getItem('speechLang') || 'pl-PL';
-      cashSr.interimResults = true;
-      cashSr.continuous = true;
-      cashSr.onresult = (ev)=>{
-        try{
-          let fin = '';
-          let inter = '';
-          for(let i = ev.resultIndex || 0; i < ev.results.length; i++){
-            const res = ev.results[i];
-            const tr = res && res[0] ? String(res[0].transcript || '').trim() : '';
-            if(!tr) continue;
-            if(res.isFinal) fin += (fin ? ' ' : '') + tr;
-            else inter = tr;
-          }
-          if(fin) cashFinal = (cashFinal ? (cashFinal + ' ') : '') + fin;
-          cashInterim = inter || '';
-          _cashPreviewUpdate();
-        }catch(_e){}
-      };
-      cashSr.onerror = ()=>{};
-      cashSr.onend = ()=>{ cashSr = null; cashInterim = ''; _cashPreviewUpdate(); };
-      cashSr.start();
-    }catch(_e){
-      cashSr = null;
-    }
+      const el = ensureOverlay();
+      el.textContent = String(t || '');
+      el.style.display = t ? 'block' : 'none';
+      if(!keepOpen && t){
+        clearTimeout(el.__hideT);
+        el.__hideT = setTimeout(()=>{ try{ el.style.display='none'; }catch(_){ } }, 3500);
+      }
+    }catch(_){}
   }
 
-  function _cashPreviewStop(){
-    try{ if(cashSr) cashSr.stop(); }catch(_){}
-    cashSr = null;
-    cashInterim = '';
-  }
-
-function setStatus(t){
-    try{ if(micStatus) micStatus.textContent = t; }catch(_){}
-  }
   function setUI(on){
-    recording = !!on;
     micBtn.classList.toggle('on', !!on);
     try{
       const ico = micBtn.querySelector('.q-ico');
@@ -2145,58 +2075,28 @@ function setStatus(t){
     }catch(_){}
   }
 
-  function stopTracks(){
+  // ---------- Helpers ----------
+  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
+  function getLang(){
     try{
-      if(mediaStream){
-        mediaStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){ } });
-      }
-    }catch(_){}
-    mediaStream = null;
+      const s = String(localStorage.getItem('speechLang') || '').trim();
+      if(s) return s;
+      const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
+      return langMap[k] || 'pl-PL';
+    }catch(_){ return 'pl-PL'; }
   }
 
   function showCashSheet(kind){
-    // show sheet
     const back = $id('cashSheetBackdrop');
     if(back) back.style.display = 'flex';
 
-    // set kind AFTER opening, to avoid UI defaults overriding it
-    setTimeout(()=>{
-      try{
-        if(kind === 'przyjęcie') $id('cashTypeIn')?.click();
-        else $id('cashTypeOut')?.click();
-      }catch(_e){}
-      setTimeout(()=>{ try{ $id('quickAmt')?.focus(); }catch(_e){} }, 30);
-    }, 30);
-  }
-
-  function blobToBase64(blob){
-    return new Promise((resolve, reject)=>{
-      try{
-        const r = new FileReader();
-        r.onload = ()=> {
-          const s = String(r.result || '');
-          const b64 = s.includes(',') ? s.split(',')[1] : s;
-          resolve(b64);
-        };
-        r.onerror = ()=> reject(r.error || new Error('FileReader error'));
-        r.readAsDataURL(blob);
-      }catch(e){ reject(e); }
-    });
-  }
-
-  async function transcribe(blob, mime){
-    const b64 = await blobToBase64(blob);
-    const r = await fetch(`${API_BASE}/ai/transcribe`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ audio: b64, mime: mime || blob.type || 'audio/webm', language: localStorage.getItem('speechLang') || 'pl-PL' })
-    });
-    const j = await r.json().catch(()=> ({}));
-    if(!r.ok || !j || j.success !== true){
-      throw new Error((j && j.error) ? j.error : ('Transcribe failed ' + r.status));
+    if(kind === 'przyjęcie'){
+      $id('cashTypeIn')?.click();
+    }else{
+      $id('cashTypeOut')?.click();
     }
-    return String(j.text || '').trim();
+
+    setTimeout(()=>{ try{ $id('quickAmt')?.focus(); }catch(_){ } }, 50);
   }
 
   function parseCash(text){
@@ -2220,7 +2120,7 @@ function setStatus(t){
     const num = numMatch ? numMatch[1] : '';
     const amount = num ? (typeof asNum === 'function' ? asNum(num) : Number(String(num).replace(',','.'))) : null;
 
-    // note cleanup: remove amount + common filler words
+    // note cleanup
     let note = raw;
     try{
       note = note
@@ -2232,6 +2132,156 @@ function setStatus(t){
     }catch(_){ note = raw; }
 
     return { kind, amount, note, raw };
+  }
+
+  function prefillFromText(text){
+    const t = String(text || '').trim();
+    if(!t){
+      setStatus('🎙️ Пусто', false);
+      return;
+    }
+    const parsed = parseCash(t);
+    setStatus('🎙️ ' + t, false);
+
+    // open sheet and prefill
+    showCashSheet(parsed.kind);
+    if(parsed.amount && isFinite(parsed.amount)){
+      const amtEl = $id('quickAmt');
+      if(amtEl) amtEl.value = Math.abs(parsed.amount).toFixed(2);
+    }
+    const noteEl = $id('quickNote');
+    if(noteEl) noteEl.value = parsed.note || t;
+
+    // IMPORTANT: do NOT auto-save. User confirms by tapping "Zapisz".
+  }
+
+  // ---------- Mode A: Live transcription via Web Speech API (best UX) ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let speechRec = null;
+  let liveText = '';
+  let isRecording = false;
+  let finalizePending = false;
+  let opId = 0;
+
+  function startLive(){
+    if(!SR) return false;
+    try{
+      liveText = '';
+      finalizePending = false;
+
+      speechRec = new SR();
+      speechRec.lang = getLang();
+      speechRec.continuous = true;
+      speechRec.interimResults = true;
+      speechRec.maxAlternatives = 1;
+
+      speechRec.onresult = (e)=>{
+        try{
+          let finalT = '';
+          let interimT = '';
+          for(let i = e.resultIndex; i < e.results.length; i++){
+            const r = e.results[i];
+            const chunk = (r && r[0] && r[0].transcript) ? String(r[0].transcript) : '';
+            if(!chunk) continue;
+            if(r.isFinal) finalT += chunk + ' ';
+            else interimT += chunk + ' ';
+          }
+          const merged = (finalT + interimT).trim();
+          if(merged){
+            liveText = merged;
+            setStatus('🎙️ ' + merged, true);
+          }else{
+            setStatus('🎙️ ...', true);
+          }
+        }catch(_){}
+      };
+      speechRec.onerror = (e)=>{
+        setStatus('🎙️ Ошибка голоса: ' + (e && e.error ? e.error : ''), false);
+      };
+      speechRec.onend = ()=>{
+        // If user pressed Stop, finalize using the last captured text.
+        const pending = finalizePending;
+        const text = String(liveText || '').trim();
+        speechRec = null;
+        finalizePending = false;
+        isRecording = false;
+        setUI(false);
+        if(pending){
+          prefillFromText(text);
+        }else{
+          // auto-ended (no manual stop)
+          if(text) prefillFromText(text);
+          else setStatus('', false);
+        }
+      };
+
+      isRecording = true;
+      setUI(true);
+      setStatus('🎙️ ...', true);
+      speechRec.start();
+      return true;
+    }catch(_e){
+      speechRec = null;
+      return false;
+    }
+  }
+
+  function stopLive(){
+    try{
+      finalizePending = true;
+      setStatus('🎙️ Обрабатываю…', true);
+      speechRec && speechRec.stop();
+    }catch(_){
+      // If stop fails, hard reset.
+      speechRec = null;
+      finalizePending = false;
+      isRecording = false;
+      setUI(false);
+    }
+  }
+
+  // ---------- Mode B: Server STT fallback (no live text, but works where SR isn't available) ----------
+  let mediaRec = null;
+  let mediaStream = null;
+  let chunks = [];
+
+  function stopTracks(){
+    try{
+      if(mediaStream){
+        mediaStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){ } });
+      }
+    }catch(_){}
+    mediaStream = null;
+  }
+
+  function blobToBase64(blob){
+    return new Promise((resolve, reject)=>{
+      try{
+        const r = new FileReader();
+        r.onload = ()=> {
+          const s = String(r.result || '');
+          const b64 = s.includes(',') ? s.split(',')[1] : s;
+          resolve(b64);
+        };
+        r.onerror = ()=> reject(r.error || new Error('FileReader error'));
+        r.readAsDataURL(blob);
+      }catch(e){ reject(e); }
+    });
+  }
+
+  async function transcribe(blob, mime){
+    const b64 = await blobToBase64(blob);
+    const r = await fetch(`${API_BASE}/ai/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ audio: b64, mime: mime || blob.type || 'audio/webm', language: getLang() })
+    });
+    const j = await r.json().catch(()=> ({}));
+    if(!r.ok || !j || j.success !== true){
+      throw new Error((j && j.error) ? j.error : ('Transcribe failed ' + r.status));
+    }
+    return String(j.text || '').trim();
   }
 
   async function startMedia(){
@@ -2253,119 +2303,76 @@ function setStatus(t){
     return true;
   }
 
-  async function start(){
-    if(recording) return;
+  async function startServerSTT(){
     const my = ++opId;
-
-    // Prefer stable flow: record → server STT
-    if(navigator.mediaDevices && window.MediaRecorder){
-      try{
-        await startMedia();
-        setUI(true);
-        setStatus('🎙️ Запись… говори, текст появится сверху. Нажми ещё раз чтобы остановить');
-        _cashPreviewStart();
-        mediaRec.onstop = async ()=>{
-          const mine = my;
-          const localChunks = chunks.slice();
-          const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
-          setUI(false);
-    stopTracks();
-    _cashPreviewStop();
-
-
-          if(mine !== opId) return; // cancelled
-          try{
-            const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
-            const text = await transcribe(blob, mime);
-            if(!text){ setStatus('🎙️ Пусто'); return; }
-
-            const parsed = parseCash(text);
-            setStatus('🎙️ ' + text);
-
-            // open sheet and prefill
-            showCashSheet(parsed.kind);
-            if(parsed.amount && isFinite(parsed.amount)){
-              const amtEl = $id('quickAmt');
-              if(amtEl) amtEl.value = Math.abs(parsed.amount).toFixed(2);
-            }
-            const noteEl = $id('quickNote');
-            if(noteEl) noteEl.value = parsed.note || text;
-
-            // IMPORTANT: do NOT auto-save. User confirms by tapping "Zapisz".
-          }catch(e){
-            setStatus('🎙️ Не смог распознать. Проверь AI ключ / доступ.');
-          }
-        };
-        mediaRec.start();
-        return;
-      }catch(_e){
-        stopTracks();
-        setUI(false);
-        _cashPreviewStop();
-      }
-    }
-
-    // Fallback: Web Speech API
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if(!SR){
-      setStatus('🎙️ Голос недоступен в этом браузере');
-      return;
-    }
+    if(!(navigator.mediaDevices && window.MediaRecorder)) return false;
 
     try{
-      const rec = new SR();
-      rec.continuous = false;
-      rec.interimResults = false;
-      rec.maxAlternatives = 1;
-      rec.lang = localStorage.getItem('speechLang') || 'pl-PL';
-
+      await startMedia();
+      isRecording = true;
       setUI(true);
-      setStatus('🎙️ Слушаю…');
+      setStatus('🎙️ Запись…', true);
 
-      rec.onresult = (e)=>{
-        const text = (e.results[0][0].transcript || '').trim();
-        if(!text){ setStatus('🎙️ Пусто'); return; }
-        const parsed = parseCash(text);
-        setStatus('🎙️ ' + text);
-        showCashSheet(parsed.kind);
-        if(parsed.amount && isFinite(parsed.amount)){
-          const amtEl = $id('quickAmt');
-          if(amtEl) amtEl.value = Math.abs(parsed.amount).toFixed(2);
+      mediaRec.onstop = async ()=>{
+        const mine = my;
+        const localChunks = chunks.slice();
+        const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
+        isRecording = false;
+        setUI(false);
+        stopTracks();
+
+        if(mine !== opId) return; // cancelled
+        try{
+          setStatus('🎙️ Обрабатываю…', true);
+          const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
+          const text = await transcribe(blob, mime);
+          prefillFromText(text);
+        }catch(_e){
+          setStatus('🎙️ Не смог распознать. Проверь AI ключ / доступ.', false);
         }
-        const noteEl = $id('quickNote');
-        if(noteEl) noteEl.value = parsed.note || text;
       };
-      rec.onerror = (e)=>{ setStatus('🎙️ Ошибка: ' + (e && e.error ? e.error : '')); };
-      rec.onend = ()=> setUI(false);
 
-      rec.start();
-    }catch(e){
+      mediaRec.start();
+      return true;
+    }catch(_e){
+      stopTracks();
+      isRecording = false;
       setUI(false);
-      setStatus('🎙️ Ошибка голоса: ' + (e && e.message ? e.message : ''));
+      return false;
     }
   }
 
-  function stop(){
-    const my = ++opId;
+  function stopServerSTT(){
     try{
       if(mediaRec && mediaRec.state !== 'inactive'){
-        setStatus('🎙️ Обрабатываю…');
+        setStatus('🎙️ Обрабатываю…', true);
         mediaRec.stop();
         return;
       }
     }catch(_){}
+    isRecording = false;
     setUI(false);
-          stopTracks();
-          _cashPreviewStop();
-
+    stopTracks();
   }
 
+  // ---------- Click handler ----------
   micBtn.addEventListener('click', ()=>{
-    if(recording) stop();
-    else start();
+    if(isRecording){
+      if(speechRec) stopLive();
+      else stopServerSTT();
+      return;
+    }
+
+    // Prefer live UX (as in ChatGPT): show text while speaking.
+    const okLive = startLive();
+    if(okLive) return;
+
+    // Fallback to server STT (record → transcribe)
+    startServerSTT();
   });
 
-})();/* === Settings MVP bindings (Save/Clear) ===
+})();
+/* === Settings MVP bindings (Save/Clear) ===
    Keep this tiny and stable: settings screen is intentionally minimal now.
 */
 (function(){
