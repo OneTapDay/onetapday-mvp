@@ -2579,55 +2579,6 @@ function _aiAllow(key){
   return true;
 }
 
-const OTD_AI_ENABLED = String(process.env.OTD_AI_ENABLED || '1') !== '0';
-const OTD_AI_REQS_PER_DAY = parseInt(process.env.OTD_AI_REQS_PER_DAY || '500', 10);
-const OTD_AI_TOKENS_PER_DAY = parseInt(process.env.OTD_AI_TOKENS_PER_DAY || '200000', 10);
-
-const _aiDaily = new Map(); // key -> { dayId, reqs, tokens }
-function _aiDayId(){
-  // UTC date, stable across hosts
-  return new Date().toISOString().slice(0, 10);
-}
-function _n(x){
-  const n = typeof x === 'number' ? x : parseInt(String(x||''), 10);
-  return Number.isFinite(n) ? n : 0;
-}
-function _usageTotalTokens(u){
-  if(!u || typeof u !== 'object') return 0;
-  if(u.total_tokens != null) return _n(u.total_tokens);
-  const a = _n(u.input_tokens) + _n(u.output_tokens);
-  if(a) return a;
-  const b = _n(u.prompt_tokens) + _n(u.completion_tokens);
-  if(b) return b;
-  return 0;
-}
-function _aiDailyGet(key){
-  const dayId = _aiDayId();
-  const rec = _aiDaily.get(key);
-  if(!rec || rec.dayId !== dayId){
-    const fresh = { dayId, reqs: 0, tokens: 0 };
-    _aiDaily.set(key, fresh);
-    return fresh;
-  }
-  return rec;
-}
-function _aiAllowDaily(key){
-  if(OTD_AI_REQS_PER_DAY <= 0 && OTD_AI_TOKENS_PER_DAY <= 0) return true;
-  const rec = _aiDailyGet(key);
-  if(OTD_AI_REQS_PER_DAY > 0 && rec.reqs >= OTD_AI_REQS_PER_DAY) return false;
-  if(OTD_AI_TOKENS_PER_DAY > 0 && rec.tokens >= OTD_AI_TOKENS_PER_DAY) return false;
-  rec.reqs += 1;
-  return true;
-}
-function _aiAddTokens(key, usage){
-  if(OTD_AI_TOKENS_PER_DAY <= 0) return 0;
-  const rec = _aiDailyGet(key);
-  const t = _usageTotalTokens(usage);
-  if(t > 0) rec.tokens += t;
-  return rec.tokens;
-}
-
-
 function _aiSystemPrompt(){
   return [
     'You are OneTapDay AI‑CFO.',
@@ -2719,10 +2670,6 @@ app.post('/api/ai/chat', async (req, res) => {
   const user = getUserBySession(req);
   if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
-  if (!OTD_AI_ENABLED) {
-    return res.status(503).json({ success: false, error: 'AI disabled' });
-  }
-
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
   }
@@ -2730,11 +2677,6 @@ app.post('/api/ai/chat', async (req, res) => {
   const who = String(user.email || user.id || user.username || user.login || 'user');
   if (!_aiAllow(who)) {
     return res.status(429).json({ success: false, error: 'AI rate limit' });
-  }
-
-  // Daily caps (cheap protection from "oops" loops)
-  if (!_aiAllowDaily(who) || !_aiAllowDaily('__global__')) {
-    return res.status(429).json({ success: false, error: 'AI daily limit' });
   }
 
   const body = req.body || {};
@@ -2813,13 +2755,6 @@ app.post('/api/ai/chat', async (req, res) => {
   try {
     const result = await _callOpenAI({ model, messages, maxOutputTokens });
     const answer = result.text || '…';
-
-    // token accounting (best effort)
-    try{
-      _aiAddTokens(who, result.usage);
-      _aiAddTokens('__global__', result.usage);
-    }catch(_){ /* ignore */ }
-
     return res.json({ success: true, answer, model: result.model, usage: result.usage });
   } catch (e) {
     console.warn('AI error:', e && e.message ? e.message : e);
@@ -2840,6 +2775,91 @@ app.post('/api/ai/chat', async (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err && err.stack ? err.stack : err);
   res.status(500).json({ success: false, error: 'internal' });
+});
+
+// ===== PATCH v2025-12-31: Speech-to-text (voice) via OpenAI (server-side fallback) =====
+const OTD_AI_STT_MODEL = process.env.OTD_AI_STT_MODEL || 'gpt-4o-mini-transcribe';
+
+// Convert base64 audio to text using OpenAI Audio API
+async function _callOpenAITranscribe({ audioBuffer, mimeType, language }){
+  const apiKey = process.env.OPENAI_API_KEY;
+  if(!apiKey) throw new Error('OPENAI_API_KEY missing');
+  if(!(globalThis.FormData && globalThis.Blob)){
+    throw new Error('FormData/Blob not available (Node 18+ required)');
+  }
+
+  const fd = new FormData();
+  fd.append('model', OTD_AI_STT_MODEL);
+  // Auto language detection works well; set language only if provided
+  if(language) fd.append('language', String(language));
+  // gpt-4o(-mini)-transcribe supports only JSON response format
+  fd.append('response_format', 'json');
+
+  const blob = new Blob([audioBuffer], { type: mimeType || 'audio/webm' });
+  fd.append('file', blob, 'voice.webm');
+
+  const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + apiKey },
+    body: fd
+  });
+
+  const j = await r.json().catch(()=>null);
+  if(!r.ok){
+    const msg = (j && (j.error?.message || j.message)) ? String(j.error?.message || j.message) : ('HTTP ' + r.status);
+    throw new Error(msg);
+  }
+  const text = (j && (j.text || j.transcript)) ? String(j.text || j.transcript) : '';
+  return text;
+}
+
+app.post('/api/ai/transcribe', async (req, res) => {
+  try{
+    // Gate
+    const enabled = String(process.env.OTD_AI_ENABLED || '').trim() === '1';
+    if(!enabled || !process.env.OPENAI_API_KEY){
+      return res.status(503).json({ success:false, error:'AI not configured' });
+    }
+
+    const ip = req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() || req.socket.remoteAddress || 'ip';
+    if(!_aiAllow(ip + ':stt')){
+      return res.status(429).json({ success:false, error:'rate_limited' });
+    }
+
+    const body = req.body || {};
+    const dataUrl = String(body.audioDataUrl || body.audio_data_url || '').trim();
+    let b64 = String(body.audioBase64 || body.audio_base64 || body.audio || '').trim();
+    let mime = String(body.mime || body.mimetype || '').trim();
+
+    if(dataUrl && dataUrl.startsWith('data:')){
+      const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if(m){
+        mime = mime || m[1];
+        b64 = b64 || m[2];
+      }
+    }
+
+    if(!b64){
+      return res.status(400).json({ success:false, error:'audio_missing' });
+    }
+
+    // Basic size guard (base64 overhead ~33%)
+    if(b64.length > 8_000_000){
+      return res.status(413).json({ success:false, error:'audio_too_large' });
+    }
+
+    const buf = Buffer.from(b64, 'base64');
+    if(!buf || !buf.length){
+      return res.status(400).json({ success:false, error:'audio_invalid' });
+    }
+
+    const lang = body.language ? String(body.language) : '';
+    const text = await _callOpenAITranscribe({ audioBuffer: buf, mimeType: mime || 'audio/webm', language: lang });
+
+    return res.json({ success:true, text });
+  }catch(e){
+    return res.status(502).json({ success:false, error: (e && e.message) ? String(e.message) : 'transcribe_failed' });
+  }
 });
 
 app.listen(PORT, () => {
