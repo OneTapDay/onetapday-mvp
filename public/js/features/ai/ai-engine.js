@@ -362,7 +362,7 @@
 
   async function answer(q, ctx){
     const tools = T();
-    if(!tools) return 'AI-tools не загрузились. Проверь /js/ai/ai-tools.js.';
+    if(!tools) return 'AI-tools не загрузились. Проверь /js/features/ai/ai-tools.js.';
     const entries = tools.getAllEntries();
     const profile = safeProfile(ctx && ctx.profile);
 

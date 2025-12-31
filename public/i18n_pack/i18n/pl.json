@@ -183,7 +183,14 @@
     "snapshot_runway": "Ryzyko i zapas",
     "top_desc": "Powiedz kilka rzeczy o sobie, aby zwiększyć dokładność podpowiedzi.",
     "top_expense": "Top wydatek",
-    "top_title": "AI konsultant"
+    "top_title": "AI konsultant",
+    "input_ph": "Napisz wiadomość…",
+    "attach_title": "Załącz plik",
+    "attach_aria": "Załącz plik",
+    "voice_title": "Dyktuj",
+    "voice_aria": "Dyktuj",
+    "send_title": "Wyślij",
+    "send_aria": "Wyślij"
   },
   "aiq_title": "Pytania do AI",
   "alerts": {
@@ -205,7 +212,25 @@
     "open_list": "Otwórz listę",
     "range_12m": "Ostatnie 12 miesięcy",
     "title": "Analityka",
-    "top_merchants": "Top kontrahenci"
+    "top_merchants": "Top kontrahenci",
+    "range_custom": "Zakres",
+    "range_title": "Zakres dat",
+    "range_hint": "Wybierz miesiąc albo zakres dat.",
+    "range_from": "Od",
+    "range_to": "Do",
+    "range_month": "Miesiąc",
+    "range_month_hint": "Wybór miesiąca nadpisze pola Od/Do.",
+    "range_apply": "Zastosuj",
+    "range_clear": "Reset",
+    "range_close": "Zamknij",
+    "range_30d_label": "Ostatnie 30 dni",
+    "range_90d_label": "Ostatnie 90 dni",
+    "range_12m_label": "Ostatnie 12 miesięcy",
+    "total": "Suma",
+    "empty_expenses": "Brak danych wydatków w tym okresie.",
+    "source_manual": "Ręcznie",
+    "source_quickvoice": "QuickVoice",
+    "other": "Inne"
   },
   "app": {
     "subtitle": "Premium AI-CFO dla właścicieli, którzy nie chcą tonąć w tabelach.",

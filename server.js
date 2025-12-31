@@ -32,6 +32,13 @@ try {
   console.warn('[WARN] stripe not configured or package missing — Stripe routes will fail if used.');
 }
 
+// Keep subscription logic out of this monolith (because editing a 3000-line file is a great hobby for nobody).
+const {
+  maybeSyncUserFromStripe,
+  handleStripeEvent,
+  applyStripeSubscriptionToUser
+} = require('./server/modules/subscription');
+
 const app = express();
 app.set('trust proxy', 1); // needed on Render to get correct protocol/host
 const PORT = process.env.PORT || 10000;
@@ -606,51 +613,69 @@ app.get('/session', async (req, res) => {
     return res.status(501).json({ success: false, error: 'stripe not configured' });
   }
   try {
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
-    const email = (session.metadata && session.metadata.email) || (session.customer_details && session.customer_details.email);
-    if (!email) {
-      return res.status(200).json({ success: true, message: 'no email in session' });
-    }
+    // Expand to avoid extra API calls when possible.
+    const session = await stripe.checkout.sessions.retrieve(sessionId, { expand: ['subscription', 'customer'] });
 
-    let u = findUserByEmail(email);
+    const emailRaw =
+      (session.metadata && session.metadata.email) ||
+      session.customer_email ||
+      (session.customer_details && session.customer_details.email) ||
+      (session.customer && session.customer.email) ||
+      '';
+
+    const email = normalizeEmail(emailRaw);
+    if (!email) return res.status(400).json({ success: false, error: 'no email in session' });
+
+    const u = findUserByEmail(email);
     if (!u) {
-      // create user automatically (best-effort) so they get session cookie
-      const salt = genSalt(16);
-      const fakePwd = genSalt(8);
-      const storedHash = hashPassword(fakePwd, salt);
-      users[email] = {
-        email,
-        lang: 'pl',
-        salt,
-        hash: storedHash,
-        status: 'none',
-        startAt: null,
-        endAt: null,
-        discountUntil: null,
-        demoUsed: false,
-        appState: {},
-        isAdmin: email === ADMIN_EMAIL
-      };
-      saveUsers();
-      u = users[email];
+      // The checkout flow is only available for logged-in users, so this should not happen.
+      // We refuse to create "ghost" users with random passwords.
+      return res.status(404).json({ success: false, error: 'user not found for this checkout session' });
     }
 
-    // если оплата прошла — активируем на месяц
-    if (session.payment_status === 'paid' || session.status === 'complete') {
+    const paid = (session.payment_status === 'paid') || (session.status === 'complete');
+    if (!paid) {
+      return res.json({ success: true, email, paid: false });
+    }
+
+    // Prefer real subscription periods from Stripe.
+    let subscription = session.subscription;
+    let customer = session.customer;
+    try {
+      if (subscription && typeof subscription === 'string') {
+        subscription = await stripe.subscriptions.retrieve(subscription);
+      }
+      if (customer && typeof customer === 'string') {
+        customer = await stripe.customers.retrieve(customer);
+      }
+    } catch (e) {
+      console.warn('[SESSION] expand fallback failed:', e && e.message ? e.message : e);
+    }
+
+    if (customer && subscription) {
+      applyStripeSubscriptionToUser(u, customer, subscription);
+      u.lastStripeSyncAt = new Date().toISOString();
+      saveUsers();
+      console.log(`[SESSION] finalized (Stripe) for ${u.email}: ${u.status} until ${u.endAt}`);
+    } else {
+      // Last-resort fallback (should be rare): keep user unblocked for a month.
       u.status = 'active';
       u.startAt = new Date().toISOString();
       const end = new Date();
-      end.setMonth(end.getMonth() + 1); // 1 месяц
+      end.setMonth(end.getMonth() + 1);
       u.endAt = end.toISOString();
       u.demoUsed = true;
+      u.lastStripeSyncAt = new Date().toISOString();
       saveUsers();
-      console.log(`[SESSION] activated via /session for ${u.email} until ${u.endAt}`);
-    u.demoUsed = true;      // считаем, что демо уже потрачено
-u.demoStartAt = null;   // если поле есть - обнуляем
-  }
+      console.log(`[SESSION] finalized (fallback month) for ${u.email} until ${u.endAt}`);
+    }
 
     setSessionCookie(res, email);
-    return res.json({ success: true, email });
+
+    const safe = Object.assign({}, u);
+    delete safe.hash;
+    delete safe.salt;
+    return res.json({ success: true, email, paid: true, user: safe });
   } catch (err) {
     console.error('[SESSION] error', err && err.message ? err.message : err);
     return res.status(500).json({ success: false, error: 'internal error' });
@@ -787,10 +812,22 @@ app.post('/activate-discount', (req, res) => {
 });
 
 // whoami / me
-app.get('/me', (req, res) => {
+app.get('/me', async (req, res) => {
   let user = getUserBySession(req);
   if (!user) {
     return res.status(401).json({ success: false, error: 'Not authenticated' });
+  }
+
+  // Auto-heal access after deploys / missed webhooks:
+  // If Stripe says the user is active, we update local status here.
+  try {
+    if (stripe) {
+      const q = req.query || {};
+      const force = String(q.force || q.sync || '').trim() === '1';
+      await maybeSyncUserFromStripe(stripe, user, saveUsers, { force });
+    }
+  } catch (e) {
+    console.warn('[STRIPE] /me autosync failed:', e && e.message ? e.message : e);
   }
 
   expireStatuses(user);
@@ -2402,52 +2439,12 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   }
 
   try {
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-
-      const email =
-        (session.metadata && session.metadata.email) ||
-        (session.customer_details && session.customer_details.email) ||
-        session.customer_email ||
-        '';
-
-      const plan = (session.metadata && session.metadata.plan) ? String(session.metadata.plan) : 'monthly';
-
-      // Prefer Stripe subscription period dates (accurate for monthly / 6m / yearly).
-      let startIso = new Date().toISOString();
-      let endIso = null;
-
-      if (session.subscription) {
-        try {
-          const sub = await stripe.subscriptions.retrieve(session.subscription);
-          if (sub && sub.current_period_start) startIso = new Date(sub.current_period_start * 1000).toISOString();
-          if (sub && sub.current_period_end) endIso = new Date(sub.current_period_end * 1000).toISOString();
-        } catch (e) {
-          console.warn('[WEBHOOK] cannot retrieve subscription', e && e.message ? e.message : e);
-        }
-      }
-
-      // Fallback if Stripe didn't give us the subscription period.
-      if (!endIso) {
-        const end = new Date();
-        if (plan === '6m' || plan === 'm6' || plan === 'half_year') end.setMonth(end.getMonth() + 6);
-        else if (plan === 'yearly' || plan === 'annual' || plan === 'year') end.setFullYear(end.getFullYear() + 1);
-        else end.setMonth(end.getMonth() + 1);
-        endIso = end.toISOString();
-      }
-
-      if (email) {
-        const u = findUserByEmail(email);
-        if (u) {
-          u.status = 'active';
-          u.startAt = startIso;
-          u.endAt = endIso;
-          u.demoUsed = true; // they paid — treat demo as used
-          saveUsers();
-          console.log(`[WEBHOOK] activated subscription for ${u.email} until ${u.endAt}`);
-        }
-      }
-    }
+    await handleStripeEvent(event, {
+      stripe,
+      findUserByEmail,
+      saveUsers,
+      normalizeEmail
+    });
   } catch (e) {
     console.error('[WEBHOOK] handler error', e && e.stack ? e.stack : e);
   }
@@ -2561,7 +2558,7 @@ app.post('/start-pilot', (req, res) => {
 
 /* ==== AI (OpenAI) ==== */
 /*
-  This endpoint is used by /public/js/ai/ai-client.js.
+  This endpoint is used by /public/js/features/ai/ai-client.js.
   Important: we DO NOT expose OPENAI_API_KEY to the browser.
   If OPENAI_API_KEY is missing, we return 503 so the UI shows "AI not connected".
 */

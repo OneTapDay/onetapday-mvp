@@ -183,7 +183,14 @@
     "snapshot_runway": "Risk & buffer",
     "top_desc": "Tell a bit about yourself to improve suggestions.",
     "top_expense": "Top expense",
-    "top_title": "AI consultant"
+    "top_title": "AI consultant",
+    "input_ph": "Write a message…",
+    "attach_title": "Attach file",
+    "attach_aria": "Attach file",
+    "voice_title": "Dictate",
+    "voice_aria": "Dictate",
+    "send_title": "Send",
+    "send_aria": "Send"
   },
   "aiq_title": "AI questions",
   "alerts": {
@@ -205,7 +212,25 @@
     "open_list": "Open list",
     "range_12m": "Last 12 months",
     "title": "Analytics",
-    "top_merchants": "Top merchants"
+    "top_merchants": "Top merchants",
+    "range_custom": "Range",
+    "range_title": "Date range",
+    "range_hint": "Pick a month or a custom date range.",
+    "range_from": "From",
+    "range_to": "To",
+    "range_month": "Month",
+    "range_month_hint": "Month selection overwrites From/To.",
+    "range_apply": "Apply",
+    "range_clear": "Reset",
+    "range_close": "Close",
+    "range_30d_label": "Last 30 days",
+    "range_90d_label": "Last 90 days",
+    "range_12m_label": "Last 12 months",
+    "total": "Total",
+    "empty_expenses": "No expense data in this period.",
+    "source_manual": "Manual",
+    "source_quickvoice": "QuickVoice",
+    "other": "Other"
   },
   "app": {
     "subtitle": "Premium AI-CFO for owners who don't want to drown in spreadsheets.",

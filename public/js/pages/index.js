@@ -178,6 +178,25 @@
         return;
       }
       const u = res.body.user || { role };
+      // Bind local state to the current account (fix: switching accounts on same device keeps old data)
+      try {
+        const newEmail = String(u.email || email || '').trim().toLowerCase();
+        if (newEmail) {
+          const prevEmail = String(localStorage.getItem('otd_user') || '').trim().toLowerCase();
+          if (prevEmail && prevEmail !== newEmail) {
+            const wipe = [
+              'tx_manual_import','bills_manual_import','kasa','accMeta','invoice_templates',
+              'otd_workspaces','otd_active_ws','otd_last_ws',
+              'otd_demo_start','otd_demo_until','otd_demo_used',
+              'otd_sub','otd_sub_from','otd_sub_to'
+            ];
+            wipe.forEach(k => { try { localStorage.removeItem(k); } catch(e){} });
+            try { sessionStorage.removeItem('otd_me_force_sync_tried'); } catch(e){}
+          }
+          localStorage.setItem('otd_user', newEmail);
+        }
+      } catch(e){}
+
       localStorage.setItem('otd_role', u.role || role);
       setTimeout(() => { window.location.href = (u.role === 'accountant') ? '/accountant.html' : '/app.html'; }, 150);
     } else {
@@ -187,6 +206,25 @@
         return;
       }
       const u = res.body.user || {};
+      // Bind local state to the current account (fix: switching accounts on same device keeps old data)
+      try {
+        const newEmail = String(u.email || email || '').trim().toLowerCase();
+        if (newEmail) {
+          const prevEmail = String(localStorage.getItem('otd_user') || '').trim().toLowerCase();
+          if (prevEmail && prevEmail !== newEmail) {
+            const wipe = [
+              'tx_manual_import','bills_manual_import','kasa','accMeta','invoice_templates',
+              'otd_workspaces','otd_active_ws','otd_last_ws',
+              'otd_demo_start','otd_demo_until','otd_demo_used',
+              'otd_sub','otd_sub_from','otd_sub_to'
+            ];
+            wipe.forEach(k => { try { localStorage.removeItem(k); } catch(e){} });
+            try { sessionStorage.removeItem('otd_me_force_sync_tried'); } catch(e){}
+          }
+          localStorage.setItem('otd_user', newEmail);
+        }
+      } catch(e){}
+
       const role = u.role || localStorage.getItem('otd_role') || 'freelance_business';
       localStorage.setItem('otd_role', role);
       setTimeout(() => { window.location.href = (role === 'accountant') ? '/accountant.html' : '/app.html'; }, 150);
@@ -247,6 +285,25 @@
               return;
             }
             const u = r.body.user || {};
+            // Bind local state to the current account (fix: switching accounts on same device keeps old data)
+            try {
+              const newEmail = String(u.email || '').trim().toLowerCase();
+              if (newEmail) {
+                const prevEmail = String(localStorage.getItem('otd_user') || '').trim().toLowerCase();
+                if (prevEmail && prevEmail !== newEmail) {
+                  const wipe = [
+                    'tx_manual_import','bills_manual_import','kasa','accMeta','invoice_templates',
+                    'otd_workspaces','otd_active_ws','otd_last_ws',
+                    'otd_demo_start','otd_demo_until','otd_demo_used',
+                    'otd_sub','otd_sub_from','otd_sub_to'
+                  ];
+                  wipe.forEach(k => { try { localStorage.removeItem(k); } catch(e){} });
+                  try { sessionStorage.removeItem('otd_me_force_sync_tried'); } catch(e){}
+                }
+                localStorage.setItem('otd_user', newEmail);
+              }
+            } catch(e){}
+
             const role = u.role || localStorage.getItem('otd_role') || 'freelance_business';
             localStorage.setItem('otd_role', role);
             setTimeout(() => { window.location.href = (role === 'accountant') ? '/accountant.html' : '/app.html'; }, 150);

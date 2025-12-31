@@ -240,7 +240,7 @@
 }
 .trendChart svg{
   width:100%;
-  height:70px;
+  height:100%;
   display:block;
 }
 .trendCursorLine{
@@ -1087,6 +1087,70 @@
     .planCard .row{margin-top:10px}
     .planCard .btn{width:100%}
 
+
+/* ===== PATCH v2025-12-30: AI chat composer like ChatGPT + full height ===== */
+.section#aiAssist .aiChatShell{
+  display:flex;
+  flex-direction:column;
+  min-height:70vh;
+}
+.section#aiAssist .aiChatThread{
+  flex:1 1 auto;
+  max-height:none !important;
+  min-height:40vh;
+}
+.aiComposer{
+  display:flex;
+  gap:10px;
+  padding:10px 12px 12px;
+  border-top:1px solid #22282c;
+  align-items:flex-end;
+}
+.aiInputWrap{
+  position:relative;
+  flex:1;
+  display:flex;
+}
+.aiComposer textarea{
+  width:100%;
+  flex:1;
+  min-height:44px;
+  max-height:140px;
+  resize:none;
+  border-radius:16px;
+  background:#12181d;
+  color:#e9eef2;
+  border:1px solid #242b30;
+  padding:12px 86px 12px 14px; /* space for inside icons */
+  outline:none;
+  line-height:1.25;
+}
+.aiComposer textarea:focus{
+  border-color:#2f5b3b;
+  box-shadow:0 0 0 2px rgba(71,181,0,.12);
+}
+.aiInsideBtn{
+  position:absolute;
+  bottom:6px;
+  width:40px;
+  height:40px;
+  padding:0;
+  border-radius:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+#aiVoiceBtn.aiInsideBtn{ right:48px; }
+#aiChatSend.aiInsideBtn{ right:6px; }
+.aiSendBtn{
+  min-width:40px;
+  height:40px;
+  border-radius:12px;
+}
+/* ===== PATCH v2025-12-30: Analytics donut palette + hover ===== */
+.donutSeg{ transition:opacity .12s ease, stroke-width .12s ease; }
+.donutSeg:hover{ opacity:.92; stroke-width:4.2; }
+
 </style>
 <style>
   /* Глобальный фон и контейнер */
@@ -1495,7 +1559,7 @@
       Okres demo zakończony lub brak aktywnej subskrypcji. Przejdź do Ustawień, aby uruchomić demo (24h) lub opłacić dostęp.
     </div>
 <div class="row" style="margin-top:8px">
-<button class="btn secondary" data-i18n="gate_open_settings" onclick="document.querySelector('[data-sec=ustawienia]').click()">Otwórz Ustawienia</button>
+<button class="btn secondary" data-i18n="gate_open_settings" onclick="(function(){try{if(window.appGoSection){window.appGoSection('ustawienia');return;}}catch(e){}try{var b=document.getElementById('navSettingsBtn');if(b)b.click();}catch(e){}})()">Otwórz Ustawienia</button>
 </div>
 </div>
 <!-- DASHBOARD -->
@@ -1768,6 +1832,7 @@
       <button class="btn ghost" id="analyticsRange30" type="button">30d</button>
       <button class="btn ghost" id="analyticsRange90" type="button">90d</button>
       <button class="btn" id="analyticsRange365" type="button">12m</button>
+      <button class="btn ghost" id="analyticsRangeCustom" type="button" data-i18n="analytics.range_custom">Zakres</button>
     </div>
   </div>
 
@@ -2149,10 +2214,12 @@ application/x-ofx" id="billFile" type="file"/>
 <div aria-live="polite" class="aiChatThread" id="aiChatLog"></div>
 <div class="aiAttachRow" id="aiAttachRow" style="display:none"></div>
 <div class="aiComposer">
-  <button class="btn ghost aiToolBtn" id="aiAttachBtn" title="Załącz plik" type="button">＋</button>
-  <button class="btn ghost aiToolBtn" id="aiVoiceBtn" title="Dyktuj" type="button">🎤</button>
-  <textarea id="aiChatInput" placeholder="Napisz wiadomość…"></textarea>
-  <button class="btn" data-i18n="ai.ask_btn" id="aiChatSend" type="button">➤</button>
+  <button class="btn ghost aiToolBtn" id="aiAttachBtn" type="button" data-i18n-title="ai.attach_title" data-i18n-aria="ai.attach_aria">＋</button>
+  <div class="aiInputWrap">
+    <textarea id="aiChatInput" data-i18n-ph="ai.input_ph" placeholder="Napisz wiadomość…"></textarea>
+    <button class="btn ghost aiToolBtn aiInsideBtn" id="aiVoiceBtn" type="button" data-i18n-title="ai.voice_title" data-i18n-aria="ai.voice_aria">🎤</button>
+    <button class="btn aiSendBtn aiInsideBtn" id="aiChatSend" type="button" data-i18n-title="ai.send_title" data-i18n-aria="ai.send_aria">➤</button>
+  </div>
   <input id="aiFileInput" type="file" accept="image/*,application/pdf" multiple style="display:none" />
 </div>
 <!-- AI chats drawer (multi-chat) -->
@@ -2212,11 +2279,45 @@ application/x-ofx" id="billFile" type="file"/>
 </div>
 </div>
 <script src="/vendor/xlsx.full.min.js"></script>
-<script src="/js/ai/ai-tools.js?v=17"></script>
-<script src="/js/ai/ai-engine.js?v=17"></script>
-<script src="/js/ai/ai-client.js?v=17"></script>
+<script src="/js/features/ai/ai-tools.js?v=17"></script>
+<script src="/js/features/ai/ai-engine.js?v=17"></script>
+<script src="/js/features/ai/ai-client.js?v=17"></script>
 <script src="/i18n_pack/i18n.js"></script>
-  <script src="/js/app/app.js?v=1"></script>
+  <script src="/js/core/bootstrap.js?v=1"></script>
+  <script src="/js/core/config_api.js?v=1"></script>
+  <script src="/js/core/i18n_helpers.js?v=1"></script>
+  <script src="/js/core/i18n.js?v=1"></script>
+  <script src="/js/ui/theme_state.js?v=1"></script>
+  <script src="/js/ui/help_content.js?v=1"></script>
+  <script src="/js/ui/help_init.js?v=1"></script>
+  <script src="/js/core/helpers.js?v=1"></script>
+  <script src="/js/features/transactions/import_csv.js?v=1"></script>
+  <script src="/js/features/analytics/trend_panels.js?v=1"></script>
+  <script src="/js/features/analytics/analytics.js?v=1"></script>
+  <script src="/js/features/categories/spending_breakdown.js?v=1"></script>
+  <script src="/js/features/accounts/auto_accounts_fix.js?v=1"></script>
+  <script src="/js/features/transactions/normalize_tx_schema.js?v=1"></script>
+  <script src="/js/features/bills/normalize_import.js?v=1"></script>
+  <script src="/js/core/state.js?v=1"></script>
+  <script src="/js/features/categories/spending_buttons_fix.js?v=1"></script>
+  <script src="/js/services/sync/cloud_sync.js?v=1"></script>
+  <script src="/js/services/sync/remote_sync.js?v=1"></script>
+  <script src="/js/services/money/rates.js?v=1"></script>
+  <script src="/js/features/reconcile/ai_match.js?v=1"></script>
+  <script src="/js/services/storage/persist_local.js?v=1"></script>
+  <script src="/js/services/storage/reliability.js?v=1"></script>
+  <script src="/js/features/workspaces/workspaces.js?v=1"></script>
+  <script src="/js/services/sync/autosync.js?v=1"></script>
+  <script src="/js/features/cash/quick_examples.js?v=1"></script>
+  <script src="/js/features/book/unified_book.js?v=1"></script>
+  <script src="/js/core/render.js?v=1"></script>
+  <script src="/js/features/forecast/plan_forecast.js?v=1"></script>
+  <script src="/js/features/transactions/accept_one.js?v=1"></script>
+  <script src="/js/features/cash/kasa_crud.js?v=1"></script>
+  <script src="/js/core/events_navigation.js?v=1"></script>
+  <script src="/js/features/documents/vault_mvp.js?v=1"></script>
+  <script src="/js/features/notifications/in_app_notifications.js?v=1"></script>
+  <script src="/js/features/documents/vault_folders.js?v=1"></script>
 <script type="module">
   // Import the functions you need from the SDKs you need
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
@@ -2241,7 +2342,7 @@ application/x-ofx" id="billFile" type="file"/>
   const app = initializeApp(firebaseConfig);
   const analytics = getAnalytics(app);
 </script>
-<script src="/js/app/sync-cloud.js" type="module"></script>
+<script src="/js/services/sync/sync-cloud.js" type="module"></script>
 <div class="navOverlay" id="navOverlay" style="display:none">
 <div class="navSheet">
 <div class="navHeader">
@@ -2303,5 +2404,39 @@ application/x-ofx" id="billFile" type="file"/>
       }
     }
   </script>
+
+<!-- Analytics range modal -->
+<div class="modal-overlay" id="analyticsRangeModal" style="display:none">
+  <div class="modal-card">
+    <h3 data-i18n="analytics.range_title">Zakres</h3>
+    <div class="muted small" data-i18n="analytics.range_hint" style="margin-top:-6px">Wybierz miesiąc albo zakres dat.</div>
+
+    <div class="row" style="gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px">
+      <div style="flex:1; min-width:150px">
+        <div class="muted small" data-i18n="analytics.range_from">Od</div>
+        <input class="input" id="analyticsFrom" type="date" />
+      </div>
+      <div style="flex:1; min-width:150px">
+        <div class="muted small" data-i18n="analytics.range_to">Do</div>
+        <input class="input" id="analyticsTo" type="date" />
+      </div>
+    </div>
+
+    <div class="row" style="gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px">
+      <div style="flex:1; min-width:150px">
+        <div class="muted small" data-i18n="analytics.range_month">Miesiąc</div>
+        <input class="input" id="analyticsMonth" type="month" />
+      </div>
+      <div class="muted small" data-i18n="analytics.range_month_hint" style="flex:2; min-width:220px">Wybór miesiąca nadpisze pola Od/Do.</div>
+    </div>
+
+    <div class="row" style="gap:10px; margin-top:14px; flex-wrap:wrap">
+      <button class="btn" id="analyticsRangeApply" type="button" data-i18n="analytics.range_apply">Zastosuj</button>
+      <button class="btn secondary" id="analyticsRangeClear" type="button" data-i18n="analytics.range_clear">Reset</button>
+      <button class="btn ghost" id="analyticsRangeClose" type="button" data-i18n="analytics.range_close">Zamknij</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

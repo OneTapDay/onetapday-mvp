@@ -183,7 +183,14 @@
     "snapshot_runway": "Риски и запас",
     "top_desc": "Расскажи пару вещей о себе, чтобы советы были точнее.",
     "top_expense": "Топ расход",
-    "top_title": "AI‑консультант"
+    "top_title": "AI‑консультант",
+    "input_ph": "Написать сообщение…",
+    "attach_title": "Прикрепить файл",
+    "attach_aria": "Прикрепить файл",
+    "voice_title": "Диктовать",
+    "voice_aria": "Диктовать",
+    "send_title": "Отправить",
+    "send_aria": "Отправить"
   },
   "aiq_title": "Вопросы к AI",
   "alerts": {
@@ -205,7 +212,25 @@
     "open_list": "Открыть список",
     "range_12m": "Последние 12 месяцев",
     "title": "Аналитика",
-    "top_merchants": "Топ контрагенты"
+    "top_merchants": "Топ контрагенты",
+    "range_custom": "Диапазон",
+    "range_title": "Диапазон дат",
+    "range_hint": "Выбери месяц или диапазон дат.",
+    "range_from": "С",
+    "range_to": "По",
+    "range_month": "Месяц",
+    "range_month_hint": "Выбор месяца перезапишет поля С/По.",
+    "range_apply": "Применить",
+    "range_clear": "Сброс",
+    "range_close": "Закрыть",
+    "range_30d_label": "Последние 30 дней",
+    "range_90d_label": "Последние 90 дней",
+    "range_12m_label": "Последние 12 месяцев",
+    "total": "Итого",
+    "empty_expenses": "Нет данных по расходам за этот период.",
+    "source_manual": "Вручную",
+    "source_quickvoice": "QuickVoice",
+    "other": "Другое"
   },
   "app": {
     "subtitle": "Премиальный AI-CFO для владельцев, которые не хотят тонуть в таблицах.",
