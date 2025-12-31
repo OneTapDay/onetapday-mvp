@@ -4,10 +4,8 @@ function loadKasa(){ kasa = _otdGetJSON('kasa', []); }
 function addKasa(type,amount,comment,source,category){
   if(amount==null||isNaN(amount)) return alert("Сумма некорректна");
   const cat = category || ($id('quickCashCat')?.value || "");
-  const __id = Date.now() + Math.floor(Math.random()*1000);
-  kasa.push({id:__id,date:today(),type,amount:Number(amount),comment:comment||"",source:source||"ручной",category:cat});
+  kasa.push({id:Date.now(),date:today(),type,amount:Number(amount),comment:comment||"",source:source||"ручной",category:cat});
   saveLocal(); render(); pushState();
-  return __id;
 }
 function editRow(kind,id){
   if(kind==='kasa'){
