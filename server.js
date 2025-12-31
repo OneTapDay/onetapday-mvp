@@ -2666,6 +2666,142 @@ async function _callOpenAI({ model, messages, maxOutputTokens }){
   };
 }
 
+
+// === AI Speech-to-Text (stable voice input) ===
+async function _callOpenAITranscribe({ model, audioBuffer, mime, language }){
+  const apiKey = process.env.OPENAI_API_KEY;
+  const https = require('https');
+
+  const boundary = '----otdBoundary' + Math.random().toString(16).slice(2);
+  const filename =
+    (mime && mime.includes('ogg')) ? 'audio.ogg' :
+    (mime && mime.includes('mp4')) ? 'audio.m4a' :
+    (mime && mime.includes('wav')) ? 'audio.wav' :
+    'audio.webm';
+
+  const parts = [];
+  const push = (s)=> parts.push(Buffer.isBuffer(s) ? s : Buffer.from(String(s), 'utf8'));
+
+  push(`--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${model}\r\n`);
+  if(language){
+    push(`--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${language}\r\n`);
+  }
+  push(`--${boundary}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\njson\r\n`);
+  push(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mime || 'audio/webm'}\r\n\r\n`);
+  push(audioBuffer);
+  push(`\r\n--${boundary}--\r\n`);
+
+  const body = Buffer.concat(parts);
+
+  const data = await new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.openai.com',
+      path: '/v1/audio/transcriptions',
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'multipart/form-data; boundary=' + boundary,
+        'Content-Length': body.length
+      },
+      timeout: 30000
+    }, (res) => {
+      let raw = '';
+      res.on('data', (c)=> raw += c);
+      res.on('end', ()=>{
+        let json;
+        try{ json = JSON.parse(raw || '{}'); }catch(e){ json = { _raw: raw }; }
+        json.__http_status = res.statusCode;
+        resolve(json);
+      });
+    });
+
+    req.on('timeout', ()=> req.destroy(new Error('OpenAI transcribe timeout')));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+
+  const status = data && data.__http_status ? data.__http_status : 500;
+  if(status < 200 || status >= 300){
+    const msg = (data && data.error && (data.error.message || data.error.code || data.error.type)) ?
+      (data.error.message || data.error.code || data.error.type) :
+      ('OpenAI error ' + status);
+    const err = new Error(msg);
+    err.status = status;
+    err.data = data;
+    throw err;
+  }
+
+  const text = (data && typeof data.text === 'string') ? data.text : '';
+  return String(text || '').trim();
+}
+
+app.post('/api/ai/transcribe', async (req, res) => {
+  const user = getUserBySession(req);
+  if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
+  }
+
+  const who = String(user.email || user.id || user.username || user.login || 'user');
+  if (!_aiAllow(who)) {
+    return res.status(429).json({ success: false, error: 'AI rate limit' });
+  }
+
+  const body = req.body || {};
+  let audio = body.audio || body.audioBase64 || '';
+  let mime = body.mime || 'audio/webm';
+  let language = body.language || body.lang || '';
+
+  if (typeof audio !== 'string' || !audio.trim()) {
+    return res.status(400).json({ success: false, error: 'Missing audio' });
+  }
+
+  audio = audio.trim();
+  // Support data URLs: data:audio/webm;base64,....
+  if (audio.startsWith('data:')) {
+    const m = audio.match(/^data:([^;]+);base64,(.+)$/i);
+    if (m) {
+      mime = m[1] || mime;
+      audio = m[2] || '';
+    }
+  }
+
+  // Normalize language like "pl-PL" -> "pl"
+  try{
+    if (typeof language === 'string' && language.includes('-')) {
+      language = language.split('-')[0];
+    }
+  }catch(_){}
+
+  // Decode base64
+  let buf;
+  try {
+    buf = Buffer.from(audio, 'base64');
+  } catch (e) {
+    return res.status(400).json({ success: false, error: 'Bad base64' });
+  }
+
+  // Hard guard: 8MB raw audio payload (base64 expands, but decoded buffer matters here)
+  if (!buf || buf.length < 16) {
+    return res.status(400).json({ success: false, error: 'Empty audio' });
+  }
+  if (buf.length > 8 * 1024 * 1024) {
+    return res.status(413).json({ success: false, error: 'Audio too large' });
+  }
+
+  const sttModel = process.env.OTD_AI_STT_MODEL || 'gpt-4o-mini-transcribe';
+
+  try {
+    const text = await _callOpenAITranscribe({ model: sttModel, audioBuffer: buf, mime, language });
+    return res.json({ success: true, text });
+  } catch (e) {
+    const status = e && e.status ? e.status : 500;
+    return res.status(status).json({ success: false, error: (e && e.message) ? e.message : 'Transcribe error' });
+  }
+});
+
 app.post('/api/ai/chat', async (req, res) => {
   const user = getUserBySession(req);
   if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
@@ -2775,91 +2911,6 @@ app.post('/api/ai/chat', async (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err && err.stack ? err.stack : err);
   res.status(500).json({ success: false, error: 'internal' });
-});
-
-// ===== PATCH v2025-12-31: Speech-to-text (voice) via OpenAI (server-side fallback) =====
-const OTD_AI_STT_MODEL = process.env.OTD_AI_STT_MODEL || 'gpt-4o-mini-transcribe';
-
-// Convert base64 audio to text using OpenAI Audio API
-async function _callOpenAITranscribe({ audioBuffer, mimeType, language }){
-  const apiKey = process.env.OPENAI_API_KEY;
-  if(!apiKey) throw new Error('OPENAI_API_KEY missing');
-  if(!(globalThis.FormData && globalThis.Blob)){
-    throw new Error('FormData/Blob not available (Node 18+ required)');
-  }
-
-  const fd = new FormData();
-  fd.append('model', OTD_AI_STT_MODEL);
-  // Auto language detection works well; set language only if provided
-  if(language) fd.append('language', String(language));
-  // gpt-4o(-mini)-transcribe supports only JSON response format
-  fd.append('response_format', 'json');
-
-  const blob = new Blob([audioBuffer], { type: mimeType || 'audio/webm' });
-  fd.append('file', blob, 'voice.webm');
-
-  const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + apiKey },
-    body: fd
-  });
-
-  const j = await r.json().catch(()=>null);
-  if(!r.ok){
-    const msg = (j && (j.error?.message || j.message)) ? String(j.error?.message || j.message) : ('HTTP ' + r.status);
-    throw new Error(msg);
-  }
-  const text = (j && (j.text || j.transcript)) ? String(j.text || j.transcript) : '';
-  return text;
-}
-
-app.post('/api/ai/transcribe', async (req, res) => {
-  try{
-    // Gate
-    const enabled = String(process.env.OTD_AI_ENABLED || '').trim() === '1';
-    if(!enabled || !process.env.OPENAI_API_KEY){
-      return res.status(503).json({ success:false, error:'AI not configured' });
-    }
-
-    const ip = req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() || req.socket.remoteAddress || 'ip';
-    if(!_aiAllow(ip + ':stt')){
-      return res.status(429).json({ success:false, error:'rate_limited' });
-    }
-
-    const body = req.body || {};
-    const dataUrl = String(body.audioDataUrl || body.audio_data_url || '').trim();
-    let b64 = String(body.audioBase64 || body.audio_base64 || body.audio || '').trim();
-    let mime = String(body.mime || body.mimetype || '').trim();
-
-    if(dataUrl && dataUrl.startsWith('data:')){
-      const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-      if(m){
-        mime = mime || m[1];
-        b64 = b64 || m[2];
-      }
-    }
-
-    if(!b64){
-      return res.status(400).json({ success:false, error:'audio_missing' });
-    }
-
-    // Basic size guard (base64 overhead ~33%)
-    if(b64.length > 8_000_000){
-      return res.status(413).json({ success:false, error:'audio_too_large' });
-    }
-
-    const buf = Buffer.from(b64, 'base64');
-    if(!buf || !buf.length){
-      return res.status(400).json({ success:false, error:'audio_invalid' });
-    }
-
-    const lang = body.language ? String(body.language) : '';
-    const text = await _callOpenAITranscribe({ audioBuffer: buf, mimeType: mime || 'audio/webm', language: lang });
-
-    return res.json({ success:true, text });
-  }catch(e){
-    return res.status(502).json({ success:false, error: (e && e.message) ? String(e.message) : 'transcribe_failed' });
-  }
 });
 
 app.listen(PORT, () => {
