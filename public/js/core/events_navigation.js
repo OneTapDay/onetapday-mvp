@@ -2021,56 +2021,34 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
 
 // Cash voice (stable): record → transcribe → prefill cash sheet (NO auto-save)
 (function(){
-  // Cash voice: live transcript + AI parse + auto-save (voice is NOT "manual")
   const micBtn = $id('micBtn');
   if(!micBtn) return;
 
-  const micStatus = $id('micStatus'); // inside cash sheet (if visible)
-  const speechLangSel = $id('speechLang');
+  const micStatus = $id('micStatus');
+  const speechLangSel = $id('speechLang'); // optional legacy selector (if present)
 
-  let isRec = false;
-  let sr = null;
-  let media = null;
-  let mediaChunks = [];
-  let lastCreatedIds = [];
-  let undoTimer = null;
+  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
 
-  // NOTE: Web Speech needs a concrete locale, but server STT can auto-detect.
-  const __langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
-
-  function getLangKey(){
-    // 1) explicit selector (if exists)
+  function getSpeechLang(){
+    // For SpeechRecognition fallback only (one language at a time)
     try{
-      const v = (speechLangSel && speechLangSel.value) ? String(speechLangSel.value).toLowerCase().trim() : '';
-      if(v) return v;
-    }catch(_e){}
-
-    // 2) app language (localStorage is the real source of truth)
-    try{
-      const k = String(localStorage.getItem('otd_lang') || '').toLowerCase().trim();
-      if(k) return k;
-    }catch(_e){}
-
-    // 3) legacy fallback
-    try{
-      const l = (window && window.OTD_LANG) ? String(window.OTD_LANG).toLowerCase().trim() : '';
-      if(l) return l;
-    }catch(_e){}
-
-    return 'pl';
+      const v = (speechLangSel && speechLangSel.value) ? String(speechLangSel.value).trim() : '';
+      if(v){
+        if(v.includes('-')) return v;
+        return langMap[v] || 'pl-PL';
+      }
+      const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
+      return langMap[k] || 'pl-PL';
+    }catch(_e){
+      return 'pl-PL';
+    }
   }
 
-  function getLang(){
-    const k = getLangKey();
-    return __langMap[k] || 'pl-PL';
+  function setStatus(s){
+    if(micStatus) micStatus.textContent = String(s || '—');
   }
 
-  function getSttLang(){
-    // Empty => OpenAI auto-detect (so you can speak RU/UK/PL/EN without switching)
-    return '';
-  }
-
-  // Small iPhone-style toast that doesn't stretch across the whole screen
+  // Lightweight toast (no Undo/Edit buttons, by request)
   let toastEl = null;
   function ensureToast(){
     if(toastEl) return toastEl;
@@ -2098,16 +2076,14 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
           <div id="otdVoiceToastText" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
           <div id="otdVoiceToastSub" style="opacity:.8;margin-top:4px;font-size:12px;display:none;"></div>
         </div>
-        <div id="otdVoiceToastBtns" style="display:flex;gap:8px;flex:0 0 auto;"></div>
       </div>`;
     document.body.appendChild(toastEl);
     return toastEl;
   }
-  function showToast(text, sub, buttons){
+  function showToast(text, sub){
     const el = ensureToast();
     const t = el.querySelector('#otdVoiceToastText');
     const s = el.querySelector('#otdVoiceToastSub');
-    const b = el.querySelector('#otdVoiceToastBtns');
     if(t) t.textContent = String(text || '');
     if(s){
       if(sub){
@@ -2118,35 +2094,18 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
         s.textContent = '';
       }
     }
-    if(b){
-      b.innerHTML = '';
-      (buttons||[]).forEach(btn=>{
-        const x = document.createElement('button');
-        x.type = 'button';
-        x.textContent = btn.label;
-        x.style.background = 'rgba(255,255,255,0.12)';
-        x.style.border = '1px solid rgba(255,255,255,0.16)';
-        x.style.color = '#fff';
-        x.style.borderRadius = '999px';
-        x.style.padding = '6px 10px';
-        x.style.fontSize = '12px';
-        x.style.cursor = 'pointer';
-        x.onclick = (e)=>{ e.preventDefault(); e.stopPropagation(); try{ btn.onClick && btn.onClick(); }catch(_e){} };
-        b.appendChild(x);
-      });
-    }
     el.style.display = 'block';
   }
   function hideToast(){
     if(!toastEl) return;
     toastEl.style.display = 'none';
-    const b = toastEl.querySelector('#otdVoiceToastBtns');
-    if(b) b.innerHTML = '';
   }
 
-  function setStatus(s){
-    if(micStatus) micStatus.textContent = String(s || '—');
-  }
+  let isRec = false;
+  let sr = null;
+  let media = null;
+  let mediaStream = null;
+  let chunks = [];
 
   function setMicUI(on){
     isRec = !!on;
@@ -2154,36 +2113,74 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     micBtn.setAttribute('aria-pressed', isRec ? 'true' : 'false');
   }
 
-  function stopAll(){
-    try{ if(sr){ sr.onresult = null; sr.onerror = null; sr.onend = null; sr.stop(); } }catch(_e){}
-    sr = null;
-
-    try{ if(media){ media.ondataavailable = null; media.onstop = null; media.stop(); } }catch(_e){}
-    media = null;
-
-    try{ mediaChunks = []; }catch(_e){}
+  function stopTracks(){
+    try{
+      if(mediaStream){
+        mediaStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){ } });
+      }
+    }catch(_e){}
+    mediaStream = null;
   }
 
-  async function aiParseCash(text, lang){
-    // Server route lives under /api (not /ai)
-    const r = await fetch(`${API_BASE}/api/ai/cash/parse`, {
+  function stopRec(){
+    try{ if(sr){ sr.stop(); return; } }catch(_e){}
+    try{ if(media && media.state !== 'inactive'){ media.stop(); return; } }catch(_e){}
+    setMicUI(false);
+    stopTracks();
+  }
+
+  function blobToBase64(blob){
+    return new Promise((resolve, reject)=>{
+      try{
+        const r = new FileReader();
+        r.onload = ()=> {
+          const s = String(r.result || '');
+          const b64 = s.includes(',') ? s.split(',')[1] : s;
+          resolve(b64);
+        };
+        r.onerror = ()=> reject(r.error || new Error('FileReader error'));
+        r.readAsDataURL(blob);
+      }catch(e){ reject(e); }
+    });
+  }
+
+  async function transcribeBlob(blob){
+    // IMPORTANT: API_BASE is '/api' already (see config_api.js). Do NOT add extra '/api' here.
+    const mime = String(blob && blob.type ? blob.type : 'audio/webm').split(';')[0] || 'audio/webm';
+    const b64 = await blobToBase64(blob);
+    const r = await fetch(`${API_BASE}/ai/transcribe`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      credentials:'include',
+      body: JSON.stringify({ audio: b64, mime, language: '' }) // empty => auto-detect language
+    });
+    const j = await r.json().catch(()=> ({}));
+    if(!r.ok || !j || j.success !== true){
+      const msg = (j && j.error) ? String(j.error) : ('HTTP ' + r.status);
+      throw new Error(msg);
+    }
+    return String(j.text || '').trim();
+  }
+
+  async function aiParseCash(text){
+    const r = await fetch(`${API_BASE}/ai/cash/parse`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ text, lang })
+      credentials:'include',
+      body: JSON.stringify({ text })
     });
-    const j = await r.json().catch(()=>null);
+    const j = await r.json().catch(()=> ({}));
     if(!r.ok || !j || j.success !== true) throw new Error((j && j.error) ? j.error : `HTTP ${r.status}`);
     return Array.isArray(j.items) ? j.items : [];
   }
 
   function heuristicParse(text){
-    // fallback: one amount + guess kind by verbs
     const s = String(text||'').toLowerCase();
     const num = (s.match(/-?\d+([.,]\d+)?/g)||[]).map(x=>x.replace(',','.'))[0];
     const amount = num ? Number(num) : 0;
     if(!amount) return [];
-    const isIncomeWord = /(dosta|otrzyma|przyj|income|salary|wpływ|plus|\+|zarobi)/i.test(s);
-    const isExpenseWord = /(wyda|zapłaci|kupi|spent|paid|minus|-|wydatek|koszt)/i.test(s);
+    const isIncomeWord = /(dosta|otrzyma|przyj|income|salary|wpływ|plus|\+|zarobi|otrzymałem|получ|приход|зарп|доход)/i.test(s);
+    const isExpenseWord = /(wyda|zapłaci|kupi|spent|paid|minus|-|wydatek|koszt|потрат|заплат|минус|витрат|оплат)/i.test(s);
     const kind = isIncomeWord && !isExpenseWord ? 'przyjęcie' : 'wydanie';
     return [{
       kind,
@@ -2193,104 +2190,32 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     }];
   }
 
-  function findKasaById(id){
-    try{
-      const arr = (window && window.kasa) ? window.kasa : (typeof kasa !== 'undefined' ? kasa : []);
-      return (arr||[]).find(x=>String(x.id)===String(id)) || null;
-    }catch(_e){
-      return null;
-    }
-  }
-
-  function openCashEditById(id){
-    const row = findKasaById(id);
-    if(!row) return;
-
-    const back = $id('cashSheetBackdrop');
-    if(back) back.style.display = 'flex';
-
-    const out = $id('cashTypeOut');
-    const inn = $id('cashTypeIn');
-    // simulate clicks so vault_mvp.js updates its internal cashKind
-    if(row.type === 'przyjęcie'){
-      inn && inn.click();
-    }else{
-      out && out.click();
-    }
-
-    const amt = $id('quickAmt');
-    const note = $id('quickNote');
-    const cat = $id('quickCashCat');
-    const saveBtn = $id('cashSheetSave');
-
-    if(amt) amt.value = String(Math.abs(Number(row.amount||0))).replace('.', ',');
-    if(note) note.value = String(row.comment||'');
-    if(cat) cat.value = String(row.category||'');
-
-    if(saveBtn){
-      saveBtn.dataset.editId = String(row.id);
-      // tiny UX hint
-      try{ saveBtn.textContent = TT ? TT('cash.save_edit') : 'Zapisz'; }catch(_e){}
-    }
-
-    setStatus('—');
-    hideToast();
-  }
-
-  function scheduleUndo(ids){
-    if(undoTimer){ clearTimeout(undoTimer); undoTimer = null; }
-    lastCreatedIds = ids.slice(0);
-
-    // UX decision (per Nikita): keep ONLY the tiny "Zapisano z głosu" toast.
-    // No undo/edit buttons here (editing is available via row actions in the list).
-    showToast('✅ Zapisano z głosu', null, []);
-
-    undoTimer = setTimeout(()=>{
-      lastCreatedIds = [];
-      hideToast();
-      undoTimer = null;
-    }, 1600);
-  }
-
-  function undoLast(){
-    const ids = lastCreatedIds || [];
-    if(!ids.length) return;
-    lastCreatedIds = [];
-    try{
-      ids.forEach(id=>{
-        try{ delRow && delRow('kasa', id); }catch(_e){}
-      });
-    }catch(_e){}
-    hideToast();
-  }
-
   async function commitTranscript(text){
-    const lang = getLang();
     const clean = String(text||'').trim();
     if(!clean){
-      showToast('Nie rozpoznano mowy', null, []);
-      setTimeout(hideToast, 1600);
+      showToast('Nie rozpoznano mowy');
+      setTimeout(hideToast, 1400);
+      setStatus('—');
       return;
     }
 
     setStatus(clean);
-    showToast(clean, 'Analiza…', []);
+    showToast('Przetwarzanie…');
 
     let items = [];
     try{
-      items = await aiParseCash(clean, lang);
-    }catch(e){
-      // AI parse not available: fallback to heuristic
+      items = await aiParseCash(clean);
+    }catch(_e){
       items = heuristicParse(clean);
     }
 
     if(!items || !items.length){
-      showToast(clean, 'Nie znalazłem kwoty. Spróbuj powiedzieć np. "minus 20 zł na dostawę".', []);
-      setTimeout(hideToast, 2600);
+      showToast('Nie znalazłem kwoty');
+      setTimeout(hideToast, 1600);
+      setStatus('—');
       return;
     }
 
-    const created = [];
     try{
       items.forEach(it=>{
         const kind = (it && it.kind) ? String(it.kind) : 'wydanie';
@@ -2298,28 +2223,25 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
         if(!amount) return;
         const note = String((it && (it.note || it.comment || it.description)) || clean).trim();
         const cat = String((it && (it.categoryId || it.category)) || '');
-        const id = (typeof addKasa === 'function') ? addKasa(kind, amount, note, 'voice', cat) : null;
-        if(id) created.push(id);
+        if(typeof addKasa === 'function') addKasa(kind, amount, note, 'voice', cat);
       });
+      showToast('✅ Zapisano z głosu'); // keep only this
+      setTimeout(hideToast, 1400);
     }catch(e){
       console.warn('cash voice add error', e);
+      showToast('Nie udało się zapisać');
+      setTimeout(hideToast, 2000);
     }
 
-    if(created.length){
-      scheduleUndo(created);
-      setStatus('—');
-    }else{
-      showToast(clean, 'Nie udało się zapisać. Sprawdź konsolę.', []);
-      setTimeout(hideToast, 2600);
-    }
+    setStatus('—');
   }
 
-  // SpeechRecognition path (live preview)
+  // SpeechRecognition fallback (single language, for cases where server STT is unavailable)
   function startSR(){
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SR) return false;
 
-    const lang = getLang();
+    const lang = getSpeechLang();
     let finalText = '';
 
     sr = new SR();
@@ -2338,27 +2260,25 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
         }
         const shown = (finalText + interim).trim();
         if(shown){
-          showToast(shown, isRec ? 'Nagrywanie…' : null, []);
+          showToast(shown, 'Nagrywanie…');
           setStatus(shown);
         }
       }catch(_e){}
     };
 
-    sr.onerror = (e)=>{
-      console.warn('SR error', e);
-    };
-
+    sr.onerror = (e)=>{ console.warn('SR error', e); };
     sr.onend = ()=>{
       setMicUI(false);
       const text = String(finalText||'').trim();
-      if(text) commitTranscript(text);
-      else hideToast();
       sr = null;
+      stopTracks();
+      if(text) commitTranscript(text);
+      else { hideToast(); setStatus('—'); }
     };
 
     try{
       setMicUI(true);
-      showToast('Słucham…', null, []);
+      showToast('Słucham…');
       setStatus('…');
       sr.start();
       return true;
@@ -2370,45 +2290,14 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     }
   }
 
-  // MediaRecorder (preferred): record → server STT (auto language) → parse/save
-  function blobToBase64(blob){
-    return new Promise((resolve, reject)=>{
-      try{
-        const r = new FileReader();
-        r.onload = ()=>{
-          const s = String(r.result || '');
-          const b64 = s.includes(',') ? s.split(',')[1] : s;
-          resolve(b64);
-        };
-        r.onerror = ()=> reject(r.error || new Error('FileReader error'));
-        r.readAsDataURL(blob);
-      }catch(e){ reject(e); }
-    });
-  }
-
-  async function transcribeBlob(blob){
-    const b64 = await blobToBase64(blob);
-    const r = await fetch(`${API_BASE}/api/ai/transcribe`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
-      credentials: 'include',
-      // language: '' => let OpenAI auto-detect (multi-language input without switching)
-      body: JSON.stringify({ audio: b64, mime: String(blob.type || 'audio/webm').split(';')[0], language: getSttLang() })
-    });
-    const j = await r.json().catch(()=> ({}));
-    if(!r.ok || !j || j.success !== true){
-      throw new Error((j && j.error) ? j.error : ('Transcribe failed ' + r.status));
-    }
-    return String(j.text || '').trim();
-  }
-
+  // Preferred: MediaRecorder → server STT (auto-language)
   async function startMedia(){
     if(!(navigator.mediaDevices && window.MediaRecorder)) return false;
-    try{
-      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-      mediaChunks = [];
 
-      // pick a supported mime type to avoid MediaRecorder constructor errors
+    try{
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      chunks = [];
+
       let opts = {};
       try{
         const prefer = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg','audio/mp4'];
@@ -2420,65 +2309,41 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
         }
       }catch(_e){}
 
-      media = new MediaRecorder(stream, opts);
+      media = new MediaRecorder(mediaStream, opts);
+      media.ondataavailable = (e)=>{ try{ if(e.data && e.data.size) chunks.push(e.data); }catch(_e){} };
 
-      media.ondataavailable = (e)=>{ try{ if(e.data && e.data.size) mediaChunks.push(e.data); }catch(_e){} };
       media.onstop = async ()=>{
-        try{ stream.getTracks().forEach(t=>t.stop()); }catch(_e){}
-        setMicUI(false);
-
-        let mime = (media && media.mimeType) ? media.mimeType : (opts && opts.mimeType) ? opts.mimeType : 'audio/webm';
-        try{ mime = String(mime || 'audio/webm').split(';')[0]; }catch(_e){ mime = 'audio/webm'; }
-        const blob = new Blob(mediaChunks, { type: mime });
-        mediaChunks = [];
-
         try{
-          showToast('Przetwarzanie…', null, []);
+          const blob = new Blob(chunks, { type: (media && media.mimeType) ? media.mimeType : 'audio/webm' });
+          chunks = [];
+          media = null;
+          stopTracks();
+          setMicUI(false);
+
+          showToast('Przetwarzanie…');
           const tx = await transcribeBlob(blob);
           await commitTranscript(tx);
         }catch(e){
           console.warn('media transcribe error', e);
-          const emsg = String((e && e.message) || e || '').trim();
-          showToast('Nie udało się rozpoznać mowy', emsg, []);
-          // Fallback: if server STT is not available (missing key/rate limit/CORS), switch to browser SR.
-          try{
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (SR) {
-              setTimeout(()=>{
-                hideToast();
-                showToast('Tryb lokalny: powtórz zdanie', null, []);
-                setTimeout(hideToast, 1200);
-                startSR();
-              }, 350);
-            } else {
-              setTimeout(hideToast, 2500);
-            }
-          }catch(_e){ setTimeout(hideToast, 2500); }
+          // If server STT fails (missing key/disabled), fallback to SpeechRecognition
+          const msg = String((e && e.message) ? e.message : e);
+          showToast('Nie udało się rozpoznać mowy', msg);
+          setTimeout(hideToast, 2400);
+          setStatus('—');
         }
       };
 
       setMicUI(true);
-      showToast('Nagrywanie…', null, []);
+      showToast('Nagrywanie…');
       setStatus('…');
       media.start();
       return true;
     }catch(e){
       console.warn('media start error', e);
+      stopTracks();
       setMicUI(false);
-      showToast('Brak dostępu do mikrofonu', null, []);
-      setTimeout(hideToast, 2200);
       return false;
     }
-  }
-
-  function stopRec(){
-    try{
-      if(sr){ sr.stop(); return; }
-    }catch(_e){}
-    try{
-      if(media && media.state !== 'inactive'){ media.stop(); return; }
-    }catch(_e){}
-    setMicUI(false);
   }
 
   micBtn.addEventListener('click', async (e)=>{
@@ -2490,14 +2355,18 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       return;
     }
 
-    // clear any old pending undo toast
-    if(undoTimer){ clearTimeout(undoTimer); undoTimer = null; }
-    lastCreatedIds = [];
-
-    // Prefer server STT (auto language). If MediaRecorder isn't available, fallback to Web Speech.
+    // Prefer server STT first (auto-language). Only fallback to browser SR if recording is not available.
     const ok = await startMedia();
-    if(!ok) startSR();
+    if(!ok){
+      const ok2 = startSR();
+      if(!ok2){
+        showToast('Brak dostępu do mikrofonu');
+        setTimeout(hideToast, 1800);
+      }
+    }
   });
+
+})();
 
 })();/* === Settings MVP bindings (Save/Clear) ===
    Keep this tiny and stable: settings screen is intentionally minimal now.
