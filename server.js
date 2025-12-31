@@ -2609,6 +2609,71 @@ function _extractOutputText(resp){
   return out;
 }
 
+
+
+function _aiClampNum(v, min, max){
+  if(v == null) return null;
+  let n = null;
+  if(typeof v === 'number'){
+    n = v;
+  }else{
+    const s = String(v).trim();
+    // Grab first number-like token (supports comma decimals).
+    const m = s.match(/-?\d+(?:[.,]\d+)?/);
+    if(m) n = parseFloat(m[0].replace(',', '.'));
+  }
+  if(!isFinite(n)) return null;
+  if(typeof min === 'number') n = Math.max(min, n);
+  if(typeof max === 'number') n = Math.min(max, n);
+  return n;
+}
+
+function _aiExtractJson(text){
+  if(typeof text !== 'string') return null;
+  let t = text.trim();
+  if(!t) return null;
+
+  // If model wrapped JSON in a code fence, extract the inside.
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if(fence && fence[1]) t = fence[1].trim();
+
+  // Try to isolate the first JSON object/array in the text.
+  const firstObj = t.indexOf('{');
+  const lastObj  = t.lastIndexOf('}');
+  const firstArr = t.indexOf('[');
+  const lastArr  = t.lastIndexOf(']');
+
+  let candidate = '';
+  if(firstObj !== -1 && lastObj !== -1 && lastObj > firstObj){
+    candidate = t.slice(firstObj, lastObj + 1);
+  }else if(firstArr !== -1 && lastArr !== -1 && lastArr > firstArr){
+    candidate = t.slice(firstArr, lastArr + 1);
+  }else{
+    candidate = t;
+  }
+
+  // Normalize smart quotes and remove trailing commas.
+  candidate = candidate
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/,\s*([}\]])/g, '$1');
+
+  try{
+    return JSON.parse(candidate);
+  }catch(e){
+    // Last attempt: strip junk around braces.
+    try{
+      const a = candidate.indexOf('{');
+      const b = candidate.lastIndexOf('}');
+      if(a !== -1 && b !== -1 && b > a){
+        const c2 = candidate.slice(a, b + 1).replace(/,\s*([}\]])/g, '$1');
+        return JSON.parse(c2);
+      }
+    }catch(e2){}
+    return null;
+  }
+}
+
 async function _callOpenAI({ model, messages, maxOutputTokens }){
   const apiKey = process.env.OPENAI_API_KEY;
   const payload = JSON.stringify({
@@ -2884,16 +2949,13 @@ app.post('/api/ai/cash/parse', async (req, res) => {
     }).filter(it=> it && it.amount && isFinite(it.amount) && it.amount > 0.0001);
 
     return res.json({ success:true, items, model: result.model, usage: result.usage });
-}catch(e){
-  const st = (e && e.status) ? e.status : 502;
-  console.error('[AI cash/parse]', st, e && e.message, e && e.data ? e.data : '');
-  return res.status(st).json({
-    success:false,
-    error: (e && e.message) ? String(e.message) : 'OpenAI error',
-    openai_status: e && e.status ? e.status : undefined,
-    openai_error: (e && e.data && e.data.error) ? e.data.error : undefined
-  });
-}
+  }catch(e){
+    return res.status(502).json({
+      success:false,
+      error: (e && e.message) ? String(e.message) : 'OpenAI error',
+      openai_status: e && e.status ? e.status : undefined
+    });
+  }
 });
 
 
