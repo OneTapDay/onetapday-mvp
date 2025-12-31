@@ -1452,6 +1452,59 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   let chunks = [];
   let opId = 0; // cancel stale callbacks
 
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let sr = null;
+  let srFinal = '';
+  let srInterim = '';
+  let srBase = '';
+
+  function _updateAiPreview(){
+    if(!recording) return;
+    const live = (String(srFinal||'') + ' ' + String(srInterim||'')).trim();
+    const base = String(srBase||'').trim();
+    inp.value = (base ? (base + ' ') : '') + live;
+  }
+
+  function _startAiPreview(){
+    if(!SR) return;
+    try{
+      if(sr) return;
+      srFinal = '';
+      srInterim = '';
+      sr = new SR();
+      sr.lang = getLang();
+      sr.interimResults = true;
+      sr.continuous = true;
+      sr.onresult = (ev)=>{
+        try{
+          let fin = '';
+          let inter = '';
+          for(let i = ev.resultIndex || 0; i < ev.results.length; i++){
+            const res = ev.results[i];
+            const tr = res && res[0] ? String(res[0].transcript || '').trim() : '';
+            if(!tr) continue;
+            if(res.isFinal) fin += (fin ? ' ' : '') + tr;
+            else inter = tr;
+          }
+          if(fin) srFinal = (srFinal ? (srFinal + ' ') : '') + fin;
+          srInterim = inter || '';
+          _updateAiPreview();
+        }catch(_e){}
+      };
+      sr.onerror = ()=>{};
+      sr.onend = ()=>{ sr = null; srInterim = ''; _updateAiPreview(); };
+      sr.start();
+    }catch(_e){
+      sr = null;
+    }
+  }
+
+  function _stopAiPreview(){
+    try{ if(sr) sr.stop(); }catch(_){}
+    sr = null;
+    srInterim = '';
+  }
+
   function setUI(on){
     recording = on;
     btn.classList.toggle('is-recording', !!on);
@@ -1484,7 +1537,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
 
   async function transcribe(blob, mime){
     const b64 = await blobToBase64(blob);
-    const r = await fetch(`${API_BASE}/api/ai/transcribe`, {
+    const r = await fetch(`${API_BASE}/ai/transcribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1520,25 +1573,34 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     if(recording) return;
     const my = ++opId;
 
+
+    srBase = String(inp.value || '').trim();
+
     // Prefer stable flow: record → server STT
     if(navigator.mediaDevices && window.MediaRecorder){
       try{
         await startMedia();
         setUI(true);
+        _startAiPreview();
         mediaRec.onstop = async ()=>{
           const mine = my;
           const localChunks = chunks.slice();
           const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
           setUI(false);
           stopTracks();
+          _cashPreviewStop();
+
+          _cashPreviewStop();
+
+          _stopAiPreview();
 
           if(mine !== opId) return; // cancelled
           try{
             const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
             const text = await transcribe(blob, mime);
             if(!text) return;
-            const prev = String(inp.value || '').trim();
-            inp.value = (prev ? (prev + ' ') : '') + text;
+            const base = String(srBase || '').trim();
+            inp.value = (base ? (base + ' ') : '') + text;
             try{ inp.focus(); }catch(_){}
           }catch(e){
             // If STT is not available, do not spam the chat. Just show a minimal error.
@@ -1553,11 +1615,11 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
         // fallthrough to Web Speech if available
         stopTracks();
         setUI(false);
+        _stopAiPreview();
       }
     }
 
-    // Fallback: Web Speech API (device-dependent)
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    // Fallback: Web Speech API (device-dependent) with live preview
     if(!SR){
       if(typeof pushMsg === 'function'){
         pushMsg('assistant', TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере.'));
@@ -1566,26 +1628,9 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     }
 
     try{
-      const rec = new SR();
-      rec.lang = getLang();
-      rec.interimResults = false;
-      rec.continuous = false;
-
       setUI(true);
-      rec.onresult = (ev)=>{
-        try{
-          const t = ev.results && ev.results[0] && ev.results[0][0] ? ev.results[0][0].transcript : '';
-          const text = String(t || '').trim();
-          if(text){
-            const prev = String(inp.value || '').trim();
-            inp.value = (prev ? (prev + ' ') : '') + text;
-            try{ inp.focus(); }catch(_){}
-          }
-        }catch(_){}
-      };
-      rec.onerror = ()=> setUI(false);
-      rec.onend = ()=> setUI(false);
-      rec.start();
+      _startAiPreview();
+      return;
     }catch(_e){
       setUI(false);
       if(typeof pushMsg === 'function'){
@@ -1597,6 +1642,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   function stop(){
     // Stop either MediaRecorder or SpeechRecognition (if running)
     const my = ++opId;
+    _stopAiPreview();
     try{
       if(mediaRec && mediaRec.state !== 'inactive'){
         mediaRec.stop();
@@ -2036,7 +2082,58 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
   let chunks = [];
   let opId = 0;
 
-  function setStatus(t){
+  const SR_CASH = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let cashSr = null;
+  let cashFinal = '';
+  let cashInterim = '';
+
+  function _cashPreviewUpdate(){
+    if(!recording) return;
+    const live = (String(cashFinal||'') + ' ' + String(cashInterim||'')).trim();
+    if(live) setStatus('🎙️ ' + live);
+  }
+
+  function _cashPreviewStart(){
+    if(!SR_CASH) return;
+    try{
+      if(cashSr) return;
+      cashFinal = '';
+      cashInterim = '';
+      cashSr = new SR_CASH();
+      cashSr.lang = localStorage.getItem('speechLang') || 'pl-PL';
+      cashSr.interimResults = true;
+      cashSr.continuous = true;
+      cashSr.onresult = (ev)=>{
+        try{
+          let fin = '';
+          let inter = '';
+          for(let i = ev.resultIndex || 0; i < ev.results.length; i++){
+            const res = ev.results[i];
+            const tr = res && res[0] ? String(res[0].transcript || '').trim() : '';
+            if(!tr) continue;
+            if(res.isFinal) fin += (fin ? ' ' : '') + tr;
+            else inter = tr;
+          }
+          if(fin) cashFinal = (cashFinal ? (cashFinal + ' ') : '') + fin;
+          cashInterim = inter || '';
+          _cashPreviewUpdate();
+        }catch(_e){}
+      };
+      cashSr.onerror = ()=>{};
+      cashSr.onend = ()=>{ cashSr = null; cashInterim = ''; _cashPreviewUpdate(); };
+      cashSr.start();
+    }catch(_e){
+      cashSr = null;
+    }
+  }
+
+  function _cashPreviewStop(){
+    try{ if(cashSr) cashSr.stop(); }catch(_){}
+    cashSr = null;
+    cashInterim = '';
+  }
+
+function setStatus(t){
     try{ if(micStatus) micStatus.textContent = t; }catch(_){}
   }
   function setUI(on){
@@ -2062,14 +2159,14 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     const back = $id('cashSheetBackdrop');
     if(back) back.style.display = 'flex';
 
-    // set kind using existing handlers in vault_mvp.js
-    if(kind === 'przyjęcie'){
-      $id('cashTypeIn')?.click();
-    }else{
-      $id('cashTypeOut')?.click();
-    }
-
-    setTimeout(()=>{ try{ $id('quickAmt')?.focus(); }catch(_){ } }, 50);
+    // set kind AFTER opening, to avoid UI defaults overriding it
+    setTimeout(()=>{
+      try{
+        if(kind === 'przyjęcie') $id('cashTypeIn')?.click();
+        else $id('cashTypeOut')?.click();
+      }catch(_e){}
+      setTimeout(()=>{ try{ $id('quickAmt')?.focus(); }catch(_e){} }, 30);
+    }, 30);
   }
 
   function blobToBase64(blob){
@@ -2089,7 +2186,7 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
 
   async function transcribe(blob, mime){
     const b64 = await blobToBase64(blob);
-    const r = await fetch(`${API_BASE}/api/ai/transcribe`, {
+    const r = await fetch(`${API_BASE}/ai/transcribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -2165,13 +2262,16 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       try{
         await startMedia();
         setUI(true);
-        setStatus('🎙️ Запись… нажми ещё раз чтобы остановить');
+        setStatus('🎙️ Запись… говори, текст появится сверху. Нажми ещё раз чтобы остановить');
+        _cashPreviewStart();
         mediaRec.onstop = async ()=>{
           const mine = my;
           const localChunks = chunks.slice();
           const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
           setUI(false);
-          stopTracks();
+    stopTracks();
+    _cashPreviewStop();
+
 
           if(mine !== opId) return; // cancelled
           try{
@@ -2201,6 +2301,7 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       }catch(_e){
         stopTracks();
         setUI(false);
+        _cashPreviewStop();
       }
     }
 
@@ -2254,7 +2355,9 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       }
     }catch(_){}
     setUI(false);
-    stopTracks();
+          stopTracks();
+          _cashPreviewStop();
+
   }
 
   micBtn.addEventListener('click', ()=>{
