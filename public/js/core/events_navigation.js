@@ -2019,231 +2019,34 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
   });
 });// Speech
 
-// Cash voice (live): show transcript while speaking → on Stop prefill cash sheet (NO auto-save)
+// Cash voice (stable): record → transcribe → prefill cash sheet (NO auto-save)
 (function(){
-  const micBtn = $id('micBtn');
+  const micBtn    = $id('micBtn');
+  const micStatus = $id('micStatus');
+
   if(!micBtn) return;
 
   // Prevent duplicate listeners after re-renders / re-inits
   if(micBtn.dataset && micBtn.dataset.voiceBound === '1') return;
   try{ micBtn.dataset.voiceBound = '1'; }catch(_){}
 
-  // ---------- UI: small dark overlay with live text ----------
-  function ensureOverlay(){
-    let el = document.getElementById('cashVoiceOverlay');
-    if(el) return el;
-    el = document.createElement('div');
-    el.id = 'cashVoiceOverlay';
-    el.style.cssText = [
-      'position:fixed',
-      'left:50%',
-      'transform:translateX(-50%)',
-      'bottom:110px',
-      'max-width:min(92vw,520px)',
-      'padding:10px 12px',
-      'background:rgba(0,0,0,.58)',
-      'color:#fff',
-      'border:1px solid rgba(255,255,255,.12)',
-      'border-radius:14px',
-      'font-size:14px',
-      'line-height:1.25',
-      'z-index:9999',
-      'backdrop-filter:blur(10px)',
-      'display:none',
-      'white-space:pre-wrap'
-    ].join(';');
-    document.body.appendChild(el);
-    return el;
-  }
-  function setStatus(t, keepOpen){
-    try{
-      const el = ensureOverlay();
-      el.textContent = String(t || '');
-      el.style.display = t ? 'block' : 'none';
-      if(!keepOpen && t){
-        clearTimeout(el.__hideT);
-        el.__hideT = setTimeout(()=>{ try{ el.style.display='none'; }catch(_){ } }, 3500);
-      }
-    }catch(_){}
-  }
+  let recording = false;
+  let mediaRec = null;
+  let mediaStream = null;
+  let chunks = [];
+  let opId = 0;
 
+  function setStatus(t){
+    try{ if(micStatus) micStatus.textContent = t; }catch(_){}
+  }
   function setUI(on){
+    recording = !!on;
     micBtn.classList.toggle('on', !!on);
     try{
       const ico = micBtn.querySelector('.q-ico');
       if(ico) ico.textContent = on ? '⏹' : '🎤';
     }catch(_){}
   }
-
-  // ---------- Helpers ----------
-  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
-  function getLang(){
-    try{
-      const s = String(localStorage.getItem('speechLang') || '').trim();
-      if(s) return s;
-      const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
-      return langMap[k] || 'pl-PL';
-    }catch(_){ return 'pl-PL'; }
-  }
-
-  function showCashSheet(kind){
-    const back = $id('cashSheetBackdrop');
-    if(back) back.style.display = 'flex';
-
-    if(kind === 'przyjęcie'){
-      $id('cashTypeIn')?.click();
-    }else{
-      $id('cashTypeOut')?.click();
-    }
-
-    setTimeout(()=>{ try{ $id('quickAmt')?.focus(); }catch(_){ } }, 50);
-  }
-
-  function parseCash(text){
-    const raw = String(text || '').trim();
-    const t = raw.toLowerCase();
-
-    // detect kind
-    let kind = 'wydanie';
-    const signMatch = t.match(/([+\-−])\s*\d/);
-    if(signMatch){
-      kind = (signMatch[1] === '+') ? 'przyjęcie' : 'wydanie';
-    }else{
-      const inWords  = ['plus','income','cash in','received','deposit','wpłata','wplata','przyjęcie','przyjecie','плюс','приход','пополн'];
-      const outWords = ['minus','expense','cash out','payment','wydatek','wydanie','wyda','koszt','минус','расход','потрат'];
-      if(inWords.some(w=> t.includes(w))) kind = 'przyjęcie';
-      if(outWords.some(w=> t.includes(w))) kind = 'wydanie';
-    }
-
-    // amount
-    const numMatch = t.match(/(\d+(?:[.,]\d+)?)/);
-    const num = numMatch ? numMatch[1] : '';
-    const amount = num ? (typeof asNum === 'function' ? asNum(num) : Number(String(num).replace(',','.'))) : null;
-
-    // note cleanup
-    let note = raw;
-    try{
-      note = note
-        .replace(/([+\-−]?\s*\d+(?:[.,]\d+)?\s*(zł|pln|eur|usd|zloty|zl|euro|dollar|грн|uah)?)+/gi,' ')
-        .replace(/\b(сегодня|вчера|завтра|потратил|потратила|потратили|потрат|spent|paid|pay|zapłaciłem|zapłacil|zapłaciłam|wydałem|wydalem|wydałam|wydalam|wydatek|wydanie|przyjęcie|przyjecie|minus|plus|расход|приход|минус|плюс)\b/gi,' ')
-        .replace(/\s+/g,' ')
-        .trim();
-      if(note.length < 2) note = raw;
-    }catch(_){ note = raw; }
-
-    return { kind, amount, note, raw };
-  }
-
-  function prefillFromText(text){
-    const t = String(text || '').trim();
-    if(!t){
-      setStatus('🎙️ Пусто', false);
-      return;
-    }
-    const parsed = parseCash(t);
-    setStatus('🎙️ ' + t, false);
-
-    // open sheet and prefill
-    showCashSheet(parsed.kind);
-    if(parsed.amount && isFinite(parsed.amount)){
-      const amtEl = $id('quickAmt');
-      if(amtEl) amtEl.value = Math.abs(parsed.amount).toFixed(2);
-    }
-    const noteEl = $id('quickNote');
-    if(noteEl) noteEl.value = parsed.note || t;
-
-    // IMPORTANT: do NOT auto-save. User confirms by tapping "Zapisz".
-  }
-
-  // ---------- Mode A: Live transcription via Web Speech API (best UX) ----------
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let speechRec = null;
-  let liveText = '';
-  let isRecording = false;
-  let finalizePending = false;
-  let opId = 0;
-
-  function startLive(){
-    if(!SR) return false;
-    try{
-      liveText = '';
-      finalizePending = false;
-
-      speechRec = new SR();
-      speechRec.lang = getLang();
-      speechRec.continuous = true;
-      speechRec.interimResults = true;
-      speechRec.maxAlternatives = 1;
-
-      speechRec.onresult = (e)=>{
-        try{
-          let finalT = '';
-          let interimT = '';
-          for(let i = e.resultIndex; i < e.results.length; i++){
-            const r = e.results[i];
-            const chunk = (r && r[0] && r[0].transcript) ? String(r[0].transcript) : '';
-            if(!chunk) continue;
-            if(r.isFinal) finalT += chunk + ' ';
-            else interimT += chunk + ' ';
-          }
-          const merged = (finalT + interimT).trim();
-          if(merged){
-            liveText = merged;
-            setStatus('🎙️ ' + merged, true);
-          }else{
-            setStatus('🎙️ ...', true);
-          }
-        }catch(_){}
-      };
-      speechRec.onerror = (e)=>{
-        setStatus('🎙️ Ошибка голоса: ' + (e && e.error ? e.error : ''), false);
-      };
-      speechRec.onend = ()=>{
-        // If user pressed Stop, finalize using the last captured text.
-        const pending = finalizePending;
-        const text = String(liveText || '').trim();
-        speechRec = null;
-        finalizePending = false;
-        isRecording = false;
-        setUI(false);
-        if(pending){
-          prefillFromText(text);
-        }else{
-          // auto-ended (no manual stop)
-          if(text) prefillFromText(text);
-          else setStatus('', false);
-        }
-      };
-
-      isRecording = true;
-      setUI(true);
-      setStatus('🎙️ ...', true);
-      speechRec.start();
-      return true;
-    }catch(_e){
-      speechRec = null;
-      return false;
-    }
-  }
-
-  function stopLive(){
-    try{
-      finalizePending = true;
-      setStatus('🎙️ Обрабатываю…', true);
-      speechRec && speechRec.stop();
-    }catch(_){
-      // If stop fails, hard reset.
-      speechRec = null;
-      finalizePending = false;
-      isRecording = false;
-      setUI(false);
-    }
-  }
-
-  // ---------- Mode B: Server STT fallback (no live text, but works where SR isn't available) ----------
-  let mediaRec = null;
-  let mediaStream = null;
-  let chunks = [];
 
   function stopTracks(){
     try{
@@ -2252,6 +2055,21 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       }
     }catch(_){}
     mediaStream = null;
+  }
+
+  function showCashSheet(kind){
+    // show sheet
+    const back = $id('cashSheetBackdrop');
+    if(back) back.style.display = 'flex';
+
+    // set kind using existing handlers in vault_mvp.js
+    if(kind === 'przyjęcie'){
+      $id('cashTypeIn')?.click();
+    }else{
+      $id('cashTypeOut')?.click();
+    }
+
+    setTimeout(()=>{ try{ $id('quickAmt')?.focus(); }catch(_){ } }, 50);
   }
 
   function blobToBase64(blob){
@@ -2275,13 +2093,48 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ audio: b64, mime: mime || blob.type || 'audio/webm', language: getLang() })
+      body: JSON.stringify({ audio: b64, mime: mime || blob.type || 'audio/webm', language: localStorage.getItem('speechLang') || 'pl-PL' })
     });
     const j = await r.json().catch(()=> ({}));
     if(!r.ok || !j || j.success !== true){
       throw new Error((j && j.error) ? j.error : ('Transcribe failed ' + r.status));
     }
     return String(j.text || '').trim();
+  }
+
+  function parseCash(text){
+    const raw = String(text || '').trim();
+    const t = raw.toLowerCase();
+
+    // detect kind
+    let kind = 'wydanie';
+    const signMatch = t.match(/([+\-−])\s*\d/);
+    if(signMatch){
+      kind = (signMatch[1] === '+') ? 'przyjęcie' : 'wydanie';
+    }else{
+      const inWords  = ['plus','income','cash in','received','deposit','wpłata','wplata','przyjęcie','przyjecie','плюс','приход','пополн'];
+      const outWords = ['minus','expense','cash out','payment','wydatek','wydanie','wyda','koszt','минус','расход','потрат'];
+      if(inWords.some(w=> t.includes(w))) kind = 'przyjęcie';
+      if(outWords.some(w=> t.includes(w))) kind = 'wydanie';
+    }
+
+    // amount
+    const numMatch = t.match(/(\d+(?:[.,]\d+)?)/);
+    const num = numMatch ? numMatch[1] : '';
+    const amount = num ? (typeof asNum === 'function' ? asNum(num) : Number(String(num).replace(',','.'))) : null;
+
+    // note cleanup: remove amount + common filler words
+    let note = raw;
+    try{
+      note = note
+        .replace(/([+\-−]?\s*\d+(?:[.,]\d+)?\s*(zł|pln|eur|usd|zloty|zl|euro|dollar|грн|uah)?)+/gi,' ')
+        .replace(/\b(сегодня|вчера|завтра|потратил|потратила|потратили|потрат|spent|paid|pay|zapłaciłem|zapłacil|zapłaciłam|wydałem|wydalem|wydałam|wydalam|wydatek|wydanie|przyjęcie|przyjecie|minus|plus|расход|приход|минус|плюс)\b/gi,' ')
+        .replace(/\s+/g,' ')
+        .trim();
+      if(note.length < 2) note = raw;
+    }catch(_){ note = raw; }
+
+    return { kind, amount, note, raw };
   }
 
   async function startMedia(){
@@ -2303,76 +2156,253 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     return true;
   }
 
-  async function startServerSTT(){
+  async function start(){
+    if(recording) return;
     const my = ++opId;
-    if(!(navigator.mediaDevices && window.MediaRecorder)) return false;
+
+    // Prefer stable flow: record → server STT
+    if(navigator.mediaDevices && window.MediaRecorder){
+      try{
+        await startMedia();
+        setUI(true);
+        setStatus('🎙️ Запись… нажми ещё раз чтобы остановить');
+        mediaRec.onstop = async ()=>{
+          const mine = my;
+          const localChunks = chunks.slice();
+          const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
+          setUI(false);
+          stopTracks();
+
+          if(mine !== opId) return; // cancelled
+          try{
+            const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
+            const text = await transcribe(blob, mime);
+            if(!text){ setStatus('🎙️ Пусто'); return; }
+
+            setStatus('🎙️ ' + text);
+
+            // 1) Try AI parsing (multiple ops + categories)
+            let aiItems = null;
+            try{
+              const lang = (localStorage.getItem('speechLang') || localStorage.getItem('otd_lang') || 'pl-PL');
+              const r2 = await fetch(`${API_BASE}/ai/cash/parse`, {
+                method:'POST',
+                headers:{ 'Content-Type':'application/json' },
+                body: JSON.stringify({ text, lang })
+              });
+              if(r2 && r2.ok){
+                const j2 = await r2.json().catch(()=>null);
+                if(j2 && j2.success && Array.isArray(j2.items)) aiItems = j2.items;
+              }
+            }catch(_){}
+
+            function prefillFromItem(it){
+              const kind = (it && it.kind) ? it.kind : 'wydanie';
+              showCashSheet(kind);
+
+              const amt = it && it.amount;
+              if(amt && isFinite(amt)){
+                const amtEl = $id('quickAmt');
+                if(amtEl) amtEl.value = Math.abs(amt).toFixed(2);
+              }
+              const noteEl = $id('quickNote');
+              if(noteEl) noteEl.value = String((it && it.note) ? it.note : text).trim();
+
+              const catEl = $id('quickCashCat');
+              const cid = (it && it.categoryId) ? String(it.categoryId) : '';
+              if(catEl && cid){
+                // fillQuickCashCat() may run right after opening the sheet
+                setTimeout(()=>{ try{ catEl.value = cid; }catch(_){} }, 60);
+              }
+            }
+
+            if(aiItems && aiItems.length){
+              if(aiItems.length === 1){
+                prefillFromItem(aiItems[0]);
+              }else{
+                // Ask once, then auto-add all items (saves time on mobile).
+                try{
+                  const fmt = (n)=>{ try{ return (Number(n)||0).toFixed(2); }catch(_){ return String(n||''); } };
+                  const lines = aiItems.map((it, i)=>{
+                    const sign = (it && it.kind === 'przyjęcie') ? '+' : '-';
+                    const note = (it && it.note) ? String(it.note) : '';
+                    const cat = (it && it.categoryId) ? String(it.categoryId) : 'other';
+                    return `${i+1}) ${sign}${fmt(it.amount)} — ${note} (${cat})`;
+                  }).join('\n');
+
+                  const msg = (typeof TT === 'function')
+                    ? TT('cash.voice_multi_confirm', null, `Добавить ${aiItems.length} операций из голоса?\n\n${lines}`)
+                    : (`Добавить ${aiItems.length} операций из голоса?\n\n${lines}`);
+
+                  const ok = confirm(msg);
+                  if(ok && typeof addKasa === 'function'){
+                    aiItems.forEach(it=>{
+                      try{
+                        const k = (it && it.kind) ? it.kind : 'wydanie';
+                        const a = Math.abs(Number(it && it.amount || 0));
+                        const n = String((it && it.note) ? it.note : text).trim();
+                        const c = String((it && it.categoryId) ? it.categoryId : '').trim();
+                        if(a && isFinite(a)) addKasa(k, a, n, 'voice-ai', c);
+                      }catch(_){}
+                    });
+                    try{ if(typeof render === 'function') render(); }catch(_){}
+                    setStatus('✅ Добавлено: ' + aiItems.length);
+                  }else{
+                    prefillFromItem(aiItems[0]);
+                  }
+                }catch(_){
+                  prefillFromItem(aiItems[0]);
+                }
+              }
+              return;
+            }
+
+            // 2) Fallback: local heuristics (no categories, single op)
+            const parsed = parseCash(text);
+            prefillFromItem({ kind: parsed.kind, amount: parsed.amount, note: parsed.note });
+
+          }catch(e){
+            setStatus('🎙️ Не смог распознать. Проверь AI ключ / доступ.');
+          }
+        };
+        mediaRec.start();
+        return;
+      }catch(_e){
+        stopTracks();
+        setUI(false);
+      }
+    }
+
+    // Fallback: Web Speech API
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!SR){
+      setStatus('🎙️ Голос недоступен в этом браузере');
+      return;
+    }
 
     try{
-      await startMedia();
-      isRecording = true;
+      const rec = new SR();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.lang = localStorage.getItem('speechLang') || 'pl-PL';
+
       setUI(true);
-      setStatus('🎙️ Запись…', true);
+      setStatus('🎙️ Слушаю…');
 
-      mediaRec.onstop = async ()=>{
-        const mine = my;
-        const localChunks = chunks.slice();
-        const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
-        isRecording = false;
-        setUI(false);
-        stopTracks();
+      rec.onresult = async (e)=>{
+        const text = (e.results[0][0].transcript || '').trim();
+        if(!text){ setStatus('🎙️ Пусто'); return; }
+        setStatus('🎙️ ' + text);
 
-        if(mine !== opId) return; // cancelled
+        let aiItems = null;
         try{
-          setStatus('🎙️ Обрабатываю…', true);
-          const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
-          const text = await transcribe(blob, mime);
-          prefillFromText(text);
-        }catch(_e){
-          setStatus('🎙️ Не смог распознать. Проверь AI ключ / доступ.', false);
+          const lang = (localStorage.getItem('speechLang') || localStorage.getItem('otd_lang') || 'pl-PL');
+          const r2 = await fetch(`${API_BASE}/ai/cash/parse`, {
+            method:'POST',
+            headers:{ 'Content-Type':'application/json' },
+            body: JSON.stringify({ text, lang })
+          });
+          if(r2 && r2.ok){
+            const j2 = await r2.json().catch(()=>null);
+            if(j2 && j2.success && Array.isArray(j2.items)) aiItems = j2.items;
+          }
+        }catch(_){}
+
+        function prefillFromItem(it){
+          const kind = (it && it.kind) ? it.kind : 'wydanie';
+          showCashSheet(kind);
+
+          const amt = it && it.amount;
+          if(amt && isFinite(amt)){
+            const amtEl = $id('quickAmt');
+            if(amtEl) amtEl.value = Math.abs(amt).toFixed(2);
+          }
+          const noteEl = $id('quickNote');
+          if(noteEl) noteEl.value = String((it && it.note) ? it.note : text).trim();
+
+          const catEl = $id('quickCashCat');
+          const cid = (it && it.categoryId) ? String(it.categoryId) : '';
+          if(catEl && cid){
+            setTimeout(()=>{ try{ catEl.value = cid; }catch(_){} }, 60);
+          }
+        }
+
+        if(aiItems && aiItems.length){
+          if(aiItems.length === 1){
+            prefillFromItem(aiItems[0]);
+          }else{
+            try{
+              const fmt = (n)=>{ try{ return (Number(n)||0).toFixed(2); }catch(_){ return String(n||''); } };
+              const lines = aiItems.map((it, i)=>{
+                const sign = (it && it.kind === 'przyjęcie') ? '+' : '-';
+                const note = (it && it.note) ? String(it.note) : '';
+                const cat = (it && it.categoryId) ? String(it.categoryId) : 'other';
+                return `${i+1}) ${sign}${fmt(it.amount)} — ${note} (${cat})`;
+              }).join('\\n');
+
+              const msg = (typeof TT === 'function')
+                ? TT('cash.voice_multi_confirm', null, `Добавить ${aiItems.length} операций из голоса?
+
+${lines}`)
+                : (`Добавить ${aiItems.length} операций из голоса?
+
+${lines}`);
+
+              const ok = confirm(msg);
+              if(ok && typeof addKasa === 'function'){
+                aiItems.forEach(it=>{
+                  try{
+                    const k = (it && it.kind) ? it.kind : 'wydanie';
+                    const a = Math.abs(Number(it && it.amount || 0));
+                    const n = String((it && it.note) ? it.note : text).trim();
+                    const c = String((it && it.categoryId) ? it.categoryId : '').trim();
+                    if(a && isFinite(a)) addKasa(k, a, n, 'voice-ai', c);
+                  }catch(_){}
+                });
+                try{ if(typeof render === 'function') render(); }catch(_){}
+                setStatus('✅ Добавлено: ' + aiItems.length);
+              }else{
+                prefillFromItem(aiItems[0]);
+              }
+            }catch(_){
+              prefillFromItem(aiItems[0]);
+            }
+          }
+        }else{
+          const parsed = parseCash(text);
+          prefillFromItem({ kind: parsed.kind, amount: parsed.amount, note: parsed.note });
         }
       };
+      rec.onerror = (e)=>{ setStatus('🎙️ Ошибка: ' + (e && e.error ? e.error : '')); };
+      rec.onend = ()=> setUI(false);
 
-      mediaRec.start();
-      return true;
-    }catch(_e){
-      stopTracks();
-      isRecording = false;
+      rec.start();
+    }catch(e){
       setUI(false);
-      return false;
+      setStatus('🎙️ Ошибка голоса: ' + (e && e.message ? e.message : ''));
     }
   }
 
-  function stopServerSTT(){
+  function stop(){
+    const my = ++opId;
     try{
       if(mediaRec && mediaRec.state !== 'inactive'){
-        setStatus('🎙️ Обрабатываю…', true);
+        setStatus('🎙️ Обрабатываю…');
         mediaRec.stop();
         return;
       }
     }catch(_){}
-    isRecording = false;
     setUI(false);
     stopTracks();
   }
 
-  // ---------- Click handler ----------
   micBtn.addEventListener('click', ()=>{
-    if(isRecording){
-      if(speechRec) stopLive();
-      else stopServerSTT();
-      return;
-    }
-
-    // Prefer live UX (as in ChatGPT): show text while speaking.
-    const okLive = startLive();
-    if(okLive) return;
-
-    // Fallback to server STT (record → transcribe)
-    startServerSTT();
+    if(recording) stop();
+    else start();
   });
 
-})();
-/* === Settings MVP bindings (Save/Clear) ===
+})();/* === Settings MVP bindings (Save/Clear) ===
    Keep this tiny and stable: settings screen is intentionally minimal now.
 */
 (function(){
