@@ -2393,7 +2393,7 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       headers:{ 'Content-Type':'application/json' },
       credentials: 'include',
       // language: '' => let OpenAI auto-detect (multi-language input without switching)
-      body: JSON.stringify({ audio: b64, mime: blob.type || 'audio/webm', language: getSttLang() })
+      body: JSON.stringify({ audio: b64, mime: String(blob.type || 'audio/webm').split(';')[0], language: getSttLang() })
     });
     const j = await r.json().catch(()=> ({}));
     if(!r.ok || !j || j.success !== true){
@@ -2427,7 +2427,8 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
         try{ stream.getTracks().forEach(t=>t.stop()); }catch(_e){}
         setMicUI(false);
 
-        const mime = (media && media.mimeType) ? media.mimeType : (opts && opts.mimeType) ? opts.mimeType : 'audio/webm';
+        let mime = (media && media.mimeType) ? media.mimeType : (opts && opts.mimeType) ? opts.mimeType : 'audio/webm';
+        try{ mime = String(mime || 'audio/webm').split(';')[0]; }catch(_e){ mime = 'audio/webm'; }
         const blob = new Blob(mediaChunks, { type: mime });
         mediaChunks = [];
 
@@ -2437,8 +2438,22 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
           await commitTranscript(tx);
         }catch(e){
           console.warn('media transcribe error', e);
-          showToast('Nie udało się rozpoznać mowy', String((e && e.message) || e || ''), []);
-          setTimeout(hideToast, 2500);
+          const emsg = String((e && e.message) || e || '').trim();
+          showToast('Nie udało się rozpoznać mowy', emsg, []);
+          // Fallback: if server STT is not available (missing key/rate limit/CORS), switch to browser SR.
+          try{
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SR) {
+              setTimeout(()=>{
+                hideToast();
+                showToast('Tryb lokalny: powtórz zdanie', null, []);
+                setTimeout(hideToast, 1200);
+                startSR();
+              }, 350);
+            } else {
+              setTimeout(hideToast, 2500);
+            }
+          }catch(_e){ setTimeout(hideToast, 2500); }
         }
       };
 
