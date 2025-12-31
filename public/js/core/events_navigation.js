@@ -2035,15 +2035,39 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
   let lastCreatedIds = [];
   let undoTimer = null;
 
+  // NOTE: Web Speech needs a concrete locale, but server STT can auto-detect.
+  const __langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
+
+  function getLangKey(){
+    // 1) explicit selector (if exists)
+    try{
+      const v = (speechLangSel && speechLangSel.value) ? String(speechLangSel.value).toLowerCase().trim() : '';
+      if(v) return v;
+    }catch(_e){}
+
+    // 2) app language (localStorage is the real source of truth)
+    try{
+      const k = String(localStorage.getItem('otd_lang') || '').toLowerCase().trim();
+      if(k) return k;
+    }catch(_e){}
+
+    // 3) legacy fallback
+    try{
+      const l = (window && window.OTD_LANG) ? String(window.OTD_LANG).toLowerCase().trim() : '';
+      if(l) return l;
+    }catch(_e){}
+
+    return 'pl';
+  }
+
   function getLang(){
-    // prefer explicit selector; fallback to app language
-    const v = (speechLangSel && speechLangSel.value) ? String(speechLangSel.value) : '';
-    if(v) return v;
-    const l = (window && window.OTD_LANG) ? String(window.OTD_LANG) : '';
-    if(l === 'ru') return 'ru-RU';
-    if(l === 'uk') return 'uk-UA';
-    if(l === 'en') return 'en-US';
-    return 'pl-PL';
+    const k = getLangKey();
+    return __langMap[k] || 'pl-PL';
+  }
+
+  function getSttLang(){
+    // Empty => OpenAI auto-detect (so you can speak RU/UK/PL/EN without switching)
+    return '';
   }
 
   // Small iPhone-style toast that doesn't stretch across the whole screen
@@ -2141,13 +2165,14 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
   }
 
   async function aiParseCash(text, lang){
-    const r = await fetch(`${API_BASE}/ai/cash/parse`, {
+    // Server route lives under /api (not /ai)
+    const r = await fetch(`${API_BASE}/api/ai/cash/parse`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ text, lang })
     });
     const j = await r.json().catch(()=>null);
-    if(!r.ok || !j || !j.ok) throw new Error((j && j.error) ? j.error : `HTTP ${r.status}`);
+    if(!r.ok || !j || j.success !== true) throw new Error((j && j.error) ? j.error : `HTTP ${r.status}`);
     return Array.isArray(j.items) ? j.items : [];
   }
 
@@ -2216,20 +2241,15 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     if(undoTimer){ clearTimeout(undoTimer); undoTimer = null; }
     lastCreatedIds = ids.slice(0);
 
-    showToast(
-      ids.length === 1 ? '✅ Zapisano z głosu' : `✅ Zapisano: ${ids.length} operacje`,
-      ids.length === 1 ? 'Możesz cofnąć lub edytować.' : 'Możesz cofnąć.',
-      [
-        { label: 'Cofnij', onClick: ()=>undoLast() },
-        ...(ids.length === 1 ? [{ label:'Edytuj', onClick: ()=>openCashEditById(ids[0]) }] : [])
-      ]
-    );
+    // UX decision (per Nikita): keep ONLY the tiny "Zapisano z głosu" toast.
+    // No undo/edit buttons here (editing is available via row actions in the list).
+    showToast('✅ Zapisano z głosu', null, []);
 
     undoTimer = setTimeout(()=>{
       lastCreatedIds = [];
       hideToast();
       undoTimer = null;
-    }, 9000);
+    }, 1600);
   }
 
   function undoLast(){
@@ -2350,34 +2370,74 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     }
   }
 
-  // MediaRecorder fallback (no live preview)
+  // MediaRecorder (preferred): record → server STT (auto language) → parse/save
+  function blobToBase64(blob){
+    return new Promise((resolve, reject)=>{
+      try{
+        const r = new FileReader();
+        r.onload = ()=>{
+          const s = String(r.result || '');
+          const b64 = s.includes(',') ? s.split(',')[1] : s;
+          resolve(b64);
+        };
+        r.onerror = ()=> reject(r.error || new Error('FileReader error'));
+        r.readAsDataURL(blob);
+      }catch(e){ reject(e); }
+    });
+  }
+
+  async function transcribeBlob(blob){
+    const b64 = await blobToBase64(blob);
+    const r = await fetch(`${API_BASE}/api/ai/transcribe`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      credentials: 'include',
+      // language: '' => let OpenAI auto-detect (multi-language input without switching)
+      body: JSON.stringify({ audio: b64, mime: blob.type || 'audio/webm', language: getSttLang() })
+    });
+    const j = await r.json().catch(()=> ({}));
+    if(!r.ok || !j || j.success !== true){
+      throw new Error((j && j.error) ? j.error : ('Transcribe failed ' + r.status));
+    }
+    return String(j.text || '').trim();
+  }
+
   async function startMedia(){
-    const lang = getLang();
+    if(!(navigator.mediaDevices && window.MediaRecorder)) return false;
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
       mediaChunks = [];
-      media = new MediaRecorder(stream, { mimeType:'audio/webm' });
 
-      media.ondataavailable = (e)=>{ if(e.data && e.data.size) mediaChunks.push(e.data); };
+      // pick a supported mime type to avoid MediaRecorder constructor errors
+      let opts = {};
+      try{
+        const prefer = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg','audio/mp4'];
+        for(const m of prefer){
+          if(typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(m)){
+            opts.mimeType = m;
+            break;
+          }
+        }
+      }catch(_e){}
+
+      media = new MediaRecorder(stream, opts);
+
+      media.ondataavailable = (e)=>{ try{ if(e.data && e.data.size) mediaChunks.push(e.data); }catch(_e){} };
       media.onstop = async ()=>{
         try{ stream.getTracks().forEach(t=>t.stop()); }catch(_e){}
         setMicUI(false);
 
-        const blob = new Blob(mediaChunks, { type:'audio/webm' });
+        const mime = (media && media.mimeType) ? media.mimeType : (opts && opts.mimeType) ? opts.mimeType : 'audio/webm';
+        const blob = new Blob(mediaChunks, { type: mime });
         mediaChunks = [];
 
         try{
           showToast('Przetwarzanie…', null, []);
-          const fd = new FormData();
-          fd.append('audio', blob, 'speech.webm');
-          fd.append('lang', lang);
-          const r = await fetch(`${API_BASE}/ai/transcribe`, { method:'POST', body:fd });
-          const j = await r.json().catch(()=>null);
-          const tx = (j && (j.text || j.transcript)) ? String(j.text || j.transcript) : '';
+          const tx = await transcribeBlob(blob);
           await commitTranscript(tx);
         }catch(e){
           console.warn('media transcribe error', e);
-          showToast('Nie udało się rozpoznać mowy', String(e && e.message || e), []);
+          showToast('Nie udało się rozpoznać mowy', String((e && e.message) || e || ''), []);
           setTimeout(hideToast, 2500);
         }
       };
@@ -2419,11 +2479,9 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     if(undoTimer){ clearTimeout(undoTimer); undoTimer = null; }
     lastCreatedIds = [];
 
-    // Prefer SpeechRecognition for live preview
-    const ok = startSR();
-    if(!ok){
-      await startMedia();
-    }
+    // Prefer server STT (auto language). If MediaRecorder isn't available, fallback to Web Speech.
+    const ok = await startMedia();
+    if(!ok) startSR();
   });
 
 })();/* === Settings MVP bindings (Save/Clear) ===
