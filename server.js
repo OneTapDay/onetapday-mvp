@@ -2666,6 +2666,234 @@ async function _callOpenAI({ model, messages, maxOutputTokens }){
   };
 }
 
+
+// === AI Speech-to-Text (stable voice input) ===
+async function _callOpenAITranscribe({ model, audioBuffer, mime, language }){
+  const apiKey = process.env.OPENAI_API_KEY;
+  const https = require('https');
+
+  const boundary = '----otdBoundary' + Math.random().toString(16).slice(2);
+  const filename =
+    (mime && mime.includes('ogg')) ? 'audio.ogg' :
+    (mime && mime.includes('mp4')) ? 'audio.m4a' :
+    (mime && mime.includes('wav')) ? 'audio.wav' :
+    'audio.webm';
+
+  const parts = [];
+  const push = (s)=> parts.push(Buffer.isBuffer(s) ? s : Buffer.from(String(s), 'utf8'));
+
+  push(`--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${model}\r\n`);
+  if(language){
+    push(`--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${language}\r\n`);
+  }
+  push(`--${boundary}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\njson\r\n`);
+  push(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mime || 'audio/webm'}\r\n\r\n`);
+  push(audioBuffer);
+  push(`\r\n--${boundary}--\r\n`);
+
+  const body = Buffer.concat(parts);
+
+  const data = await new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.openai.com',
+      path: '/v1/audio/transcriptions',
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'multipart/form-data; boundary=' + boundary,
+        'Content-Length': body.length
+      },
+      timeout: 30000
+    }, (res) => {
+      let raw = '';
+      res.on('data', (c)=> raw += c);
+      res.on('end', ()=>{
+        let json;
+        try{ json = JSON.parse(raw || '{}'); }catch(e){ json = { _raw: raw }; }
+        json.__http_status = res.statusCode;
+        resolve(json);
+      });
+    });
+
+    req.on('timeout', ()=> req.destroy(new Error('OpenAI transcribe timeout')));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+
+  const status = data && data.__http_status ? data.__http_status : 500;
+  if(status < 200 || status >= 300){
+    const msg = (data && data.error && (data.error.message || data.error.code || data.error.type)) ?
+      (data.error.message || data.error.code || data.error.type) :
+      ('OpenAI error ' + status);
+    const err = new Error(msg);
+    err.status = status;
+    err.data = data;
+    throw err;
+  }
+
+  const text = (data && typeof data.text === 'string') ? data.text : '';
+  return String(text || '').trim();
+}
+
+app.post('/api/ai/transcribe', async (req, res) => {
+  const user = getUserBySession(req);
+  if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
+  }
+
+  const who = String(user.email || user.id || user.username || user.login || 'user');
+  if (!_aiAllow(who)) {
+    return res.status(429).json({ success: false, error: 'AI rate limit' });
+  }
+
+  const body = req.body || {};
+  let audio = body.audio || body.audioBase64 || '';
+  let mime = body.mime || 'audio/webm';
+  let language = body.language || body.lang || '';
+
+  if (typeof audio !== 'string' || !audio.trim()) {
+    return res.status(400).json({ success: false, error: 'Missing audio' });
+  }
+
+  audio = audio.trim();
+  // Support data URLs: data:audio/webm;base64,....
+  if (audio.startsWith('data:')) {
+    const m = audio.match(/^data:([^;]+);base64,(.+)$/i);
+    if (m) {
+      mime = m[1] || mime;
+      audio = m[2] || '';
+    }
+  }
+
+  // Normalize language like "pl-PL" -> "pl"
+  try{
+    if (typeof language === 'string' && language.includes('-')) {
+      language = language.split('-')[0];
+    }
+  }catch(_){}
+
+  // Decode base64
+  let buf;
+  try {
+    buf = Buffer.from(audio, 'base64');
+  } catch (e) {
+    return res.status(400).json({ success: false, error: 'Bad base64' });
+  }
+
+  // Hard guard: 8MB raw audio payload (base64 expands, but decoded buffer matters here)
+  if (!buf || buf.length < 16) {
+    return res.status(400).json({ success: false, error: 'Empty audio' });
+  }
+  if (buf.length > 8 * 1024 * 1024) {
+    return res.status(413).json({ success: false, error: 'Audio too large' });
+  }
+
+  const sttModel = process.env.OTD_AI_STT_MODEL || 'gpt-4o-mini-transcribe';
+
+  try {
+    const text = await _callOpenAITranscribe({ model: sttModel, audioBuffer: buf, mime, language });
+    return res.json({ success: true, text });
+  } catch (e) {
+    const status = e && e.status ? e.status : 500;
+    return res.status(status).json({ success: false, error: (e && e.message) ? e.message : 'Transcribe error' });
+  }
+});
+
+app.post('/api/ai/cash/parse', async (req, res) => {
+  const user = getUserBySession(req);
+  if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  if (!(process.env.OTD_AI_ENABLED === '1' || process.env.OTD_AI_ENABLED === 'true')) {
+    return res.status(503).json({ success: false, error: 'AI is disabled' });
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
+  }
+
+  const who = String(user.email || user.id || user.username || user.login || 'user');
+  if (!_aiAllow(who)) {
+    return res.status(429).json({ success: false, error: 'AI rate limit' });
+  }
+
+  const body = req.body || {};
+  const text = String(body.text || body.message || '').trim();
+  if(!text) return res.status(400).json({ success:false, error:'Empty text' });
+
+  const allowedCats = ['food','fuel','home','subs','other','salary'];
+
+  const sys = 'You are a strict JSON generator. Output JSON only. No markdown, no extra text.';
+  const dev = [
+    'Parse a voice transcript of CASH transactions into structured items for OneTapDay cash module.',
+    'Return JSON exactly in this shape:',
+    '{"items":[{"kind":"wydanie|przyjęcie","amount":50.0,"note":"short description","categoryId":"food|fuel|home|subs|other|salary","confidence":0.0}]}',
+    '',
+    'Rules:',
+    '- Split multiple operations if the transcript mentions multiple spends/incomes (e.g., "and", "и", "potem", commas).',
+    '- kind: "wydanie" for expense (spent/paid/минус/wydałem/zapłaciłem), "przyjęcie" for income (received/plus/приход/wpłata).',
+    '- amount: positive number, do NOT include currency symbols in the number.',
+    '- note: short merchant/what it was for (e.g., "McDonald\'s", "Rossmann", "OpenAI subscription").',
+    '- categoryId MUST be one of: ' + allowedCats.join(', ') + '.',
+    '  * groceries/restaurants/coffee/food brands -> food',
+    '  * gas station/fuel -> fuel',
+    '  * rent/home/drugstore/pharmacy/household -> home',
+    '  * subscriptions/SaaS/OpenAI/Stripe -> subs',
+    '  * salary/bonus/income from work -> salary',
+    '  * unknown -> other',
+    '- If you are unsure about category, choose "other" and lower confidence.',
+    '- If no valid amount found, return {"items":[]} with empty array.',
+    '',
+    'Language can be Polish/English/Russian/Ukrainian. You MUST still output JSON only.'
+  ].join('\n');
+
+  const messages = [
+    { role:'system', content:[{ type:'input_text', text: sys }] },
+    { role:'developer', content:[{ type:'input_text', text: dev }] },
+    { role:'user', content:[{ type:'input_text', text: text.slice(0, 1200) }] }
+  ];
+
+  try{
+    const result = await _callOpenAI({
+      model: OTD_AI_MODEL_DEFAULT,
+      messages,
+      maxOutputTokens: Math.min(450, OTD_AI_MAX_OUTPUT_TOKENS)
+    });
+
+    const parsed = _aiExtractJson(result.text);
+    let items = (parsed && Array.isArray(parsed.items)) ? parsed.items : [];
+    items = items.slice(0, 10).map(it=>{
+      const rawKind = String((it && (it.kind || it.type)) || '').trim();
+      const kind = (rawKind === 'przyjęcie' || rawKind === 'przyjecie' || rawKind === 'in' || rawKind === 'income') ? 'przyjęcie' : 'wydanie';
+
+      let amount = _aiClampNum(it && it.amount, 0, 100000000);
+      if(amount == null){
+        // sometimes model returns signed amount as string
+        amount = _aiClampNum(String(it && it.amount || '').replace(',','.'), 0, 100000000);
+      }
+      amount = amount == null ? null : Math.abs(amount);
+
+      const note = String((it && (it.note || it.merchant || it.title || it.desc)) || '').trim().slice(0, 140);
+      const catRaw = String((it && (it.categoryId || it.category || it.cat)) || '').trim();
+      const categoryId = allowedCats.includes(catRaw) ? catRaw : 'other';
+      const confidence = _aiClampNum(it && it.confidence, 0, 1);
+
+      return { kind, amount, note, categoryId, confidence };
+    }).filter(it=> it && it.amount && isFinite(it.amount) && it.amount > 0.0001);
+
+    return res.json({ success:true, items, model: result.model, usage: result.usage });
+  }catch(e){
+    return res.status(502).json({
+      success:false,
+      error: (e && e.message) ? String(e.message) : 'OpenAI error',
+      openai_status: e && e.status ? e.status : undefined
+    });
+  }
+});
+
+
 app.post('/api/ai/chat', async (req, res) => {
   const user = getUserBySession(req);
   if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
