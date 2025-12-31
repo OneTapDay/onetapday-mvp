@@ -1428,19 +1428,14 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   try{ e.target.value = ''; }catch(_){}
 });
 
-// Voice input (Web Speech API - Chrome)
+// Voice input (Web Speech API preferred, fallback to server STT)
 (function(){
   const btn = byId('aiVoiceBtn');
   const inp = byId('aiChatInput');
   if(!btn || !inp) return;
+
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){
-    btn.style.opacity = '0.55';
-    btn.title = TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере');
-    return;
-  }
-  let rec = null;
-  let active = false;
+  const hasRecorder = !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
   const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
   const getLang = ()=>{
@@ -1450,14 +1445,26 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     }catch(_){ return 'pl-PL'; }
   };
 
-  function stop(){
-    try{ if(rec) rec.stop(); }catch(_){}
-    active = false;
+  function uiIdle(){
     btn.classList.remove('is-recording');
     btn.textContent = '🎤';
   }
+  function uiRec(){
+    btn.classList.add('is-recording');
+    btn.textContent = '⏹';
+  }
 
-  function start(){
+  // --- SR path ---
+  let rec = null;
+  let activeSR = false;
+
+  function stopSR(){
+    try{ if(rec) rec.stop(); }catch(_){}
+    activeSR = false;
+    uiIdle();
+  }
+
+  function startSR(){
     try{
       rec = new SR();
       rec.lang = getLang();
@@ -1473,30 +1480,116 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
             if(ev.results[i].isFinal) finalText += tr;
             else interim += tr;
           }
-          // show interim in input without destroying current text
           const base = inp.value.replace(/\s*\[.*?\]\s*$/,'');
           const combined = (base + ' ' + (finalText + interim)).replace(/\s+/g,' ').trim();
           inp.value = combined;
         }catch(_){}
       };
-      rec.onerror = ()=> stop();
-      rec.onend = ()=> stop();
+      rec.onerror = ()=> stopSR();
+      rec.onend = ()=> stopSR();
 
       rec.start();
-      active = true;
-      btn.classList.add('is-recording');
-      btn.textContent = '⏹';
+      activeSR = true;
+      uiRec();
     }catch(_e){
-      stop();
-      pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог включить голосовой ввод.'));
+      stopSR();
+      pushMsg && pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог включить голосовой ввод.'));
     }
   }
 
+  // --- Recorder+STT path ---
+  let mr = null;
+  let stream = null;
+  let chunks = [];
+  let recording = false;
+
+  function blobToB64(blob){
+    return new Promise((resolve, reject)=>{
+      const r = new FileReader();
+      r.onerror = ()=> reject(new Error('file_reader_failed'));
+      r.onload = ()=>{
+        const s = String(r.result || '');
+        const m = s.match(/^data:[^;]+;base64,(.+)$/);
+        resolve(m ? m[1] : '');
+      };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  async function transcribeBlob(blob){
+    const mime = blob && blob.type ? blob.type : 'audio/webm';
+    const b64 = await blobToB64(blob);
+    const r = await fetch('/api/ai/transcribe', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        audioDataUrl: `data:${mime};base64,${b64}`,
+        mime,
+        language: getLang()
+      })
+    });
+    const j = await r.json().catch(()=>null);
+    if(!r.ok){
+      const msg = (j && (j.error || j.message)) ? String(j.error || j.message) : ('HTTP ' + r.status);
+      throw new Error(msg);
+    }
+    return (j && j.text) ? String(j.text) : '';
+  }
+
+  async function startRecorder(){
+    if(recording) return;
+    if(!hasRecorder){
+      btn.style.opacity = '0.55';
+      btn.title = TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере');
+      pushMsg && pushMsg('assistant', TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере'));
+      return;
+    }
+    stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    chunks = [];
+    mr = new MediaRecorder(stream);
+    mr.ondataavailable = (e)=>{ if(e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = async ()=>{
+      try{
+        const blob = new Blob(chunks, { type: (mr && mr.mimeType) ? mr.mimeType : 'audio/webm' });
+        const txt = await transcribeBlob(blob);
+        const base = inp.value.trim();
+        inp.value = (base ? (base + ' ') : '') + txt.trim();
+      }catch(e){
+        pushMsg && pushMsg('assistant', 'Не смог распознать голос: ' + (e && e.message ? e.message : 'ошибка'));
+      }finally{
+        try{ stream && stream.getTracks && stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+        mr = null; stream = null; chunks = [];
+        recording = false;
+        uiIdle();
+      }
+    };
+
+    recording = true;
+    uiRec();
+    mr.start();
+  }
+
+  function stopRecorder(){
+    try{ if(mr && recording) mr.stop(); }catch(_){}
+  }
+
   btn.addEventListener('click', ()=>{
-    if(active) stop();
-    else start();
+    // If SR exists, use SR path (lowest latency). Otherwise use recorder path.
+    if(SR){
+      if(activeSR) stopSR();
+      else startSR();
+      return;
+    }
+    if(recording) stopRecorder();
+    else startRecorder();
   });
+
+  if(!SR && !hasRecorder){
+    btn.style.opacity = '0.55';
+    btn.title = TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере');
+  }
 })();
+
 // Initial render
 renderChat();
 
@@ -1901,142 +1994,236 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       navigator.sendBeacon && navigator.sendBeacon(`${API_BASE}/state/save`, blob);
     }catch(e){}
   });
-});// Speech
+});// Speech (Cash mic) + STT fallback
   const micBtn     = $id('micBtn');
   const micStatus  = $id('micStatus');
   const SR         = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  if (!micBtn) {
-    // нет кнопки — нечего делать
-  } else if (!SR) {
-    // браузер не умеет Web Speech API
-    try { micBtn.style.display = 'none'; } catch(e){}
-    if (micStatus) {
-      micStatus.textContent = '🎙️ Голос недоступен в этом браузере';
-    }
-  } else {
-    let rec = null;
+  function _cashLang(){
+    // Prefer explicit selector in Cash sheet, fallback to app language
+    try{
+      const sel = $id('speechLang');
+      if(sel && sel.value) return String(sel.value);
+    }catch(_){}
+    try{
+      const v = String(localStorage.getItem('speechLang') || '').trim();
+      if(v) return v;
+    }catch(_){}
+    try{
+      const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
+      return ({pl:'pl-PL', ru:'ru-RU', en:'en-US', uk:'uk-UA'}[k] || 'pl-PL');
+    }catch(_){ return 'pl-PL'; }
+  }
 
-    try {
-      rec = new SR();
-    } catch (e) {
-      console.warn('Speech init error', e);
-      if (micStatus) micStatus.textContent = '🎙️ Ошибка голоса: ' + e.message;
-    }
+  function _setMicStatus(t){
+    try{ if(micStatus) micStatus.textContent = t; }catch(_){}
+  }
 
-    if (rec) {
-      rec.continuous      = false;
-      rec.interimResults  = false;
-      rec.maxAlternatives = 1;
-      rec.lang            = localStorage.getItem('speechLang') || 'pl-PL';
-
-      // Слова для ПРИХОДА (IN)
-      const CMD_IN = [
-        // PL
-        'przyjęcie','przyjecie','wpłata','wplata','depozyt','depozit',
-        // EN
-        'plus','income','cash in','received','receive','deposit',
-        // RU / UKR
-        'плюс','принять','пополнить','пополнил','приход','зачислить'
-      ];
-
-      // Слова для РАСХОДА (OUT)
-      const CMD_OUT = [
-        // PL
-        'wyda','wydat','wypłat','wyplata','koszt',
-        // EN
-        'minus','pay out','payout','expense','cash out','payment',
-        // RU / UKR
-        'выда','выдать','выдал','расход','списать','минус','выточка'
-      ];
-
-      function detectType(text) {
-        const t = text.toLowerCase();
-
-        // Знак перед числом: "+200" / "-150"
-        const signMatch = t.match(/([+\-−])\s*\d+[.,]?\d*/);
-        if (signMatch) {
-          const sign = signMatch[1];
-          return (sign === '+' ? 'przyjęcie' : 'wydanie');
-        }
-
-        // Ключевые слова
-        for (const w of CMD_IN)  { if (t.includes(w))  return 'przyjęcie'; }
-        for (const w of CMD_OUT) { if (t.includes(w)) return 'wydanie'; }
-
-        // По умолчанию считаем приход
-        return 'przyjęcie';
+  async function _openCashSheetPrefill(kind, amount, note){
+    // Open sheet via existing click handler to keep internal state (cashKind) consistent
+    try{
+      const add = $id('cashBtnAdd');
+      if(add) add.click();
+      else{
+        const back = $id('cashSheetBackdrop');
+        if(back) back.style.display = 'flex';
       }
+    }catch(_){}
+    // Set kind by clicking toggles (so vault_mvp.js updates its internal cashKind)
+    try{
+      if(kind === 'przyjęcie') $id('cashTypeIn')?.click();
+      else $id('cashTypeOut')?.click();
+    }catch(_){}
+    try{ if(amount != null && $id('quickAmt')) $id('quickAmt').value = String(amount); }catch(_){}
+    try{ if(note && $id('quickNote')) $id('quickNote').value = String(note); }catch(_){}
+    try{ setTimeout(()=>{ $id('quickAmt')?.focus(); }, 60); }catch(_){}
+  }
+
+  function _parseCash(textRaw){
+    const text = String(textRaw || '').trim();
+    const t = text.toLowerCase();
+
+    // income / expense intent
+    const isIncome = /(приход|пополн|получ|внес|внесение|dosta|wpł|wpła|przyję|income|received|got paid|salary|wypłata)/i.test(t);
+    const kind = isIncome ? 'przyjęcie' : 'wydanie';
+
+    // amount: first number
+    const m = t.match(/(-?\d+[\d\s]*[\.,]?\d*)/);
+    let amount = null;
+    if(m){
+      const raw = m[1].replace(/\s+/g,'').replace(',', '.');
+      const v = parseFloat(raw);
+      if(!Number.isNaN(v)) amount = Math.abs(v);
+    }
+
+    // note: remove the amount substring if we can
+    let note = text;
+    if(m && m[1]){
+      note = note.replace(m[1], '').replace(/\s+/g,' ').trim();
+    }
+    // strip common currency words
+    note = note.replace(/\b(zł|zl|pln|eur|€|usd|\$|грн|uah)\b/gi,'').trim();
+
+    return { kind, amount, note, text };
+  }
+
+  // --- Fallback recorder (MediaRecorder -> /api/ai/transcribe) ---
+  async function _blobToB64(blob){
+    return await new Promise((resolve, reject)=>{
+      const r = new FileReader();
+      r.onerror = ()=> reject(new Error('file_reader_failed'));
+      r.onload = ()=>{
+        const s = String(r.result || '');
+        const m = s.match(/^data:[^;]+;base64,(.+)$/);
+        resolve(m ? m[1] : '');
+      };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  async function _transcribeBlob(blob){
+    const mime = blob && blob.type ? blob.type : 'audio/webm';
+    const b64 = await _blobToB64(blob);
+    if(!b64) throw new Error('empty_audio');
+    const r = await fetch('/api/ai/transcribe', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        audioDataUrl: `data:${mime};base64,${b64}`,
+        mime,
+        language: _cashLang()
+      })
+    });
+    const j = await r.json().catch(()=>null);
+    if(!r.ok){
+      const msg = (j && (j.error || j.message)) ? String(j.error || j.message) : ('HTTP ' + r.status);
+      throw new Error(msg);
+    }
+    return (j && j.text) ? String(j.text) : '';
+  }
+
+  function _setupCashVoice(){
+    if(!micBtn) return;
+
+    // Prefer Web Speech API (fast), but don't hide the button if it's missing.
+    let rec = null;
+    let mr = null;
+    let stream = null;
+    let chunks = [];
+    let recording = false;
+
+    async function startRecorder(){
+      if(recording) return;
+      if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)){
+        _setMicStatus('🎙️ Голос недоступен в этом браузере');
+        return;
+      }
+      stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      chunks = [];
+      mr = new MediaRecorder(stream);
+      mr.ondataavailable = (e)=>{ if(e.data && e.data.size) chunks.push(e.data); };
+      mr.onstop = async ()=>{
+        try{
+          const blob = new Blob(chunks, { type: (mr && mr.mimeType) ? mr.mimeType : 'audio/webm' });
+          _setMicStatus('🎙️ Распознаю…');
+          const txt = await _transcribeBlob(blob);
+          const parsed = _parseCash(txt);
+          _setMicStatus('🎙️ ' + parsed.text);
+          if(parsed.amount == null){
+            _setMicStatus('🎙️ сумма не найдена');
+            return;
+          }
+          await _openCashSheetPrefill(parsed.kind, parsed.amount, parsed.note || parsed.text);
+        }catch(e){
+          _setMicStatus('🎙️ Ошибка: ' + (e && e.message ? e.message : 'stt'));
+        }finally{
+          try{ stream && stream.getTracks && stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+          mr = null; stream = null; chunks = [];
+          recording = false;
+          micBtn.classList.remove('on');
+        }
+      };
+
+      recording = true;
+      micBtn.classList.add('on');
+      _setMicStatus('🎙️ Слушаю…');
+      mr.start();
+    }
+
+    async function stopRecorder(){
+      try{ if(mr && recording) mr.stop(); }catch(_){}
+    }
+
+    function startSpeech(){
+      rec = new SR();
+      rec.lang = _cashLang();
+      rec.interimResults = false;
+      rec.continuous = false;
 
       rec.onstart = () => {
         micBtn.classList.add('on');
-        if (micStatus) micStatus.textContent = '🎙️ Слушаю...';
+        _setMicStatus('🎙️ Слушаю…');
       };
 
       rec.onerror = (e) => {
         console.warn('Speech error', e);
-        if (micStatus) micStatus.textContent = '🎙️ Ошибка: ' + e.error;
+        _setMicStatus('🎙️ Ошибка: ' + (e && e.error ? e.error : 'speech'));
       };
 
       rec.onend = () => {
         micBtn.classList.remove('on');
       };
 
-      rec.onresult = (e) => {
-        const text = (e.results[0][0].transcript || "").toLowerCase();
+      rec.onresult = async (e) => {
+        const raw = (e.results[0][0].transcript || "");
+        const parsed = _parseCash(raw);
 
-        if (micStatus) {
-          micStatus.textContent = '🎙️ ' + text;
-        }
+        _setMicStatus('🎙️ ' + parsed.text);
 
-        // Ищем число: "200", "200,50", "200.50", с валютой или без
-        const numMatch = text.match(/(\d+[.,]?\d*)\s*(zł|pln|eur|usd|злот|евро|доллар)?/i);
-        const num = numMatch ? numMatch[1] : null;
-
-        const type = detectType(text);
-        const note = text;
-
-        if (!num) {
-          if (micStatus) micStatus.textContent = '🎙️ сумма не найдена';
+        if(parsed.amount == null){
+          _setMicStatus('🎙️ сумма не найдена');
           return;
         }
 
-        if (typeof addKasa !== 'function') {
-          console.warn('addKasa is not a function, cannot write cash row');
-          return;
-        }
-
-        const amount = (typeof asNum === "function")
-          ? asNum(num)
-          : Number(String(num).replace(',', '.'));
-
-        if (!amount || !isFinite(amount)) {
-          if (micStatus) micStatus.textContent = '🎙️ сумма не распознана';
-          return;
-        }
-
-        addKasa(type, amount, note || 'voice', 'voice');
+        // Safer UX: prefill sheet (user confirms) instead of auto-saving
+        await _openCashSheetPrefill(parsed.kind, parsed.amount, parsed.note || parsed.text);
       };
 
-      micBtn.addEventListener('click', () => {
-        if (!rec) return;
-        try {
-          // иногда помогает сначала оборвать предыдущую сессию
-          if (typeof rec.abort === 'function') rec.abort();
-          rec.start();
-        } catch (e) {
-          console.warn('Speech start error', e);
-          if (micStatus) micStatus.textContent = '🎙️ не смог запустить: ' + e.message;
-        }
-      });
+      try{
+        rec.start();
+      }catch(err){
+        console.warn('Speech start error', err);
+        _setMicStatus('🎙️ не смог запустить: ' + err.message);
+      }
+    }
 
-      $id('speechLang')?.addEventListener('change', (e) => {
-        const lang = e.target.value;
-        if (rec) rec.lang = lang;
-        try { localStorage.setItem('speechLang', lang); } catch(_) {}
-      });
+    micBtn.addEventListener('click', async () => {
+      // Toggle: stop recorder if active
+      if(recording){
+        await stopRecorder();
+        return;
+      }
+      // If Web Speech exists, use it. Otherwise fallback to recorder+STT.
+      if(SR){
+        startSpeech();
+      }else{
+        await startRecorder();
+      }
+    });
+
+    $id('speechLang')?.addEventListener('change', (e) => {
+      const lang = e.target.value;
+      try { localStorage.setItem('speechLang', lang); } catch(_) {}
+      try { if(rec) rec.lang = lang; }catch(_){}
+    });
+
+    if(!SR && !(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia)){
+      try{ micBtn.style.opacity = '0.55'; }catch(_){}
+      _setMicStatus('🎙️ Голос недоступен в этом браузере');
     }
   }
+
+  _setupCashVoice();
 
 /* === Settings MVP bindings (Save/Clear) ===
    Keep this tiny and stable: settings screen is intentionally minimal now.
