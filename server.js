@@ -2672,6 +2672,9 @@ async function _callOpenAITranscribe({ model, audioBuffer, mime, language }){
   const apiKey = process.env.OPENAI_API_KEY;
   const https = require('https');
 
+  // Normalize mime like 'audio/webm;codecs=opus' -> 'audio/webm'
+  try{ if (typeof mime === 'string' && mime.includes(';')) mime = mime.split(';')[0].trim(); }catch(_e){}
+
   const boundary = '----otdBoundary' + Math.random().toString(16).slice(2);
   const filename =
     (mime && mime.includes('ogg')) ? 'audio.ogg' :
@@ -2752,6 +2755,9 @@ app.post('/api/ai/transcribe', async (req, res) => {
   const body = req.body || {};
   let audio = body.audio || body.audioBase64 || '';
   let mime = body.mime || 'audio/webm';
+
+  // Normalize mime like 'audio/webm;codecs=opus' -> 'audio/webm'
+  try{ if (typeof mime === 'string' && mime.includes(';')) mime = mime.split(';')[0].trim(); }catch(_e){}
   let language = body.language || body.lang || '';
 
   if (typeof audio !== 'string' || !audio.trim()) {
