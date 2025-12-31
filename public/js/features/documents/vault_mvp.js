@@ -1841,6 +1841,40 @@ document.addEventListener('click', (e)=>{
     if(t && t.id==='cashTypeOut'){ setKind('wydanie'); }
     if(t && t.id==='cashTypeIn'){ setKind('przyjęcie'); }
     if(t && t.id==='cashSheetSave'){
+      // EDIT MODE: when voice created an entry, we allow editing the same row instead of creating a duplicate
+      const editId = t.dataset && t.dataset.editId ? String(t.dataset.editId) : '';
+      if(editId){
+        try{
+          const idx = (typeof kasa !== 'undefined' && Array.isArray(kasa))
+            ? kasa.findIndex(r => String(r.id) === editId)
+            : -1;
+
+          const amt = asNum($id('quickAmt')?.value || 0);
+          if(idx >= 0 && amt && Math.abs(amt) > 0){
+            const cat = String($id('quickCashCat')?.value || '');
+            const note = String($id('quickNote')?.value || '').trim();
+
+            // update in-place (keep id/date/source unless user changes kind)
+            kasa[idx].type = cashKind;
+            kasa[idx].amount = Number(amt);
+            kasa[idx].comment = note;
+            kasa[idx].category = cat;
+
+            saveLocal();
+            render();
+            pushState();
+          }
+        }catch(e){
+          console.warn('cash edit save error', e);
+        }
+
+        // clear edit mode
+        try{ delete t.dataset.editId; }catch(_e){ t.dataset.editId = ''; }
+        closeSheet();
+        return;
+      }
+
+      // default: create a new cash entry
       if(typeof quickCashAdd === 'function') quickCashAdd(cashKind);
       closeSheet();
     }
