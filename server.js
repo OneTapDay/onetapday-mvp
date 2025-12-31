@@ -2884,13 +2884,16 @@ app.post('/api/ai/cash/parse', async (req, res) => {
     }).filter(it=> it && it.amount && isFinite(it.amount) && it.amount > 0.0001);
 
     return res.json({ success:true, items, model: result.model, usage: result.usage });
-  }catch(e){
-    return res.status(502).json({
-      success:false,
-      error: (e && e.message) ? String(e.message) : 'OpenAI error',
-      openai_status: e && e.status ? e.status : undefined
-    });
-  }
+}catch(e){
+  const st = (e && e.status) ? e.status : 502;
+  console.error('[AI cash/parse]', st, e && e.message, e && e.data ? e.data : '');
+  return res.status(st).json({
+    success:false,
+    error: (e && e.message) ? String(e.message) : 'OpenAI error',
+    openai_status: e && e.status ? e.status : undefined,
+    openai_error: (e && e.data && e.data.error) ? e.data.error : undefined
+  });
+}
 });
 
 
