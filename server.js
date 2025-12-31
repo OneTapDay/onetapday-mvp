@@ -2802,97 +2802,90 @@ app.post('/api/ai/transcribe', async (req, res) => {
   }
 });
 
-app.post('/api/ai/cash/parse', async (req, res) => {
-  const user = getUserBySession(req);
-  if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
-  if (!(process.env.OTD_AI_ENABLED === '1' || process.env.OTD_AI_ENABLED === 'true')) {
-    return res.status(503).json({ success: false, error: 'AI is disabled' });
-  }
 
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
-  }
+// AI: parse cash operations from speech/text (for Cash voice)
+app.post('/api/ai/cash/parse', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    if(!_aiAllow(req, res, 'cash_parse')) return;
 
-  const who = String(user.email || user.id || user.username || user.login || 'user');
-  if (!_aiAllow(who)) {
-    return res.status(429).json({ success: false, error: 'AI rate limit' });
-  }
+    const enabled = String(process.env.OTD_AI_ENABLED || '0') === '1';
+    const apiKey = String(process.env.OPENAI_API_KEY || '');
+    if(!enabled || !apiKey){
+      return res.status(503).json({ ok:false, error:'AI disabled (no key / turned off)' });
+    }
 
-  const body = req.body || {};
-  const text = String(body.text || body.message || '').trim();
-  if(!text) return res.status(400).json({ success:false, error:'Empty text' });
+    const text = String((req.body && req.body.text) || '').trim();
+    const lang = String((req.body && req.body.lang) || '').trim().slice(0, 16);
+    if(!text) return res.status(400).json({ ok:false, error:'Missing text' });
 
-  const allowedCats = ['food','fuel','home','subs','other','salary'];
+    const allowedCats = [
+      'food','transport','housing','health','education','bills','sub','salary','cash','other'
+    ];
 
-  const sys = 'You are a strict JSON generator. Output JSON only. No markdown, no extra text.';
-  const dev = [
-    'Parse a voice transcript of CASH transactions into structured items for OneTapDay cash module.',
-    'Return JSON exactly in this shape:',
-    '{"items":[{"kind":"wydanie|przyjęcie","amount":50.0,"note":"short description","categoryId":"food|fuel|home|subs|other|salary","confidence":0.0}]}',
-    '',
-    'Rules:',
-    '- Split multiple operations if the transcript mentions multiple spends/incomes (e.g., "and", "и", "potem", commas).',
-    '- kind: "wydanie" for expense (spent/paid/минус/wydałem/zapłaciłem), "przyjęcie" for income (received/plus/приход/wpłata).',
-    '- amount: positive number, do NOT include currency symbols in the number.',
-    '- note: short merchant/what it was for (e.g., "McDonald\'s", "Rossmann", "OpenAI subscription").',
-    '- categoryId MUST be one of: ' + allowedCats.join(', ') + '.',
-    '  * groceries/restaurants/coffee/food brands -> food',
-    '  * gas station/fuel -> fuel',
-    '  * rent/home/drugstore/pharmacy/household -> home',
-    '  * subscriptions/SaaS/OpenAI/Stripe -> subs',
-    '  * salary/bonus/income from work -> salary',
-    '  * unknown -> other',
-    '- If you are unsure about category, choose "other" and lower confidence.',
-    '- If no valid amount found, return {"items":[]} with empty array.',
-    '',
-    'Language can be Polish/English/Russian/Ukrainian. You MUST still output JSON only.'
-  ].join('\n');
+    const system = [
+      'You are a finance assistant that extracts CASH operations from user speech.',
+      'Return STRICT JSON ONLY. No markdown. No extra text.',
+      'Output schema:',
+      '{ "items":[ { "kind":"wydanie|przyjęcie", "amount": number, "currency":"PLN", "categoryId": one_of_allowed, "note": string } ] }',
+      'Rules:',
+      '- If user says "spent/paid/bought/wydałem/zapłaciłem/kupiłem/potratilem" => kind="wydanie".',
+      '- If user says "received/salary/income/otrzymałem/dostałem/wpływ" => kind="przyjęcie".',
+      '- If there are multiple operations in one sentence, output multiple items.',
+      '- Normalize amounts: 75,70 -> 75.7 ; ignore items without amount.',
+      `- categoryId MUST be one of: ${allowedCats.join(', ')}.`,
+      '- Typical mapping: McDonald/restaurant/cafe -> food; Rossmann/pharmacy -> health; gas/fuel -> transport; OpenAI/subscription -> sub; rent -> housing; utilities -> bills; salary -> salary; otherwise other.'
+    ].join('\n');
 
-  const messages = [
-    { role:'system', content:[{ type:'input_text', text: sys }] },
-    { role:'developer', content:[{ type:'input_text', text: dev }] },
-    { role:'user', content:[{ type:'input_text', text: text.slice(0, 1200) }] }
-  ];
+    const user = `Language=${lang || 'auto'}\nText:\n${text}`;
 
-  try{
-    const result = await _callOpenAI({
-      model: OTD_AI_MODEL_DEFAULT,
-      messages,
-      maxOutputTokens: Math.min(450, OTD_AI_MAX_OUTPUT_TOKENS)
+    const model = String(process.env.OTD_AI_MODEL || 'gpt-4o-mini');
+    const maxOut = Number(process.env.OTD_AI_MAX_OUTPUT_TOKENS || 250);
+
+    const out = await _callOpenAIResponses({
+      model,
+      input: [
+        { role: 'system', content: system },
+        { role: 'user', content: user }
+      ],
+      max_output_tokens: Math.min(600, Math.max(150, maxOut))
     });
 
-    const parsed = _aiExtractJson(result.text);
-    let items = (parsed && Array.isArray(parsed.items)) ? parsed.items : [];
-    items = items.slice(0, 10).map(it=>{
-      const rawKind = String((it && (it.kind || it.type)) || '').trim();
-      const kind = (rawKind === 'przyjęcie' || rawKind === 'przyjecie' || rawKind === 'in' || rawKind === 'income') ? 'przyjęcie' : 'wydanie';
+    let raw = '';
+    try{
+      raw = (out && out.output_text) ? String(out.output_text).trim() : '';
+    }catch(_e){ raw = ''; }
 
-      let amount = _aiClampNum(it && it.amount, 0, 100000000);
-      if(amount == null){
-        // sometimes model returns signed amount as string
-        amount = _aiClampNum(String(it && it.amount || '').replace(',','.'), 0, 100000000);
-      }
-      amount = amount == null ? null : Math.abs(amount);
+    let parsed = null;
+    try{ parsed = JSON.parse(raw); }catch(_e){ parsed = null; }
 
-      const note = String((it && (it.note || it.merchant || it.title || it.desc)) || '').trim().slice(0, 140);
-      const catRaw = String((it && (it.categoryId || it.category || it.cat)) || '').trim();
-      const categoryId = allowedCats.includes(catRaw) ? catRaw : 'other';
-      const confidence = _aiClampNum(it && it.confidence, 0, 1);
+    if(!parsed || !Array.isArray(parsed.items)){
+      return res.status(502).json({ ok:false, error:'Bad AI JSON', raw: raw.slice(0, 500) });
+    }
 
-      return { kind, amount, note, categoryId, confidence };
-    }).filter(it=> it && it.amount && isFinite(it.amount) && it.amount > 0.0001);
+    // sanitize
+    const items = parsed.items
+      .map(it => {
+        const kind = (it && it.kind) ? String(it.kind) : 'wydanie';
+        const amount = Math.abs(Number(it && it.amount));
+        const categoryId = (it && it.categoryId) ? String(it.categoryId) : 'other';
+        const note = String((it && it.note) || '').trim();
+        return {
+          kind: (kind === 'przyjęcie' ? 'przyjęcie' : 'wydanie'),
+          amount: Number.isFinite(amount) ? amount : 0,
+          currency: 'PLN',
+          categoryId: allowedCats.includes(categoryId) ? categoryId : 'other',
+          note: note || text
+        };
+      })
+      .filter(it => it.amount && it.amount > 0);
 
-    return res.json({ success:true, items, model: result.model, usage: result.usage });
-  }catch(e){
-    return res.status(502).json({
-      success:false,
-      error: (e && e.message) ? String(e.message) : 'OpenAI error',
-      openai_status: e && e.status ? e.status : undefined
-    });
+    return res.json({ ok:true, items });
+  } catch (e) {
+    console.error('cash/parse error', e);
+    return res.status(500).json({ ok:false, error: String(e && e.message || e) });
   }
 });
-
 
 app.post('/api/ai/chat', async (req, res) => {
   const user = getUserBySession(req);
