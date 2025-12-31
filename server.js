@@ -2740,10 +2740,6 @@ app.post('/api/ai/transcribe', async (req, res) => {
   const user = getUserBySession(req);
   if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
-  if (!(process.env.OTD_AI_ENABLED === '1' || process.env.OTD_AI_ENABLED === 'true')) {
-    return res.status(503).json({ success: false, error: 'AI is disabled' });
-  }
-
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
   }
@@ -2805,28 +2801,6 @@ app.post('/api/ai/transcribe', async (req, res) => {
     return res.status(status).json({ success: false, error: (e && e.message) ? e.message : 'Transcribe error' });
   }
 });
-
-
-// === AI cash voice parser (LLM) ===
-function _aiExtractJson(text){
-  if(!text) return null;
-  let s = String(text || '').trim();
-  // strip code fences if any
-  s = s.replace(/```json/gi, '```');
-  s = s.replace(/```/g, '');
-  const a = s.indexOf('{');
-  const b = s.lastIndexOf('}');
-  if(a >= 0 && b > a) s = s.slice(a, b + 1);
-  try{ return JSON.parse(s); }catch(_){ return null; }
-}
-function _aiClampNum(x, min, max){
-  const n = Number(x);
-  if(!isFinite(n)) return null;
-  let v = n;
-  if(min != null && v < min) v = min;
-  if(max != null && v > max) v = max;
-  return v;
-}
 
 app.post('/api/ai/cash/parse', async (req, res) => {
   const user = getUserBySession(req);
@@ -2923,10 +2897,6 @@ app.post('/api/ai/cash/parse', async (req, res) => {
 app.post('/api/ai/chat', async (req, res) => {
   const user = getUserBySession(req);
   if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
-
-  if (!(process.env.OTD_AI_ENABLED === '1' || process.env.OTD_AI_ENABLED === 'true')) {
-    return res.status(503).json({ success: false, error: 'AI is disabled' });
-  }
 
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
