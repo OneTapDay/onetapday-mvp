@@ -2037,9 +2037,6 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     toastEl = document.createElement('div');
     toastEl.id = 'cashVoiceToast';
     toastEl.style.position = 'fixed';
-    toastEl.style.left = '12px';
-    toastEl.style.right = '12px';
-    toastEl.style.bottom = '88px'; // above bottom actions
     toastEl.style.zIndex = '9999';
     toastEl.style.padding = '10px 12px';
     toastEl.style.borderRadius = '14px';
@@ -2050,9 +2047,40 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     toastEl.style.lineHeight = '1.25';
     toastEl.style.backdropFilter = 'blur(10px)';
     toastEl.style.display = 'none';
+    toastEl.style.pointerEvents = 'none';
     document.body.appendChild(toastEl);
   }
+
   let toastHideT = null;
+
+  function _cashVoiceActionsRect(){
+    try{
+      // prefer kasa bar
+      const root = document.querySelector('.section#kasa.active') || $id('kasa') || document;
+      const actions = (root && root.querySelector) ? (root.querySelector('.q-actions') || root.querySelector('#cashQuickActions')) : null;
+      const el = actions || document.querySelector('.q-actions') || null;
+      return el ? el.getBoundingClientRect() : null;
+    }catch(_){
+      return null;
+    }
+  }
+
+  function _cashVoiceToastReposition(){
+    try{
+      const r = _cashVoiceActionsRect();
+      if(!r) return;
+      const inset = 14; // keep inside the pill
+      toastEl.style.left = (r.left + inset) + 'px';
+      toastEl.style.width = Math.max(140, (r.width - inset*2)) + 'px';
+      toastEl.style.right = 'auto';
+      toastEl.style.transform = 'none';
+      // place above the bottom action bar
+      toastEl.style.bottom = (window.innerHeight - r.top + 10) + 'px';
+    }catch(_){}
+  }
+
+  window.addEventListener('resize', ()=>{ try{ if(toastEl && toastEl.style.display !== 'none') _cashVoiceToastReposition(); }catch(_){} });
+
   function setStatus(text, sticky){
     try{
       if(toastHideT){ clearTimeout(toastHideT); toastHideT = null; }
@@ -2061,6 +2089,7 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
         toastEl.textContent = '';
         return;
       }
+      _cashVoiceToastReposition();
       toastEl.textContent = text;
       toastEl.style.display = 'block';
       if(!sticky){
@@ -2071,22 +2100,39 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
 
   // ---------- helpers ----------
   function getLang(){
+    // prefer explicit selector if present (cash sheet)
+    try{
+      const sel = $id('speechLang');
+      const v = sel && sel.value ? String(sel.value) : '';
+      if(v){
+        try{ localStorage.setItem('speechLang', v); }catch(_){}
+        return v;
+      }
+    }catch(_){}
     return localStorage.getItem('speechLang')
       || localStorage.getItem('otd_lang')
       || 'pl-PL';
   }
 
   function showCashSheet(kind){
-    // open the cash sheet
+    // IMPORTANT: in this MVP the cash sheet is opened via backdrop display:flex (cashSheetBackdrop)
     const sheet = $id('cashSheet');
-    const backdrop = $id('sheetBackdrop');
-    if(sheet) sheet.classList.add('open');
-    if(backdrop) backdrop.classList.add('show');
+    const backdrop = $id('cashSheetBackdrop') || $id('sheetBackdrop');
+
+    try{
+      if(backdrop){
+        backdrop.style.display = 'flex';
+        if(backdrop.classList) backdrop.classList.add('show');
+      }
+      if(sheet && sheet.classList) sheet.classList.add('open');
+    }catch(_){}
 
     // select type
     const outBtn = $id('cashTypeOut');
     const inBtn = $id('cashTypeIn');
-    if(kind === 'in'){
+    const k = String(kind || '').toLowerCase();
+    const isIn = (k === 'in' || k.includes('przyj') || k === 'przyjęcie' || k === 'przyjecie');
+    if(isIn){
       if(inBtn) inBtn.click();
     }else{
       if(outBtn) outBtn.click();
@@ -2098,7 +2144,8 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
 
   function prefillSingle(item, rawText){
     try{
-      const kind = (item && item.kind === 'in') ? 'in' : 'out';
+      const _k = String((item && item.kind) || '').toLowerCase();
+      const kind = (_k === 'in' || _k.includes('przyj') || _k === 'przyjęcie' || _k === 'przyjecie') ? 'in' : 'out';
       const amt = Number(item && item.amount);
       const note = String((item && item.note) || '').trim() || String(rawText || '').trim();
       const catId = String((item && item.categoryId) || '').trim();
@@ -2124,7 +2171,8 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
 
   function fmtItemLine(it){
     try{
-      const sign = (it.kind === 'in') ? '+' : '-';
+      const _k = String(it && it.kind || '').toLowerCase();
+      const sign = (_k === 'in' || _k.includes('przyj') || _k === 'przyjęcie' || _k === 'przyjecie') ? '+' : '-';
       const amt = isFinite(Number(it.amount)) ? Math.abs(Number(it.amount)).toFixed(2) : String(it.amount||'');
       const note = String(it.note || '').trim();
       const cat = String(it.categoryId || '').trim();
@@ -2215,7 +2263,8 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       if(ok){
         try{
           for(const it of items){
-            const kind = (it.kind === 'in') ? 'in' : 'out';
+            const _k = String(it && it.kind || '').toLowerCase();
+            const kind = (_k === 'in' || _k.includes('przyj') || _k === 'przyjęcie' || _k === 'przyjecie') ? 'przyjęcie' : 'wydanie';
             const amt = Math.abs(Number(it.amount));
             const note = String(it.note || '').trim();
             const cat = String(it.categoryId || '').trim();
@@ -2241,13 +2290,10 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
   // ---------- UI state ----------
   function setUI(on){
     try{
-      if(on){
-        micBtn.classList.add('recording');
-        micBtn.innerHTML = '■';
-      }else{
-        micBtn.classList.remove('recording');
-        micBtn.innerHTML = '🎙️';
-      }
+      micBtn.classList.toggle('recording', !!on);
+      // DON'T replace innerHTML: it breaks layout (and you wanted it to stay iPhone-like)
+      const ico = micBtn.querySelector('.q-ico');
+      if(ico) ico.textContent = on ? '⏹' : '🎤';
     }catch(_){}
   }
 
@@ -2257,12 +2303,14 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
   let liveText = '';
   let isRecording = false;
   let finalizePending = false;
+  let finalizedOnce = false;
 
   function startLive(){
     if(!SR) return false;
     try{
       liveText = '';
       finalizePending = false;
+      finalizedOnce = false;
 
       speechRec = new SR();
       speechRec.lang = getLang();
@@ -2296,15 +2344,24 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
       speechRec.onend = ()=>{
         const pending = finalizePending;
         const text = String(liveText || '').trim();
+        if(finalizedOnce){
+          speechRec = null;
+          finalizePending = false;
+          isRecording = false;
+          setUI(false);
+          return;
+        }
         speechRec = null;
         finalizePending = false;
+      finalizedOnce = false;
         isRecording = false;
         setUI(false);
         if(pending){
           setStatus('🎙️ Przetwarzam…', true);
+          finalizedOnce = true;
           handleFinalText(text);
         }else{
-          if(text) handleFinalText(text);
+          if(text){ finalizedOnce = true; handleFinalText(text); }
           else setStatus('', false);
         }
       };
@@ -2322,12 +2379,37 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
 
   function stopLive(){
     try{
+      if(!speechRec){
+        finalizePending = false;
+      finalizedOnce = false;
+        isRecording = false;
+        setUI(false);
+        return;
+      }
       finalizePending = true;
       setStatus('🎙️ Przetwarzam…', true);
-      speechRec && speechRec.stop();
+
+      try{ speechRec.stop(); }catch(e){ try{ speechRec.abort && speechRec.abort(); }catch(_){ } }
+
+      // Some browsers never fire onend reliably. Force finalize after a short delay.
+      setTimeout(()=>{
+        try{
+          if(!speechRec) return; // onend already handled it
+          const text = String(liveText || '').trim();
+          try{ speechRec.abort && speechRec.abort(); }catch(_){}
+          speechRec = null;
+          finalizePending = false;
+      finalizedOnce = false;
+          isRecording = false;
+          setUI(false);
+          if(text){ finalizedOnce = true; handleFinalText(text); }
+          else setStatus('', false);
+        }catch(_){}
+      }, 1200);
     }catch(_){
       speechRec = null;
       finalizePending = false;
+      finalizedOnce = false;
       isRecording = false;
       setUI(false);
     }
@@ -2416,6 +2498,7 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
           setStatus('🎙️ Przetwarzam…', true);
           const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
           const text = await transcribe(blob, mime);
+          finalizedOnce = true;
           handleFinalText(text);
         }catch(_e){
           setStatus('🎙️ Nie rozpoznałem. Sprawdź klucz AI / dostęp.', false);
