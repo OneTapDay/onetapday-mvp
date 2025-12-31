@@ -2579,6 +2579,55 @@ function _aiAllow(key){
   return true;
 }
 
+const OTD_AI_ENABLED = String(process.env.OTD_AI_ENABLED || '1') !== '0';
+const OTD_AI_REQS_PER_DAY = parseInt(process.env.OTD_AI_REQS_PER_DAY || '500', 10);
+const OTD_AI_TOKENS_PER_DAY = parseInt(process.env.OTD_AI_TOKENS_PER_DAY || '200000', 10);
+
+const _aiDaily = new Map(); // key -> { dayId, reqs, tokens }
+function _aiDayId(){
+  // UTC date, stable across hosts
+  return new Date().toISOString().slice(0, 10);
+}
+function _n(x){
+  const n = typeof x === 'number' ? x : parseInt(String(x||''), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+function _usageTotalTokens(u){
+  if(!u || typeof u !== 'object') return 0;
+  if(u.total_tokens != null) return _n(u.total_tokens);
+  const a = _n(u.input_tokens) + _n(u.output_tokens);
+  if(a) return a;
+  const b = _n(u.prompt_tokens) + _n(u.completion_tokens);
+  if(b) return b;
+  return 0;
+}
+function _aiDailyGet(key){
+  const dayId = _aiDayId();
+  const rec = _aiDaily.get(key);
+  if(!rec || rec.dayId !== dayId){
+    const fresh = { dayId, reqs: 0, tokens: 0 };
+    _aiDaily.set(key, fresh);
+    return fresh;
+  }
+  return rec;
+}
+function _aiAllowDaily(key){
+  if(OTD_AI_REQS_PER_DAY <= 0 && OTD_AI_TOKENS_PER_DAY <= 0) return true;
+  const rec = _aiDailyGet(key);
+  if(OTD_AI_REQS_PER_DAY > 0 && rec.reqs >= OTD_AI_REQS_PER_DAY) return false;
+  if(OTD_AI_TOKENS_PER_DAY > 0 && rec.tokens >= OTD_AI_TOKENS_PER_DAY) return false;
+  rec.reqs += 1;
+  return true;
+}
+function _aiAddTokens(key, usage){
+  if(OTD_AI_TOKENS_PER_DAY <= 0) return 0;
+  const rec = _aiDailyGet(key);
+  const t = _usageTotalTokens(usage);
+  if(t > 0) rec.tokens += t;
+  return rec.tokens;
+}
+
+
 function _aiSystemPrompt(){
   return [
     'You are OneTapDay AI‑CFO.',
@@ -2670,6 +2719,10 @@ app.post('/api/ai/chat', async (req, res) => {
   const user = getUserBySession(req);
   if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
+  if (!OTD_AI_ENABLED) {
+    return res.status(503).json({ success: false, error: 'AI disabled' });
+  }
+
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
   }
@@ -2677,6 +2730,11 @@ app.post('/api/ai/chat', async (req, res) => {
   const who = String(user.email || user.id || user.username || user.login || 'user');
   if (!_aiAllow(who)) {
     return res.status(429).json({ success: false, error: 'AI rate limit' });
+  }
+
+  // Daily caps (cheap protection from "oops" loops)
+  if (!_aiAllowDaily(who) || !_aiAllowDaily('__global__')) {
+    return res.status(429).json({ success: false, error: 'AI daily limit' });
   }
 
   const body = req.body || {};
@@ -2755,6 +2813,13 @@ app.post('/api/ai/chat', async (req, res) => {
   try {
     const result = await _callOpenAI({ model, messages, maxOutputTokens });
     const answer = result.text || '…';
+
+    // token accounting (best effort)
+    try{
+      _aiAddTokens(who, result.usage);
+      _aiAddTokens('__global__', result.usage);
+    }catch(_){ /* ignore */ }
+
     return res.json({ success: true, answer, model: result.model, usage: result.usage });
   } catch (e) {
     console.warn('AI error:', e && e.message ? e.message : e);
