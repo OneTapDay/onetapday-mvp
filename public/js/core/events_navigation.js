@@ -1,2618 +1,2442 @@
-// Extracted from public/js/app/app.js (lines 5209-7316)
-/* ==== EVENTS ==== */
-document.addEventListener('click',(e)=>{
-  const btn=e.target.closest('button'); if(!btn) return;
-  const act=btn.getAttribute('data-act'); if(!act) return;
-  const kind=btn.getAttribute('data-kind'), id=btn.getAttribute('data-id');
+<!DOCTYPE html>
 
-  if(act==='edit') editRow(kind,id);
-  if(act==='del') delRow(kind,id);
-  if(act==='cat') openCatModal(kind,id);
-  if(act==='pay' && kind==='bill') markBillPaid(id);
-});
+<html lang="pl">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<!-- App icons -->
+<link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
+<link href="/icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
+<link href="/icon-512.png" rel="icon" sizes="512x512" type="image/png"/>
+<link href="/manifest.json" rel="manifest"/>
+<title>OneTapDay</title>
+<style>
+    :root{
+      --accent:#47b500;--bg:#0d0f10;--card:#15181a;--muted:#9aa3a9;--text:#e6edf3;
+      --danger:#ff7070;--warn:#f4d06f;--pos:#a8e8c7;--neg:#ff8a8a
+    }
+    html,body{background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;-webkit-tap-highlight-color:transparent}
+    button,select,input,label{touch-action:manipulation}
+    /* Mobile-first shell. Keep screens "phone-like" even on desktop so the UI doesn't stretch. */
+    .wrap{width:100%;max-width:520px;margin:0 auto;padding:16px 12px 32px}
+    .top{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;position:relative;z-index:2}
+    .brand{font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .top .brand{justify-self:center}
+    .top #navBtn{justify-self:start}
+    .topRight{display:flex;align-items:center;gap:8px;justify-self:end}
+    .iconPill{display:inline-flex;align-items:center;justify-content:center;min-width:38px;height:38px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.06)}
+    .iconPill:active{transform:scale(0.98);background:rgba(255,255,255,0.07)}
+    .tabs{display:none;gap:6px;flex-wrap:wrap;position:relative;z-index:2}
+    .tab{padding:8px 12px;border-radius:10px;background:#0f1214;border:1px solid #20262b;color:#cfe6d7;cursor:pointer;font-weight:600}
+    .tab.active{background:var(--accent);color:#08110b;border-color:#49e084}
+    .section{display:none;margin-top:18px;position:relative;z-index:1}
+    .section.active{display:block}
 
-// Переход к конкретному разделу
-window.appGoSection = function (secId) {
-  const homeEl = document.getElementById('homeScreen');
-  const topBar = document.querySelector('.top');
+    /* AI screen: keep phone-like width even if the section ends up outside .wrap */
+    #aiAssist{max-width:520px;margin-left:auto;margin-right:auto;box-sizing:border-box;padding:0 12px}
+    .wrap #aiAssist{padding:0}
 
-  try {
-    const sec = document.getElementById(secId);
 
-    // Если раздела нет — не ломаем всё
-    if (!sec) {
-      console.warn('appGoSection: section not found:', secId);
-      if (homeEl) homeEl.style.display = 'block';
-      if (topBar) topBar.classList.remove('hidden');
-      return;
+    /* Reports screen: keep phone-like width even if the section ends up outside .wrap */
+    #reports{max-width:520px;margin-left:auto;margin-right:auto;box-sizing:border-box;padding:0 12px}
+    .wrap #reports{padding:0}
+
+    .cards{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:12px}
+    .card{background:var(--card);border:1px solid #22282c;border-radius:12px;padding:14px}
+    .muted{color:var(--muted);font-size:13px}
+    .kpi{font-size:34px;font-weight:800;margin:2px 0 0}
+    .btn{appearance:none;border:0;border-radius:10px;background:var(--accent);color:#08110b;padding:10px 14px;font-weight:700;cursor:pointer}
+    .btn.secondary{background:#20262b;color:#fff;border:1px solid #2a3136}
+    .btn.ghost{background:transparent;color:#e6edf3;border:1px dashed #2a3136}
+    .btn.link{background:transparent;border:0;color:#9fe8b8;text-decoration:underline;cursor:pointer}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    th,td{border-bottom:1px solid #242b30;padding:8px 6px;font-size:13px;text-align:left;vertical-align:top}
+    th{color:#9aa3a9;font-weight:600}
+    .pill{display:inline-block;padding:3px 9px;border-radius:999px;background:#0f1214;border:1px solid #20262b;color:#9aa3a9;font-size:12px}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px}
+    .due{background:#2a1f1f;color:#ffb3b3;border:1px solid #4d3030}
+    .overdue{background:#381f1f;color:#ff8a8a;border:1px solid #5c2a2a}
+    .cand{background:#23221a;color:#e3e0b0;border:1px solid #49452c}
+    .ai{background:#1a2320;color:#a8e8c7;border:1px solid #274b32}
+    .barwrap{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:8px}
+    .bar{background:#0f1214;border:1px solid #20262b;border-radius:8px;padding:6px;text-align:center}
+    .bar .h{height:36px;background:#203026;border:1px solid #2e4635;border-radius:6px;margin:4px 0}
+    .bar.neg .h{background:#3a2222;border-color:#5b3030}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    input[type=file],input[type=text],input[type=number],select{background:#0f1214;border:1px solid #20262b;border-radius:8px;color:#e6edf3;padding:9px}
+    input::placeholder{color:#6f7a80}
+    .right{margin-left:auto}
+    .mic{border-radius:50%;width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;border:2px solid #2a3136;background:#0f1214;cursor:pointer}
+    .mic.on{background:#1d2;color:#08110b;border-color:#3f6}
+    .thumb{max-height:60px;border:1px solid #2a3136;border-radius:8px;margin-left:8px}
+    .amt-pos{color:var(--pos);font-weight:700}
+    .amt-neg{color:var(--neg);font-weight:700}
+    .lang{display:flex;gap:6px;margin-left:12px}
+    .lang button{padding:4px 8px;border-radius:999px;border:1px solid #20262b;background:#0f1214;color:#9aa3a9;font-size:12px;cursor:pointer}
+    .lang button.on{background:#274b32;color:#a8e8c7;border-color:#274b32}
+    .gate{background:#2a1f1f;border:1px solid #4d3030;color:#ffb3b3;padding:12px;border-radius:10px;margin-top:10px}
+        .tabs .tab.disabled{
+      opacity:0.4;
+      cursor:default;
     }
 
-    // Прячем домашку
-    if (homeEl) {
-      homeEl.style.display = 'none';
+    /* Глобальная блокировка: все секции, кроме настроек, глушим */
+    body.app-locked .section{
+      pointer-events:none;
+      opacity:0.4;
+      filter:grayscale(0.3);
     }
 
-    // Показываем верхнюю панель
-    if (topBar) {
-      topBar.classList.remove('hidden');
+    /* Настройки всегда доступны, чтобы можно было включить демо/подписку */
+    body.app-locked #ustawienia{
+      pointer-events:auto;
+      opacity:1;
+      filter:none;
     }
 
-    // Скрываем все разделы
-    document.querySelectorAll('.section').forEach(s => {
-      s.classList.remove('active');
-      s.style.display = 'none';
-    });
-
-    // Включаем нужный
-    sec.classList.add('active');
-    sec.style.display = 'block';
-
-    // Analytics: render full chart on open
-    if (secId === 'analytics') {
-      try { renderAnalytics(); } catch(e){ console.warn('analytics', e); }
-    }
-
-    // Если есть таб под этот раздел — подсветим его, если нет — просто игнорим
-    const tab = document.querySelector('.tabs .tab[data-sec="' + secId + '"]');
-    if (tab) {
-      document.querySelectorAll('.tabs .tab').forEach(x => x.classList.remove('active'));
-      tab.classList.add('active');
-    }
-  } catch (e) {
-    console.warn('appGoSection fatal error', e);
-    if (homeEl) homeEl.style.display = 'block';
-    if (topBar) topBar.classList.remove('hidden');
-  }
-};
-
-// Переход на главную (домашний экран с плитками)
-window.appGoHome = function () {
-  const homeEl = document.getElementById('homeScreen');
-  const topBar = document.querySelector('.top');
-
-  // Показываем верхнюю панель
-  if (topBar) topBar.classList.remove('hidden');
-
-  // Скрываем все разделы
-  document.querySelectorAll('.section').forEach(s => {
-    s.classList.remove('active');
-    s.style.display = 'none';
-  });
-
-  // Показываем домашку
-  if (homeEl) homeEl.style.display = 'block';
-
-  // Снимаем подсветку табов (если есть)
-  document.querySelectorAll('.tabs .tab').forEach(x => x.classList.remove('active'));
-
-  try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch(_e){ window.scrollTo(0,0); }
-};
-// Backward compatibility: some older code used appShowHome
-try { if (!window.appShowHome && window.appGoHome) window.appShowHome = window.appGoHome; } catch(_e) {}
-
-
-
-   
-
-
-// Синхронизация статуса пользователя с сервером (для автоматически активированного демо)
-async function syncUserStatus(){
-  try {
-    const resp = await fetch('/me', { credentials: 'include' });
-    if (!resp.ok) return;
-    const data = await resp.json();
-    const user = data && data.user;
-    if (!user) return;
-
-    // Auto-resync access (Stripe → server → client) once per tab if we look locked.
-    // Goal: NO manual buttons. If user paid, access should just unlock.
-    try {
-      const looksLocked = (String(user.status || '') !== 'active') || !user.endAt;
-      const triedKey = 'otd_me_force_sync_tried';
-      if (looksLocked && typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(triedKey)) {
-        sessionStorage.setItem(triedKey, String(Date.now()));
-        const rSync = await fetch('/me?sync=1', { credentials: 'include' });
-        if (rSync && rSync.ok) {
-          const dSync = await rSync.json().catch(()=>null);
-          const u2 = dSync && dSync.user;
-          if (u2) {
-            // Merge server truth back into current object
-            if (u2.role) user.role = u2.role;
-            if (u2.status) user.status = u2.status;
-            if (u2.startAt) user.startAt = u2.startAt;
-            if (u2.endAt) user.endAt = u2.endAt;
-            if (u2.discountUntil) user.discountUntil = u2.discountUntil;
-            user.isAdmin = !!u2.isAdmin;
-          }
-        }
-      }
-    } catch(_e) { /* silent */ }
-
-
-    // Role + status (server source of truth)
-    if (user.role) localStorage.setItem(ROLE_KEY, user.role);
-    if (user.status) localStorage.setItem(STATUS_KEY, user.status);
-
-    // Admin flag
-    if (user.isAdmin) {
-      localStorage.setItem('otd_isAdmin', '1');
-    } else {
-      localStorage.removeItem('otd_isAdmin');
-    }
-
-    const role = (user.role || localStorage.getItem(ROLE_KEY) || 'freelance_business');
-
-    // Enforce accountant landing (different UI)
-    try {
-      if (role === 'accountant' && !/\/accountant\.html$/.test(window.location.pathname)) {
-        window.location.replace('/accountant.html');
-        return;
-      }
-    } catch(e){}
-
-    const status = (user.status || '');
-    // Client-side invite banner (live polling: no need to relogin)
-    try {
-      const r2 = (role || 'freelance_business');
-      if (r2 !== 'accountant' && !window.__OTD_INV_POLL_STARTED) {
-        window.__OTD_INV_POLL_STARTED = true;
-
-        async function _otdPullInvites(){
-          try{
-            const rr = await fetch('/api/client/invites', { credentials:'include' });
-            if (!rr.ok) return;
-            const jj = await rr.json().catch(()=>({}));
-            const invs = (jj && Array.isArray(jj.invites)) ? jj.invites : [];
-
-            const existing = document.getElementById('otdInviteBar');
-            if (!invs.length){
-              if (existing) existing.remove();
-              return;
-            }
-
-            const inv = invs[0];
-            const sig = String((inv && inv.accountantEmail) || '') + '|' + String((inv && inv.createdAt) || '');
-            if (existing && existing.getAttribute('data-sig') === sig) return;
-            if (existing) existing.remove();
-
-            const bar = document.createElement('div');
-            bar.id = 'otdInviteBar';
-            bar.setAttribute('data-sig', sig);
-            bar.style.position = 'fixed';
-            bar.style.left = '12px';
-            bar.style.right = '12px';
-            bar.style.top = '12px';
-            bar.style.zIndex = '9999';
-            bar.style.background = 'rgba(15,18,20,.94)';
-            bar.style.border = '1px solid rgba(71,181,0,.45)';
-            bar.style.borderRadius = '14px';
-            bar.style.padding = '12px';
-            bar.style.boxShadow = '0 12px 40px rgba(0,0,0,.35)';
-            bar.innerHTML = `
-              <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
-                <div style="min-width:220px">
-                  <div style="font-weight:800">${TT('documents.invite_title', null, 'Приглашение от бухгалтера')}</div>
-                  <div style="opacity:.8;font-size:12px;margin-top:4px">${(inv && inv.accountantEmail) ? inv.accountantEmail : ''}</div>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center">
-                  <button id="otdInvAccept" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">${TT('documents.btn_accept', null, 'Принять')}</button>
-                  <button id="otdInvDecline" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-weight:700;cursor:pointer">${TT('documents.btn_decline', null, 'Отклонить')}</button>
-                </div>
-              </div>
-            `;
-            document.body.appendChild(bar);
-
-            const send = (action)=>{
-              fetch('/api/client/invites/respond', {
-                method:'POST',
-                headers:{ 'Content-Type':'application/json' },
-                credentials:'include',
-                body: JSON.stringify({ accountantEmail: inv.accountantEmail, action })
-              }).then(()=>{ bar.remove(); location.reload(); }).catch(()=>{ bar.remove(); });
-            };
-            bar.querySelector('#otdInvAccept')?.addEventListener('click', ()=>send('accept'));
-            bar.querySelector('#otdInvDecline')?.addEventListener('click', ()=>send('decline'));
-          }catch(_e){}
-        }
-
-        _otdPullInvites();
-        setInterval(()=>{ try{ if (!document.hidden) _otdPullInvites(); }catch(_){ } }, 15000);
-      }
-    } catch(e){}
-
-// Client: accountant requests + file upload (jpg/png/pdf) + attach from Vault
-    try {
-      if ((role || 'freelance_business') !== 'accountant') {
-
-        const ensureClientRequestsUI = ()=>{
-          // Button
-          if (!document.getElementById('openClientRequestsBtn')) {
-            const anchor = document.getElementById('openVaultBtn') || document.querySelector('#docs .row') || document.querySelector('#docs') || document.body;
-            const btn = document.createElement('button');
-            btn.id = 'openClientRequestsBtn';
-            btn.className = 'btn secondary';
-            btn.type = 'button';
-            btn.textContent = TT('documents.req_btn', null, 'Запросы бухгалтера');
-            btn.style.marginLeft = '8px';
-            if (anchor && anchor.parentNode) {
-              // try to place near Vault button
-              if (anchor.id === 'openVaultBtn') anchor.insertAdjacentElement('afterend', btn);
-              else anchor.insertAdjacentElement('afterbegin', btn);
-            } else {
-              document.body.appendChild(btn);
-            }
-          }
-
-          // Modal
-          if (!document.getElementById('clientRequestsModal')) {
-            const modal = document.createElement('div');
-            modal.id = 'clientRequestsModal';
-            modal.style.display = 'none';
-            modal.style.position = 'fixed';
-            modal.style.left = '0';
-            modal.style.top = '0';
-            modal.style.right = '0';
-            modal.style.bottom = '0';
-            modal.style.zIndex = '9998';
-            modal.style.background = 'rgba(0,0,0,.55)';
-            modal.style.backdropFilter = 'blur(6px)';
-            modal.style.overflowY = 'auto';
-            modal.style.webkitOverflowScrolling = 'touch';
-            modal.innerHTML = `
-
-              <div style="max-width:860px;margin:16px auto;padding:0 12px;min-height:calc(100vh - 32px);display:flex;align-items:flex-start">
-                <div class="card" style="padding:14px;border-radius:16px;width:100%;max-height:calc(100vh - 32px);display:flex;flex-direction:column">
-                  <div class="row between" style="gap:10px;align-items:center;flex-wrap:wrap">
-                    <div>
-                      <div style="font-weight:900;font-size:16px">${TT('documents.req_title', null, 'Запросы от бухгалтера')}</div>
-                      <div class="muted small" style="margin-top:2px">${TT('documents.req_desc', null, 'Прикрепляй файлы к конкретному запросу.')}</div>
-                    </div>
-                    <div class="row" style="gap:8px;align-items:center">
-                      <button id="clientRequestsClose" class="btn secondary" type="button">${TT('buttons.close', null, 'Закрыть')}</button>
-                    </div>
-                  </div>
-                  <div id="clientReqList" style="margin-top:12px;overflow:auto;flex:1;min-height:180px;padding-right:6px"></div>
-                  <input id="clientReqFileInput" type="file" accept=".jpg,.jpeg,.png,.pdf" multiple style="display:none" />
-                </div>
-              </div>
-            `;
-            document.body.appendChild(modal);
-          }
-        };
-
-        ensureClientRequestsUI();
-
-        const btnOpen = document.getElementById('openClientRequestsBtn');
-        const modal = document.getElementById('clientRequestsModal');
-        const listEl = document.getElementById('clientReqList');
-        const closeBtn = document.getElementById('clientRequestsClose');
-        const fileInput = document.getElementById('clientReqFileInput');
-
-        let currentRid = null;
-        let __otdClientReqModalTimer = null;
-
-        // ---- Client Requests: visible indicator (badge + top bar) ----
-        const __otdClientEmail = String((user && user.email) || localStorage.getItem('otd_user') || '').trim().toLowerCase();
-        const __otdReqSeenKey = 'otd_req_seen_' + encodeURIComponent(__otdClientEmail || 'anon');
-        const __otdReqLastKey = 'otd_req_last_' + encodeURIComponent(__otdClientEmail || 'anon');
-
-        function _otdGetSeenReqIds(){
-          try { return JSON.parse(localStorage.getItem(__otdReqSeenKey) || '[]'); } catch(_) { return []; }
-        }
-        function _otdSetSeenReqIds(arr){
-          try { localStorage.setItem(__otdReqSeenKey, JSON.stringify((arr||[]).slice(-500))); } catch(_){}
-        }
-        function _otdRememberLastOpen(ids){
-          try { localStorage.setItem(__otdReqLastKey, JSON.stringify((ids||[]).slice(-500))); } catch(_){}
-        }
-        function _otdGetLastOpen(){
-          try { return JSON.parse(localStorage.getItem(__otdReqLastKey) || '[]'); } catch(_) { return []; }
-        }
-
-        function _otdEnsureReqBadge(){
-          const btn = document.getElementById('openClientRequestsBtn');
-          if (!btn) return null;
-          let b = btn.querySelector('.otdReqBadge');
-          if (!b){
-            b = document.createElement('span');
-            b.className = 'otdReqBadge';
-            b.style.marginLeft = '8px';
-            b.style.minWidth = '18px';
-            b.style.height = '18px';
-            b.style.padding = '0 6px';
-            b.style.borderRadius = '999px';
-            b.style.display = 'none';
-            b.style.alignItems = 'center';
-            b.style.justifyContent = 'center';
-            b.style.fontSize = '12px';
-            b.style.fontWeight = '900';
-            b.style.color = '#0b1a07';
-            b.style.background = '#47b500';
-            b.style.boxShadow = '0 6px 18px rgba(0,0,0,.25)';
-            btn.appendChild(b);
-          }
-          return b;
-        }
-
-        function _otdShowReqBar(payload){
-          const existing = document.getElementById('otdReqBar');
-          if (existing) return existing;
-
-          const bar = document.createElement('div');
-          bar.id = 'otdReqBar';
-          bar.style.position = 'fixed';
-          bar.style.left = '12px';
-          bar.style.right = '12px';
-          bar.style.top = '64px';
-          bar.style.zIndex = '9999';
-          bar.style.background = 'rgba(15,18,20,.94)';
-          bar.style.border = '1px solid rgba(71,181,0,.45)';
-          bar.style.borderRadius = '14px';
-          bar.style.padding = '12px';
-          bar.style.boxShadow = '0 12px 40px rgba(0,0,0,.35)';
-
-          const title = payload && payload.title ? payload.title : TT('documents.req_bar_title', {n:1}, 'Новый запрос от бухгалтера (1)');
-          const sub = payload && payload.sub ? payload.sub : '';
-
-          bar.innerHTML = `
-            <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
-              <div style="min-width:220px">
-                <div style="font-weight:900">${title}</div>
-                ${sub ? `<div style="opacity:.82;font-size:12px;margin-top:4px">${sub}</div>` : ''}
-              </div>
-              <div style="display:flex;gap:8px;align-items:center">
-                <button id="otdReqOpen" style="background:#47b500;color:#08130a;border:none;border-radius:10px;padding:10px 12px;font-weight:900;cursor:pointer">${TT('documents.req_bar_btn_open', null, 'Открыть')}</button>
-                <button id="otdReqHide" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-weight:800;cursor:pointer">${TT('documents.req_bar_btn_hide', null, 'Скрыть')}</button>
-              </div>
-            </div>
-          `;
-          document.body.appendChild(bar);
-          return bar;
-        }
-
-        function _otdHideReqBar(){
-          try{ document.getElementById('otdReqBar')?.remove(); }catch(_){}
-        }
-
-        async function _otdFetchClientRequests(){
-          const rr = await fetch('/api/client/requests', { credentials:'include' });
-          const js = await rr.json().catch(()=> ({}));
-          if (!rr.ok) throw new Error((js && js.error) || 'Failed to load requests');
-          return (js && js.requests) || [];
-        }
-
-        async function _otdUpdateReqIndicators(){
-          try{
-            const reqs = await _otdFetchClientRequests();
-            const openReqs = reqs.filter(r=>{
-              const st = String((r && r.status) || 'open');
-              return st !== 'approved' && st !== 'rejected';
-            });
-
-            const openIds = openReqs.map(r=> String(r.id||'')).filter(Boolean);
-            _otdRememberLastOpen(openIds);
-
-            // Badge on the "Запросы бухгалтера" button
-            const badge = _otdEnsureReqBadge();
-            if (badge){
-              badge.textContent = String(openReqs.length || 0);
-              badge.style.display = openReqs.length ? 'inline-flex' : 'none';
-            }
-
-            // Top bar only for NEW (not seen before)
-            const seen = new Set(_otdGetSeenReqIds());
-            const newOnes = openReqs.filter(r=> !seen.has(String(r.id||'')));
-            if (!newOnes.length){
-              _otdHideReqBar();
-              return;
-            }
-
-            const first = newOnes[0];
-            const sub = [
-              (first && first.month) ? TT('documents.req_month', {month:first.month}, `Месяц: ${first.month}`) : '',
-              (newOnes.length > 1) ? TT('documents.req_more', {n:(newOnes.length-1)}, `Ещё: ${newOnes.length-1}`) : ''
-            ].filter(Boolean).join(' • ');
-
-            const barTitle = TT('documents.req_bar_title', { n: newOnes.length }, `Новый запрос от бухгалтера (${newOnes.length})`);
-            const bar = _otdShowReqBar({ title: barTitle, sub });
-            bar.querySelector('#otdReqOpen')?.addEventListener('click', ()=>{
-              try{
-                // mark as seen right away so it doesn't blink forever
-                const next = Array.from(new Set([ ...seen, ...newOnes.map(x=> String(x.id||'')) ]));
-                _otdSetSeenReqIds(next);
-                _otdHideReqBar();
-              }catch(_){}
-              try{ window.OTD_OpenClientRequests ? window.OTD_OpenClientRequests(String(first.id||'')) : document.getElementById('openClientRequestsBtn')?.click(); }catch(_){}
-            }, { once:true });
-
-            bar.querySelector('#otdReqHide')?.addEventListener('click', ()=>{
-              try{
-                const next = Array.from(new Set([ ...seen, ...newOnes.map(x=> String(x.id||'')) ]));
-                _otdSetSeenReqIds(next);
-              }catch(_){}
-              _otdHideReqBar();
-            }, { once:true });
-
-          }catch(_e){
-            // silence for MVP
-          }
-        }
-
-        const esc = (s)=> String(s||'')
-          .replaceAll('&','&amp;')
-          .replaceAll('<','&lt;')
-          .replaceAll('>','&gt;')
-          .replaceAll('"','&quot;')
-          .replaceAll("'","&#039;");
-
-        const reqParts = (items)=>{
-          const parts = [];
-          if (items && items.bank) parts.push(TT('documents.req_part_statement', null, 'Выписка'));
-          if (items && items.invoices) parts.push(TT('documents.req_part_invoices', null, 'Фактуры'));
-          if (items && items.receipts) parts.push(TT('documents.req_part_receipts', null, 'Чеки'));
-          if (items && items.other) parts.push(TT('documents.req_part_other', null, 'Другое') + ': ' + String(items.other).slice(0,80));
-          return parts.join(' • ') || '—';
-        };
-
-        const normalizeFiles = (r)=>{
-          if (Array.isArray(r && r.files) && r.files.length) return r.files;
-          if (r && r.fileUrl) return [{ fileUrl: r.fileUrl, fileName: r.fileName || 'download' }];
-          return [];
-        };
-
-        async function loadAndRender(focusRid){
-          if (!listEl) return;
-          listEl.innerHTML = '<div class="muted small">'+TT('documents.req_loading', null, 'Загрузка…')+'</div>';
-          try{
-            const rr = await fetch('/api/client/requests', { credentials:'include' });
-            const js = await rr.json();
-            const reqs = (js && js.requests) || [];
-            if (!reqs.length){
-              listEl.innerHTML = '<div class="hintBox">'+TT('documents.req_empty', null, 'Пока нет запросов от бухгалтера.')+'</div>';
-              return;
-            }
-            listEl.innerHTML = reqs.map(r=>{
-              const when = (r.month ? r.month : '—');
-              const created = (r.createdAt ? new Date(r.createdAt).toLocaleString() : '');
-              const stRaw = String(r.status || 'open');
-              const st = (stRaw === 'received') ? TT('documents.req_status_sent', null, 'Отправлено')
-                : (stRaw === 'approved') ? TT('documents.req_status_approved', null, 'Принято')
-                : (stRaw === 'rejected') ? TT('documents.req_status_rejected', null, 'Отклонено')
-                : TT('documents.req_status_pending', null, 'Ожидает');
-              const dueTxt = r.dueAt ? new Date(r.dueAt).toLocaleDateString() : '';
-              const isOverdue = !!(r.dueAt && stRaw !== 'approved' && Date.now() > new Date(r.dueAt).getTime());
-
-              const showAttach = (stRaw !== 'approved');
-              const files = normalizeFiles(r);
-                            const filesOpen = (files.length <= 2) ? ' open' : '';
-              const fileHtml = files.length
-                ? `<details style="margin-top:8px"${filesOpen}>
-                     <summary class="muted small" style="cursor:pointer;font-weight:800;list-style:none">${TT('documents.req_files', {n: files.length}, 'Файлы ('+files.length+')')}</summary>
-                     <div class="muted small" style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
-                       ${files.slice(0,6).map(f=>`<div>• <a href="${esc(f.fileUrl)}" target="_blank" rel="noopener">${esc(f.fileName || 'download')}</a></div>`).join('')}
-                       ${files.length>6 ? `<div class="muted small">${TT('documents.req_more_files', {n: files.length-6}, '… и ещё '+(files.length-6))}</div>` : ''}
-                     </div>
-                   </details>`
-                : '';
-
-              return `
-                <div class="card" data-rid="${esc(r.id)}" style="padding:12px">
-                  <div class="row between" style="gap:10px;align-items:flex-start">
-                    <div style="flex:1">
-                      <div style="font-weight:900">${esc(when)}</div>
-                      <div class="muted" style="margin-top:4px">${esc(reqParts(r.items||{}))}</div>
-                      ${r.note ? `<div class="muted small" style="margin-top:6px">${esc(r.note)}</div>` : ''}
-                      ${(stRaw==='rejected' && r.decisionNote) ? `<div class="muted small" style="margin-top:6px"><b>${TT('common.accountant', null, 'Бухгалтер')}:</b> ${esc(r.decisionNote)}</div>` : ''}
-                      ${(stRaw==='approved') ? `<div class="muted small" style="margin-top:6px"><b>${TT('common.accountant', null, 'Бухгалтер')}:</b> ${TT('documents.req_status_approved', null, 'Принято').toLowerCase()}</div>` : ''}
-                      ${fileHtml}
-                    </div>
-                    <div class="muted small" style="text-align:right">
-                      <div class="clientReqStatus" style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;border:1px solid rgba(71,181,0,.35);background:rgba(71,181,0,.10);font-weight:900">${esc(st)}</div>
-                      ${dueTxt ? `<div class="muted small" style="margin-top:4px">${TT('documents.req_due', null, 'Срок')}: ${esc(dueTxt)}${isOverdue ? ' • <span style="color:#ff5050;font-weight:800">' + TT('documents.req_overdue', null, 'Просрочено') + '</span>' : ''}</div>` : ''}
-                    </div>
-                  </div>
-                  <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
-                    ${showAttach ? `
-                      <button class="btn secondary" type="button" data-attach="${esc(r.id)}">${TT('documents.req_btn_from_phone', null, 'С телефона')}</button>
-                      <button class="btn secondary" type="button" data-attach-vault="${esc(r.id)}" data-month="${esc(when)}">${TT('documents.req_btn_from_vault', null, 'Из “Мои документы”')}</button>
-                    ` : `<div class="muted small">${TT('documents.req_closed', null, 'Запрос закрыт.')}</div>`}
-                  </div>
-                </div>
-              `;
-            }).join('');
-
-            listEl.querySelectorAll('button[data-attach]').forEach(btn=>{
-              btn.addEventListener('click', ()=>{
-                currentRid = btn.getAttribute('data-attach');
-                if (!fileInput) return;
-                fileInput.value = '';
-                fileInput.click();
-              });
-            });
-
-            listEl.querySelectorAll('button[data-attach-vault]').forEach(btn=>{
-              btn.addEventListener('click', async ()=>{
-                const rid = btn.getAttribute('data-attach-vault');
-                const month = btn.getAttribute('data-month') || '';
-                currentRid = rid;
-                if (!rid) return;
-
-                if (window.OTD_Vault && typeof window.OTD_Vault.openPicker === 'function') {
-                  await window.OTD_Vault.openPicker({ requestId: rid, suggestedMonth: month });
-                  await loadAndRender(rid);
-                } else {
-                  alert(TT('documents.req_vault_not_ready', null, '“Мои документы” ещё не готовы в этом билде. Обнови страницу.'));
-                }
-              });
-            });
-
-            if (focusRid) {
-              setTimeout(()=>{
-                const el = listEl.querySelector(`[data-rid="${focusRid}"]`);
-                if (el && el.scrollIntoView) el.scrollIntoView({ behavior:'smooth', block:'start' });
-              }, 100);
-            }
-
-          } catch(e){
-            listEl.innerHTML = '<div class="hintBox">'+TT('documents.req_failed', null, 'Не удалось загрузить запросы.')+'</div>';
-          }
-        }
-
-        const open = async (focusRid)=>{
-          if (!modal) return;
-          modal.style.display = 'block';
-          await loadAndRender(focusRid);
-
-          // mark currently open requests as "seen" (so the banner/badge doesn't lie)
-          if (String(role||'') !== 'accountant') {
-            try{
-              const reqs = await _otdFetchClientRequests();
-              const openIds = (reqs||[]).filter(r=>{
-                const st = String((r && r.status) || 'open');
-                return st !== 'approved' && st !== 'rejected';
-              }).map(r=> String(r && r.id || '')).filter(Boolean);
-
-              const prev = _otdGetSeenReqIds();
-              const set = new Set(prev);
-              openIds.forEach(id=> set.add(id));
-              _otdSetSeenReqIds(Array.from(set));
-              _otdHideReqBar();
-              _otdUpdateReqIndicators();
-            }catch(_){}
-          }
-          // Auto-refresh while modal is open (so you don't have to relogin)
-          try{
-            if (__otdClientReqModalTimer) clearInterval(__otdClientReqModalTimer);
-            __otdClientReqModalTimer = setInterval(()=>{ try{ if (modal && modal.style.display==='block') loadAndRender(); }catch(_){ } }, 15000);
-          }catch(_){}
-
-        };
-        const close = ()=>{ if(modal) modal.style.display='none'; try{ if(__otdClientReqModalTimer){ clearInterval(__otdClientReqModalTimer); __otdClientReqModalTimer=null; } }catch(_){ } };
-
-        // Expose for notifications deep-link
-        window.OTD_OpenClientRequests = open;
-
-        btnOpen?.addEventListener('click', ()=>open());
-        closeBtn?.addEventListener('click', close);
-        modal?.addEventListener('click', (e)=>{ if(e.target===modal) close(); });
-
-        // Start request indicator polling for clients (badge + top bar)
-        if (String(role||'') !== 'accountant' && !window.__OTD_REQ_INDICATORS_STARTED){
-          window.__OTD_REQ_INDICATORS_STARTED = true;
-          try{ _otdUpdateReqIndicators(); }catch(_){}
-          setInterval(()=>{ try{ _otdUpdateReqIndicators(); }catch(_){ } }, 20000);
-        }
-
-
-        fileInput?.addEventListener('change', async ()=>{
-          const files = Array.from(fileInput.files || []);
-          if (!files.length || !currentRid) return;
-          const allowed = ['image/jpeg','image/png','application/pdf'];
-
-          const MAX = 10;
-          const pick = files.slice(0, MAX);
-
-          for (let i=0;i<pick.length;i++){
-            const f = pick[i];
-            if (!allowed.includes((f.type||'').toLowerCase())){
-              alert('Только JPG/PNG/PDF');
-              continue;
-            }
-
-            let dataUrl = '';
-            try{
-              dataUrl = await new Promise((resolve, reject)=>{
-                const fr = new FileReader();
-                fr.onload = ()=> resolve(fr.result);
-                fr.onerror = ()=> reject(fr.error || new Error('read failed'));
-                fr.readAsDataURL(f);
-              });
-            } catch(e){
-              alert('Не удалось прочитать файл');
-              continue;
-            }
-
-            // lightweight UI feedback
-            const card = listEl?.querySelector(`[data-rid="${currentRid}"]`);
-            const stEl = card ? card.querySelector('.clientReqStatus') : null;
-            if (stEl) stEl.textContent = `Загрузка… (${i+1}/${pick.length})`;
-
-            try{
-              const resp = await fetch('/api/client/requests/upload', {
-                method: 'POST',
-                headers: { 'Content-Type':'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ requestId: currentRid, fileName: f.name, dataUrl })
-              });
-              const js = await resp.json().catch(()=> ({}));
-              if (!resp.ok || !js.success){
-                alert((js && js.error) ? js.error : 'Upload failed');
-              }
-            } catch(e){
-              alert('Upload failed');
-            }
-          }
-
-          await loadAndRender(currentRid);
-        });
-      }
-    } catch(e){}
-
-
-
-    // Reset helper that keeps localStorage consistent
-    const clearAccess = () => {
-      localStorage.removeItem(DEMO_START);
-      localStorage.removeItem('otd_demo_until');
-      localStorage.removeItem(SUB_KEY);
-      localStorage.removeItem(SUB_FROM);
-      localStorage.removeItem(SUB_TO);
-    };
-
-    if (role === 'accountant') {
-      // ACCOUNTANT:
-      // - acct_trial / acct_pro_trial => timeboxed trial access (stored in demo keys to reuse gate)
-      // - active / discount_active => paid PRO (stored in SUB keys)
-      if ((status === 'acct_trial' || status === 'acct_pro_trial') && user.endAt) {
-        const end = new Date(user.endAt).getTime();
-        if (end > Date.now()) {
-          localStorage.setItem(DEMO_START, user.startAt || new Date().toISOString());
-          localStorage.setItem('otd_demo_until', user.endAt);
-          localStorage.setItem(DEMO_USED, '1');
-          // disable SUB markers while in trial
-          localStorage.removeItem(SUB_KEY);
-          localStorage.removeItem(SUB_FROM);
-          localStorage.removeItem(SUB_TO);
-        } else {
-          // trial ended
-          clearAccess();
-          localStorage.setItem(DEMO_USED, '1');
-        }
-      } else if (status === 'active' || status === 'discount_active') {
-        // paid PRO
-        localStorage.setItem(SUB_KEY,  '1');
-        localStorage.setItem(SUB_FROM, user.startAt || '');
-        localStorage.setItem(SUB_TO,   user.endAt   || '');
-        localStorage.setItem(DEMO_USED, '1');
-        localStorage.removeItem(DEMO_START);
-        localStorage.removeItem('otd_demo_until');
-      } else if (status === 'ended') {
-        clearAccess();
-        localStorage.setItem(DEMO_USED, '1');
-      } else {
-        // none / unknown
-        clearAccess();
-      }
-    } else {
-      // FREELANCE/BUSINESS: keep legacy heuristic (demo ~= 24h, else subscription)
-      const dayMs = 24 * 3600 * 1000;
-
-      if ((status === 'active' || status === 'discount_active') && user.endAt && user.startAt) {
-        const start = new Date(user.startAt).getTime();
-        const end   = new Date(user.endAt).getTime();
-        const now   = Date.now();
-        const span  = end - start;
-
-        if (span <= dayMs + 5 * 60 * 1000) {
-          // ~24h => demo
-          if (end > now) {
-            localStorage.setItem(DEMO_START, user.startAt);
-            localStorage.setItem('otd_demo_until', user.endAt);
-            localStorage.setItem(DEMO_USED, user.demoUsed ? '1' : '0');
-          } else {
-            localStorage.setItem(DEMO_USED, '1');
-            localStorage.removeItem(DEMO_START);
-            localStorage.removeItem('otd_demo_until');
-          }
-          // subscription off
-          localStorage.removeItem(SUB_KEY);
-          localStorage.removeItem(SUB_FROM);
-          localStorage.removeItem(SUB_TO);
-        } else {
-          // subscription
-          localStorage.setItem(SUB_KEY,  '1');
-          localStorage.setItem(SUB_FROM, user.startAt || '');
-          localStorage.setItem(SUB_TO,   user.endAt   || '');
-          localStorage.setItem(DEMO_USED, '1');
-          localStorage.removeItem(DEMO_START);
-          localStorage.removeItem('otd_demo_until');
-        }
-      } else if (user.demoUsed) {
-        localStorage.setItem(DEMO_USED, '1');
-        localStorage.removeItem(DEMO_START);
-        localStorage.removeItem('otd_demo_until');
-        localStorage.removeItem(SUB_KEY);
-        localStorage.removeItem(SUB_FROM);
-        localStorage.removeItem(SUB_TO);
-      } else {
-        localStorage.removeItem(DEMO_START);
-        localStorage.removeItem('otd_demo_until');
-        localStorage.removeItem(SUB_KEY);
-        localStorage.removeItem(SUB_FROM);
-        localStorage.removeItem(SUB_TO);
-      }
-    }
-
-    gateAccess();
-    updateSubUI();
-    if (typeof renderWorkspaceControls === 'function') renderWorkspaceControls();
-  } catch (e) {
-    console.warn('syncUserStatus error', e);
-  }
-}
-
-
-
-document.addEventListener('DOMContentLoaded', async ()=>{
-  // Stripe Checkout return: если пришли с session_id, завершаем сессию на сервере и форсим синк подписки.
-  try {
-    const url = new URL(window.location.href);
-    const sid = url.searchParams.get('session_id');
-    if (sid) {
-      await fetch('/session?session_id=' + encodeURIComponent(sid), { credentials: 'include' });
-      await fetch('/me?sync=1', { credentials: 'include' });
-      url.searchParams.delete('session_id');
-      window.history.replaceState({}, document.title, url.toString());
-    }
-  } catch (e) {
-    console.warn('[Stripe] checkout session finalize failed', e);
-  }
-  // Синхронизируем статус пользователя с сервером (для автоматически активированного демо)
-  await syncUserStatus();
+    .hint{font-size:12px;color:#9aa3a9}
+    .kasa-quick{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+    .kasa-quick button{padding:6px 10px;border-radius:8px;border:1px solid #2a3136;background:#0f1214;color:#e6edf3;cursor:pointer;font-size:13px}
+    .actions button{background:#0f1214;border:1px solid #2a3136;color:#e6edf3;border-radius:8px;padding:8px 10px;cursor:pointer;min-height:34px;min-width:34px;font-size:14px}
+    .actions button:hover{border-color:#3a4248}
+    .inline-edit{display:flex;gap:6px;flex-wrap:wrap}
+    
+    .history-block{border:1px solid #20262b;border-radius:12px;background:rgba(255,255,255,0.02);margin-top:10px}
+    .history-block > summary{list-style:none;cursor:pointer;padding:10px 12px;font-weight:700;font-size:13px;color:#cfe6d7}
+    .history-block > summary::-webkit-details-marker{display:none}
+    .history-block[open] > summary{border-bottom:1px solid #20262b}
+    
+.hidden{display:none !important}
+    @media (max-width:1080px){.cards{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}}
+    @media print{.tabs,.btn,.row input,.toast,.lang{display:none !important}body{background:#fff;color:#000}.card{background:#fff;border:1px solid #999}.wrap{max-width:1000px}}
   
-  // Lang bar
-  document.querySelectorAll('#langBarMain button').forEach(b=>{
-    b.addEventListener('click',()=> applyLang(b.dataset.lang));
-  });
-  applyLang(localStorage.getItem('otd_lang')||'pl');
-  initTheme();
-  initHelper();
-  initSpendingUI();
-  initTrendInteractions();
-  initAnalyticsUI();
-    // --- Фикс поломанной вёрстки: выносим секции из homeScreen ---
-  try {
-    const home = document.getElementById('homeScreen');
-    const host = document.querySelector('.wrap') || document.body;
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;z-index:50;}
+    .modal-overlay.show{display:flex;}
+    .modal-card{background:var(--card);border-radius:14px;padding:16px 18px;max-width:420px;width:90%;box-shadow:0 16px 40px rgba(0,0,0,0.7);}
+    .modal-card h3{margin:0 0 8px;font-size:18px;}
+    .modal-row{font-size:14px;margin:4px 0;color:var(--muted);}
+    .modal-row strong{color:var(--text);}
+    .modal-actions{text-align:right;margin-top:12px;}
 
-    if (home && host) {
-      // верхняя панель
-      const topBar = document.querySelector('.top');
-      if (topBar && home.contains(topBar)) {
-        host.appendChild(topBar);
-      }
-
-      // основные секции
-      const moveIds = [
-        'gate',
-        'pulpit',
-        'analytics',
-        'analytics',
-        'docs',
-        'wyciag',
-        'faktury',
-        'konta',
-        'kasa',
-        'ustawienia',
-        'aiAssist',
-        'reports'
-      ];
-
-      moveIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el && home.contains(el)) {
-          host.appendChild(el);
-        }
-      });
-
-      // helper-виджеты
-      ['helperFab', 'helperPanel'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el && home.contains(el)) {
-          host.appendChild(el);
-        }
-      });
+    body.theme-light{
+      --bg:#f4f6f8;
+      --card:#ffffff;
+      --text:#111827;
+      --muted:#6b7280;
     }
-  } catch (e) {
-    console.warn('layout fix failed', e);
-  }
-
-  // --- Workspaces (accounts / clients) ---
-  try {
-    if (typeof renderWorkspaceControls === 'function') renderWorkspaceControls();
-    const wsSel = $id('workspaceSelect');
-    const wsAdd = $id('workspaceAdd');
-    const wsRm  = $id('workspaceRemove');
-
-    if (wsSel && !wsSel.__otd_bound) {
-      wsSel.__otd_bound = true;
-      wsSel.addEventListener('change', () => _otdSwitchWorkspace(wsSel.value));
+    #helperFab{
+      position:fixed;
+      right:16px;
+      bottom:16px;
+      width:40px;
+      height:40px;
+      border-radius:999px;
+      background:var(--accent);
+      color:#000;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:700;
+      cursor:pointer;
+      box-shadow:0 6px 18px rgba(0,0,0,0.5);
+      z-index:60;
     }
-    if (wsAdd && !wsAdd.__otd_bound) {
-      wsAdd.__otd_bound = true;
-      wsAdd.addEventListener('click', () => _otdAddClientWorkspace());
+    #helperPanel{
+      position:fixed;
+      right:16px;
+      bottom:64px;
+      width:320px;
+      max-height:60vh;
+      background:var(--card);
+      border-radius:14px;
+      box-shadow:0 12px 30px rgba(0,0,0,0.7);
+      padding:10px 12px;
+      display:none;
+      flex-direction:column;
+      z-index:60;
     }
-    if (wsRm && !wsRm.__otd_bound) {
-      wsRm.__otd_bound = true;
-      wsRm.addEventListener('click', () => _otdRemoveCurrentWorkspace());
+    #helperPanel.show{display:flex;}
+    #helperPanelHeader{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom:6px;
+      font-size:14px;
+      font-weight:600;
     }
-  } catch (e) {
-    console.warn('workspace init failed', e);
-  }
-
-  // --- Init local state early (so money/categories show without pressing ritual buttons) ---
-  try{
-    if(typeof loadLocal === 'function') loadLocal();
-    if(typeof ensureTxIds === 'function') ensureTxIds();
-    if(typeof ensureKasaIds === 'function') ensureKasaIds();
-    if(typeof inferAccounts === 'function') inferAccounts();
-    if(typeof render === 'function') render();
-    try{ if(typeof renderSpendingPanel==='function') renderSpendingPanel(); }catch(_){}
-    try{ if(typeof initSpendingUI==='function') initSpendingUI(); }catch(_){}
-  }catch(e){
-    console.warn('init local render failed', e);
-  }
-
-  // Auto-sync on open if URLs are set (removes the need to mash "Zrób dzień..." every time)
-  setTimeout(()=>{
-    try{
-      const u1 = localStorage.getItem('txUrl') || document.getElementById('txUrl')?.value || '';
-      const u2 = localStorage.getItem('billUrl') || document.getElementById('billUrl')?.value || '';
-      if((u1||u2) && typeof fetchSources==='function') fetchSources();
-    }catch(e){}
-  }, 450);
-
-  // Home screen and premium tiles
-  try{
-    // навешиваем fallback на случай, если inline-обработчик не сработал
-    document.querySelectorAll('.homeTile').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const t = btn.dataset.target;
-        if(!t) return;
-        const map = {docs:'docs',money:'pulpit',ai:'aiAssist',kasa:'kasa',accounts:'konta',reports:'reports'};
-        const secId = map[t] || t;
-        if(window.appGoSection) window.appGoSection(secId);
-      });
-    });
-    // Docs buttons -> underlying file inputs
-    const byId = (id)=>document.getElementById(id);
-    byId('docTxCsvBtn')?.addEventListener('click', ()=> byId('txFile')?.click());
-    byId('docTxImgBtn')?.addEventListener('click', ()=> byId('txImage')?.click());
-    byId('docBillCsvBtn')?.addEventListener('click', ()=> byId('billFile')?.click());
-    byId('docBillImgBtn')?.addEventListener('click', ()=> byId('billImage')?.click());
-    byId('docCashImgBtn')?.addEventListener('click', ()=> byId('cashPhoto')?.click());
-// Docs: accountant tools (no share links)
-    byId('docExportTxBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportTxCSV(); }catch(err){ console.warn(err); } });
-    byId('docExportBillsBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportBillsCSV(); }catch(err){ console.warn(err); } });
-    byId('docExportBookBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportBookCSV(); }catch(err){ console.warn(err); } });
-    byId('docExportCashBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); try{ exportCashCSV(); }catch(err){ console.warn(err); } });
-    byId('openInvoiceTplBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); openInvoiceTplModal(); });
-
-    byId('openInventoryTplBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); openInventoryTplModal(); });
-
-  // Accountant tools modal (single button in Documents)
-  const acctModal = byId('accountantToolsModal');
-  const acctPanelExports = byId('acctPanelExports');
-  const acctPanelTemplates = byId('acctPanelTemplates');
-  const acctTabExports = byId('acctTabExports');
-  const acctTabTemplates = byId('acctTabTemplates');
-
-  function acctSwitch(mode){
-    const isExports = (mode === 'exports');
-    if(acctPanelExports) acctPanelExports.style.display = isExports ? 'flex' : 'none';
-    if(acctPanelTemplates) acctPanelTemplates.style.display = isExports ? 'none' : 'flex';
-    if(acctTabExports) acctTabExports.className = isExports ? 'btn' : 'btn secondary';
-    if(acctTabTemplates) acctTabTemplates.className = isExports ? 'btn secondary' : 'btn';
-  }
-  function acctOpen(){
-    if(!acctModal) return;
-    acctModal.classList.add('show');
-    acctSwitch('exports');
-  }
-  function acctClose(){
-    acctModal?.classList.remove('show');
-  }
-
-  byId('openAccountantToolsBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); acctOpen(); });
-  byId('accountantToolsClose')?.addEventListener('click', (e)=>{ e.preventDefault(); acctClose(); });
-  acctModal?.addEventListener('click', (e)=>{ if(e.target === acctModal) acctClose(); });
-
-  acctTabExports?.addEventListener('click', (e)=>{ e.preventDefault(); acctSwitch('exports'); });
-  acctTabTemplates?.addEventListener('click', (e)=>{ e.preventDefault(); acctSwitch('templates'); });
-
-  // Template helpers
-  byId('invoiceTplNew')?.addEventListener('click', (e)=>{ e.preventDefault(); _otdTplClearForm(); toast('Nowy szablon'); });
-  byId('inventoryTplNew')?.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplClearForm(); toast('Nowy szablon'); });
-  byId('invoiceVoiceBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); invoiceVoiceDictate(); });
-
-    // Invoice template modal actions
-    byId('invoiceTplClose')?.addEventListener('click', (e)=>{ e.preventDefault(); closeInvoiceTplModal(); });
-    byId('invoiceTplSave')?.addEventListener('click', (e)=>{ e.preventDefault(); invoiceTplSaveFromForm(); });
-    byId('invoiceTplDownloadHTML')?.addEventListener('click', (e)=>{ e.preventDefault(); invoiceTplDownloadHTML(); });
-    byId('invoiceTplDownloadCSV')?.addEventListener('click', (e)=>{ e.preventDefault(); invoiceTplDownloadCSV(); });
-
-
-    // Inventory template modal actions
-    byId('inventoryTplClose')?.addEventListener('click', (e)=>{ e.preventDefault(); closeInventoryTplModal(); });
-    byId('inventoryTplSave')?.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplSaveFromForm(); });
-    byId('inventoryTplDownloadCSV')?.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplDownloadCSV(); });
-    byId('inventoryTplDownloadXLSX')?.addEventListener('click', (e)=>{ e.preventDefault(); inventoryTplDownloadXLSX(); });
-    // Reports buttons reuse existing export actions (если они есть)
-    byId('reportsTx')?.addEventListener('click', ()=> byId('exportTxCSV')?.click());
-    byId('reportsBills')?.addEventListener('click', ()=> byId('exportBillsCSV')?.click());
-    byId('reportsBook')?.addEventListener('click', ()=> byId('exportBook')?.click());
-
-    // AI profile + chat UI (локально, без облачной магии)
-const AI_PROFILE_KEY = 'otd_ai_profile';
-const AI_CHATS_META_KEY = 'otd_ai_chats_meta_v1';
-const AI_CHAT_ACTIVE_KEY = 'otd_ai_chat_active_v1';
-const AI_CHAT_PREFIX = 'otd_ai_chat_msgs_';
-const LEGACY_AI_CHAT_KEY = 'otd_ai_chat_v1';
-
-const escHtml = (s)=>String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-const loadJSON = (k, fallback)=>{
-  try{ const raw = localStorage.getItem(k); return raw ? JSON.parse(raw) : fallback; }catch(e){ return fallback; }
-};
-const saveJSON = (k, v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
-
-const tSafe = (key, fallback)=>{
-  try{
-    if(window.i18n && typeof window.i18n.t==='function'){
-      const v = window.i18n.t(key);
-      if(!v) return fallback;
-      const s = String(v).trim();
-      if(!s) return fallback;
-      // If i18n returns the key itself, treat as missing
-      if(s === key) return fallback;
-      return s;
+    #helperSearch{
+      width:100%;
+      margin:4px 0 6px 0;
+      padding:4px 6px;
+      border-radius:8px;
+      border:1px solid rgba(255,255,255,0.1);
+      background:transparent;
+      color:var(--text);
+      font-size:13px;
     }
-  }catch(e){}
-  return fallback;
-};
+    #helperTopics{
+      display:flex;
+      flex-wrap:wrap;
+      gap:4px;
+      margin:4px 0 6px 0;
+    }
+    .helper-chip{
+      font-size:11px;
+      padding:3px 6px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,0.15);
+      cursor:pointer;
+      color:var(--muted);
+    }
+    .helper-chip:hover{
+      border-color:var(--accent);
+      color:var(--text);
+    }
+    #helperAnswer{
+      flex:1;
+      overflow:auto;
+      font-size:12px;
+      color:var(--muted);
+      border-top:1px solid rgba(255,255,255,0.1);
+      padding-top:4px;
+      margin-top:4px;
+    }
 
+    .hidden{display:none!important}
+    .homeScreen{padding:24px 16px 32px;max-width:480px;margin:0 auto}
+.homeHeader{display:none !important}
+.homeSub{display:none !important}
 
-const getProfile = ()=>{
-  const p = loadJSON(AI_PROFILE_KEY, null);
-  return p && typeof p === 'object' ? p : { type:'solo', niche:'', goal:'survive', incomeTarget:0 };
-};
+    .homeLogo{color:var(--accent);font-size:28px;font-weight:800;color:var(--accent);margin:6px 2px 4px}
+    .homeSub{font-size:13px;color:var(--muted);margin:0 2px 20px;line-height:1.5;text-align:center}
+.trendCard{
+  margin:12px 0 18px;
+  padding:10px 10px 12px;
+  border-radius:16px;
+  border:1px solid #20262b;
+  background:#050708;
+}
+.trendHeader{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  font-size:12px;
+  color:#aeb4bb;
+  margin-bottom:6px;
+}
+.trendChip{
+  font-size:11px;
+  padding:2px 8px;
+  border-radius:999px;
+  background:#111820;
+}
+.trendChip.up{background:rgba(71,181,0,0.18);color:#72ff4a;}
+.trendChip.down{background:rgba(255,64,64,0.18);color:#ff8a8a;}
+.trendChart{
+  width:100%;
+  height:70px;
+  position:relative;
+}
+.trendChart svg{
+  width:100%;
+  height:100%;
+  display:block;
+}
+.trendCursorLine{
+  position:absolute;
+  top:6px;
+  bottom:4px;
+  width:1px;
+  background:rgba(255,255,255,0.35);
+  pointer-events:none;
+}
+.trendTooltip{
+  position:absolute;
+  padding:2px 6px;
+  border-radius:10px;
+  background:#000;
+  color:#fff;
+  font-size:10px;
+  white-space:nowrap;
+  transform:translate(-50%,-120%);
+  pointer-events:none;
+}
 
-const applyProfileToUI = ()=>{
-  const p = getProfile();
-  if(byId('aiProfileType')) byId('aiProfileType').value = p.type || 'solo';
-  if(byId('aiProfileNiche')) byId('aiProfileNiche').value = p.niche || '';
-  if(byId('aiProfileGoal')) byId('aiProfileGoal').value = p.goal || 'survive';
-  if(byId('aiProfileIncomeTarget')) byId('aiProfileIncomeTarget').value = p.incomeTarget || '';
-  if(byId('aiProfileSaved')) byId('aiProfileSaved').style.display = 'block';
-};
+    .homeGrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .homeTile{border-radius:18px;border:1px solid #252b30;background:#101214;padding:16px 14px;text-align:left;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;gap:8px;box-shadow:0 0 0 1px rgba(0,0,0,0.4);transition:background 0.12s,border-color 0.12s,transform 0.08s}
+    .homeTile:active{transform:scale(0.985);border-color:var(--accent)}
+    .homeTileIcon{font-size:20px;margin-bottom:2px}
+    .homeTileTitle{font-size:15px;font-weight:600;color:var(--accent)}
+    .homeTileDesc{font-size:11px;color:var(--muted);line-height:1.4}
 
-const openAiSettings = ()=>{
-  const ov = byId('aiSettingsOverlay');
-  if(!ov) return;
-  ov.classList.add('show');
-  applyProfileToUI();
-};
-const closeAiSettings = ()=>{
-  const ov = byId('aiSettingsOverlay');
-  if(!ov) return;
-  ov.classList.remove('show');
-};
+    .iconBtn{border:none;background:transparent;color:var(--muted);font-size:22px;line-height:1;padding:4px;cursor:pointer;border-radius:999px}
+    .iconBtn:active{transform:scale(0.92);background:#111;}
 
-// Wire settings modal
-byId('aiSettingsBtn')?.addEventListener('click', openAiSettings);
-byId('aiSettingsClose')?.addEventListener('click', closeAiSettings);
-byId('aiSettingsOverlay')?.addEventListener('click', (e)=>{
-  if(e.target === byId('aiSettingsOverlay')) closeAiSettings();
-});
+.spFilters{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:8px;
+}
+.spFilterBtn{
+  border:none;
+  background:#11161a;
+  padding:4px 8px;
+  border-radius:999px;
+  font-size:12px;
+  color:#cfd5dd;
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
 
-// Load saved profile into UI (when elements exist)
-try{ applyProfileToUI(); }catch(e){}
+.spCount{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:18px;
+  height:18px;
+  padding:0 6px;
+  border-radius:999px;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.12);
+  font-size:11px;
+  margin-left:6px;
+}
+.spFilterBtn span.emoji{font-size:14px;}
+.spFilterBtn.active{
+  background:#47b500;
+  color:#fff;
+}
+.spStats div{
+  margin:2px 0;
+}
 
-byId('aiProfileSave')?.addEventListener('click', ()=>{
-  const profile = {
-    type: byId('aiProfileType')?.value || 'solo',
-    niche: byId('aiProfileNiche')?.value || '',
-    goal: byId('aiProfileGoal')?.value || 'survive',
-    incomeTarget: Number(byId('aiProfileIncomeTarget')?.value || 0) || 0
-  };
-  saveJSON(AI_PROFILE_KEY, profile);
-  if(byId('aiProfileSaved')) byId('aiProfileSaved').style.display='block';
-  closeAiSettings();
-});
+.spRow{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  margin:4px 0;
+}
+.spRow .merchant{
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.spRow .amt{
+  white-space:nowrap;
+  font-weight:600;
+}
+.spCatMini{
+  border:none;
+  background:#11161a;
+  color:#cfd5dd;
+  border-radius:999px;
+  padding:3px 8px;
+  font-size:11px;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  cursor:pointer;
+}
+.spCatMini:hover{ filter:brightness(1.08); }
+.linkBtn{
+  border:none;
+  background:none;
+  color:#6ea6ff;
+  padding:0;
+  margin-top:6px;
+  font-size:12px;
+  text-decoration:underline;
+}
+.linkBtn.small{
+  font-size:11px;
+}
+.emojiList{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:4px;
+}
+.emojiList button{
+  border:none;
+  background:#11161a;
+  border-radius:999px;
+  padding:4px 6px;
+  font-size:18px;
+}
+.emojiList button.active{
+  background:#47b500;
+}
 
-// Chat history (local, multi-chat)
-const getChatsMeta = ()=>{
-  let m = loadJSON(AI_CHATS_META_KEY, null);
-  if(!Array.isArray(m)) m = [];
-  return m;
-};
-const saveChatsMeta = (arr)=> saveJSON(AI_CHATS_META_KEY, arr);
-const getActiveChatId = ()=> localStorage.getItem(AI_CHAT_ACTIVE_KEY) || '';
-const setActiveChatId = (id)=>{ try{ localStorage.setItem(AI_CHAT_ACTIVE_KEY, id); }catch(e){} };
-const chatKey = (id)=> AI_CHAT_PREFIX + id;
-const loadChat = (id)=> loadJSON(chatKey(id), []);
-const saveChat = (id, arr)=> saveJSON(chatKey(id), arr);
+  /* === FIX (2025-12-21): restore non-stretched screens + prevent tab label truncation === */
+  @media screen{
+    /* Force the whole app to stay compact on wide monitors (mobile-first MVP). */
+    .wrap{max-width:520px !important; width:100% !important;}
 
-const makeChatId = ()=> 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
-const touchChatMeta = (id)=>{
-  const meta = getChatsMeta();
-  const i = meta.findIndex(x=>x && x.id===id);
-  if(i>=0){ meta[i].updatedAt = Date.now(); saveChatsMeta(meta); }
-};
-const ensureDefaultChat = ()=>{
-  // migrate legacy single-chat storage if it exists
-  const legacy = loadJSON(LEGACY_AI_CHAT_KEY, null);
-  let meta = getChatsMeta();
-  if(Array.isArray(legacy) && legacy.length && meta.length===0){
-    const id = makeChatId();
-    meta = [{ id, title:'Чат', createdAt:Date.now(), updatedAt:Date.now() }];
-    saveChatsMeta(meta);
-    saveChat(id, legacy);
-    try{ localStorage.removeItem(LEGACY_AI_CHAT_KEY); }catch(e){}
-    setActiveChatId(id);
+    /* Tabs: keep full labels (e.g. "Ustawienia") and avoid forced shrinking. */
+    .tabs{flex-wrap:wrap !important;}
+    .tab{flex:0 0 auto !important; width:auto !important; max-width:none !important; overflow:visible !important; text-overflow:clip !important;}
   }
-  meta = getChatsMeta();
-  if(meta.length===0){
-    const id = makeChatId();
-    meta = [{ id, title:'Чат', createdAt:Date.now(), updatedAt:Date.now() }];
-    saveChatsMeta(meta);
-    setActiveChatId(id);
+
+.tableScroll{
+  width:100%;
+  overflow-x:auto;
+  margin-top:8px;
+}
+.tableScroll table{
+  min-width:100%;
+}
+#autoAcc{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+}
+#autoAcc thead tr{
+  border-bottom:1px solid #20262b;
+}
+#autoAcc th{
+  font-weight:500;
+  color:#9aa2ae;
+  padding:6px 4px;
+  text-align:left;
+  white-space:nowrap;
+}
+#autoAcc td{
+  padding:6px 4px;
+  font-size:12px;
+  white-space:nowrap;
+}
+#autoAcc th:nth-child(4),
+#autoAcc th:nth-child(5),
+#autoAcc td:nth-child(4),
+#autoAcc td:nth-child(5){
+  text-align:right;
+}
+#autoAcc input{
+  width:100%;
+  max-width:90px;
+}
+#autoAcc select{
+  max-width:110px;
+}
+
+    .homeHeader{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px}
+.homeLogo{grid-column:2;justify-self:center}
+.homeMenuBtn{grid-column:3;justify-self:end}
+    .homeMenuBtn{
+      border:none;
+      background:transparent;
+      color:var(--muted);
+      font-size:20px;
+      padding:4px 8px;
+      border-radius:999px;
+      cursor:pointer;
+    }
+    .homeMenuBtn:active{
+      background:#111820;
+      transform:scale(0.96);
+    }
+/* AI Chat (ChatGPT-ish UI, but without the ego) */
+.aiChatShell{padding:0;overflow:hidden}
+.aiChatHeader{display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:14px 14px 10px;border-bottom:1px solid #22282c}
+.aiChatHeaderBtns{margin-left:auto;display:flex;gap:8px;align-items:center}
+.aiChatHeader .meta{min-width:0}
+.aiChatHeader .title{font-weight:800;font-size:16px;line-height:1.1}
+.aiChatHeader .sub{margin-top:3px}
+.aiChatThread{padding:12px 12px 6px;max-height:360px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.aiMsg{display:flex}
+.aiMsg.user{justify-content:flex-end}
+.aiBubble{max-width:86%;padding:10px 12px;border-radius:14px;border:1px solid #2a3136;background:#0f1214;color:#e6edf3;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.35}
+.aiMsg.user .aiBubble{background:#1a2320;border-color:#274b32}
+.aiMsg.bot .aiBubble{background:#111416;border-color:#20262b}
+.aiChatChips{padding:0 12px 10px;display:flex;flex-wrap:wrap;gap:6px}
+.aiChatChips .btn.secondary{padding:6px 10px;border-radius:999px;font-size:12px}
+.aiComposer{display:flex;gap:8px;padding:10px 12px 12px;border-top:1px solid #22282c;align-items:flex-end}
+.aiComposer textarea{flex:1;min-height:40px;max-height:120px;resize:none;border-radius:12px;background:#14181b;color:#e9eef2;border:1px solid #242b30;padding:10px 12px;outline:none}
+.aiComposer textarea::placeholder{color:#7a8792}
+.aiComposer textarea:focus{border-color:#2f5b3b;box-shadow:0 0 0 2px rgba(71,181,0,.12)}
+.aiComposer .aiToolBtn{min-width:40px;height:40px;padding:0;border-radius:12px;display:flex;align-items:center;justify-content:center}
+.aiComposer .aiToolBtn.is-recording{outline:2px solid rgba(71,181,0,.35)}
+.aiAttachRow{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid #22282c}
+.aiAttachItem{display:flex;align-items:center;gap:8px;background:#11161a;border:1px solid #242b30;border-radius:12px;padding:6px 8px;max-width:100%}
+.aiAttachThumb{width:34px;height:34px;border-radius:8px;object-fit:cover;border:1px solid #242b30}
+.aiAttachName{font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aiAttachRemove{min-width:28px;height:28px;padding:0;border-radius:10px}
+.aiMsg .aiAttachList{margin-top:8px;display:flex;flex-wrap:wrap;gap:8px}
+.aiMsg .aiAttachLink{display:inline-flex;align-items:center;gap:8px;text-decoration:none}
+.aiMsg .aiAttachLink:hover{text-decoration:underline}
+
+.aiComposer .btn{min-width:54px}
+
+/* AI chat drawer (multi-chat) */
+.aiDrawerOverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);display:none;z-index:9999}
+.aiDrawerOverlay.show{display:block}
+.aiDrawer{position:absolute;left:0;top:0;bottom:0;width:300px;max-width:86vw;background:#0f1214;border-right:1px solid #22282c;padding:12px;display:flex;flex-direction:column;gap:10px}
+.aiDrawerHeader{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.aiDrawerHeader .title{font-weight:800}
+.aiChatList{flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+.aiChatItem{border:1px solid #22282c;border-radius:12px;padding:10px 10px;cursor:pointer;display:flex;align-items:center;gap:10px}
+.aiChatItem.active{border-color:#2f5b3b;box-shadow:0 0 0 2px rgba(71,181,0,.10)}
+.aiChatItem .name{font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aiChatItem .meta{font-size:12px;color:#8a96a0}
+.aiChatItem .actions{display:flex;gap:6px}
+.aiChatItem .mini{border:1px solid #22282c;background:transparent;color:#cfd7dd;border-radius:10px;padding:4px 8px;font-size:12px}
+
+
+
+/* === QALTA-STYLE CASH (visual only) === */
+.top{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;
+  position:fixed;left:50%;transform:translateX(-50%);
+  top:calc(env(safe-area-inset-top) + 10px);
+  width:min(520px, calc(100% - 24px));
+  margin:0 auto;
+  padding:10px 12px;
+  z-index:1000;
+  background:rgba(15,18,20,0.78);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:16px;
+  backdrop-filter:blur(12px);
+}
+.brand b{font-size:16px;letter-spacing:0.2px;color:var(--accent)}
+.top .brand{cursor:pointer;user-select:none}
+.iconBtn{appearance:none;border:0;background:transparent;color:var(--text);font-size:18px;line-height:1;padding:8px;border-radius:12px}
+.iconBtn:active{transform:scale(0.98);background:rgba(255,255,255,0.06)}
+.wrap{padding-top: calc(84px + env(safe-area-inset-top));}
+.navOverlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:flex-end;justify-content:center;padding:0 12px calc(env(safe-area-inset-bottom, 0px) + 90px);box-sizing:border-box}
+.navSheet{width:min(520px,100%);background:#0f1214;border:1px solid #20262b;border-radius:18px;padding:14px 12px 18px}
+.navHeader{position:relative;display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px;min-height:28px}
+.navTitle{position:absolute;left:0;right:0;text-align:center;font-weight:800;pointer-events:none}
+.navList{display:flex;flex-direction:column;gap:8px}
+.navItem{appearance:none;border:1px solid #20262b;background:#121619;color:#e6edf3;border-radius:14px;padding:12px 12px;text-align:left;font-weight:700}
+.navItem:active{transform:scale(0.99);background:#171c20}
+
+.section#kasa{margin-top:10px}
+.kasa-qalta{background:rgba(15,18,20,0.82);color:var(--text);border-radius:26px;border:1px solid rgba(255,255,255,0.10);padding:18px 16px 96px;position:relative;backdrop-filter:blur(10px)}
+.q-header{padding:2px 2px 12px}
+.q-sub{font-size:13px;color:var(--muted);font-weight:700}
+.q-balance{font-size:44px;font-weight:900;letter-spacing:-0.8px;margin-top:4px;font-variant-numeric:tabular-nums}
+.q-deltas{display:flex;gap:8px;align-items:center;margin-top:8px}
+.q-chip{font-size:13px;font-weight:800;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06)}
+.q-chip.pos{color:#72ff4a}
+.q-chip.neg{color:#ff8a8a}
+
+.q-feed{margin-top:8px;display:flex;flex-direction:column;gap:10px}
+.q-day{font-size:12px;font-weight:800;color:var(--muted);margin:10px 2px 2px}
+.q-item{display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:18px;padding:10px 10px}
+.q-left{display:flex;gap:10px;align-items:center;min-width:0}
+.q-ic{width:34px;height:34px;border-radius:12px;background:rgba(71,181,0,0.12);border:1px solid rgba(71,181,0,0.20);display:flex;align-items:center;justify-content:center;font-size:18px}
+.q-text{min-width:0}
+.q-title{font-weight:900;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-sub2{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.q-right{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.q-amt{font-weight:900;font-variant-numeric:tabular-nums}
+.q-amt.pos{color:#72ff4a}
+.q-amt.neg{color:#ff8a8a}
+.q-miniRow{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+.q-mini{appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--muted);border-radius:10px;padding:4px 7px;font-size:12px;white-space:nowrap}
+
+.q-actions{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;width:min(520px, calc(100% - 24px));display:flex;align-items:center;justify-content:space-between;gap:12px;background:rgba(15,18,20,0.90);border:1px solid rgba(255,255,255,0.12);border-radius:26px;padding:12px 16px;box-shadow:0 22px 55px rgba(0,0,0,0.55);backdrop-filter:blur(10px);z-index:1000}
+.q-act{appearance:none;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.06);color:var(--text);width:46px;height:46px;border-radius:999px;display:flex;align-items:center;justify-content:center}
+.q-act:active{transform:scale(0.98)}
+.q-act.q-main{width:58px;height:58px;background:#0b0e10;color:#ffffff;font-size:28px;font-weight:900;border:1px solid rgba(71,181,0,0.35);box-shadow:0 16px 40px rgba(0,0,0,0.55)}
+.q-ico{font-size:18px}
+
+/* Bottom sheet */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px 22px 0 0;padding:10px 14px 16px;box-shadow:0 -22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
+.sheet-handle{width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,0.18);margin:6px auto 10px}
+.sheet-top{display:flex;align-items:center;justify-content:space-between}
+.sheet-title{font-weight:900}
+.sheet-close{appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--text);border-radius:12px;padding:8px 10px}
+.sheet-toggle{display:flex;gap:8px;margin-top:10px}
+.seg{flex:1;appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--text);border-radius:14px;padding:10px 12px;font-weight:900}
+.seg.active{background:rgba(71,181,0,0.16);color:#dfffd1;border-color:rgba(71,181,0,0.35)}
+.sheet-field{margin-top:10px}
+.lbl{font-size:12px;font-weight:800;color:var(--muted);margin-bottom:6px}
+.sheet input, .sheet select{width:100%;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:12px 12px;font-size:16px;background:rgba(0,0,0,0.25);color:var(--text)}
+.sheet input:focus, .sheet select:focus{outline:none;border-color:rgba(71,181,0,0.55);box-shadow:0 0 0 4px rgba(71,181,0,0.10)}
+.sheet-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.sheet-row .btn{flex:1;min-width:120px}
+.sheet-adv{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.speechSel{flex:0 0 auto}
+.micStatus{font-size:12px;color:var(--muted);flex:0 1 auto;min-width:0;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);padding:6px 10px;border-radius:999px}
+
+/* Ensure cash section doesn't sit under fixed action bar */
+.section#kasa{padding-bottom:120px}
+
+
+/* Voice waveform hint (ChatGPT-ish) */
+#micBtn{position:relative;overflow:hidden}
+#micBtn .q-voice-bars{display:none;width:22px;height:22px}
+#micBtn.on{background:#0f1214 !important}
+#micBtn.on .q-ico{display:none}
+#micBtn.on .q-voice-bars{display:block}
+#micBtn.on .q-voice-bars:before,
+#micBtn.on .q-voice-bars:after{content:'';display:block;width:100%;height:100%;background:
+  linear-gradient(to right,
+    rgba(255,255,255,0.95) 0 2px, transparent 2px 4px,
+    rgba(255,255,255,0.75) 4px 6px, transparent 6px 9px,
+    rgba(255,255,255,0.95) 9px 11px, transparent 11px 14px,
+    rgba(255,255,255,0.65) 14px 16px, transparent 16px 19px,
+    rgba(255,255,255,0.9) 19px 22px);
+  mask: linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%);
+  border-radius:10px;
+  animation: voicePulse 0.9s infinite ease-in-out;
+}
+@keyframes voicePulse{
+  0%{transform:scaleY(0.55);opacity:0.85}
+  50%{transform:scaleY(1.0);opacity:1}
+  100%{transform:scaleY(0.55);opacity:0.85}
+}
+
+
+/* ===== Analytics (Qalta-like) ===== */
+.analyticsGrid{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:12px;
+  margin-top:12px;
+}
+@media (min-width:820px){
+  .analyticsGrid{ grid-template-columns:1fr 1fr; }
+}
+.analyticsCard{ border-radius:18px; }
+.analyticsCardHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.analyticsKpis{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:10px;
+}
+.kpiPill{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,0.10);
+  background:rgba(0,0,0,0.18);
+  font-size:12px;
+  color:rgba(255,255,255,0.88);
+}
+.kpiDot{
+  width:8px;height:8px;border-radius:999px;background:var(--accent);
+  box-shadow:0 0 0 2px rgba(71,181,0,0.18);
+}
+.analyticsDonutRow{
+  display:flex;
+  gap:12px;
+  align-items:stretch;
+  margin-top:10px;
+  flex-wrap:wrap;
+}
+.donutWrap{
+  position:relative;
+  width:180px;
+  height:180px;
+  flex:0 0 auto;
+  border-radius:22px;
+  background:rgba(0,0,0,0.12);
+  border:1px solid rgba(255,255,255,0.08);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.donutSvg{ width:170px; height:170px; display:block; }
+.donutCenter{
+  position:absolute;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  pointer-events:none;
+}
+.donutValue{
+  font-weight:900;
+  font-size:18px;
+  color:rgba(255,255,255,0.92);
+}
+.analyticsList{
+  flex:1 1 220px;
+  min-width:220px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.analyticsRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:8px 10px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,0.08);
+  background:rgba(0,0,0,0.12);
+}
+.analyticsRowLeft{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.analyticsSwatch{
+  width:10px;height:10px;border-radius:4px;flex:0 0 auto;
+}
+.analyticsRowName{
+  font-size:12px;
+  font-weight:650;
+  color:rgba(255,255,255,0.90);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.analyticsRowAmt{
+  font-size:12px;
+  font-weight:800;
+  color:rgba(255,255,255,0.92);
+  white-space:nowrap;
+}
+.analyticsEmpty{
+  padding:10px;
+  border-radius:14px;
+  border:1px dashed rgba(255,255,255,0.16);
+  color:rgba(255,255,255,0.62);
+  font-size:12px;
+}
+
+    .homeGrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .homeTile{border-radius:18px;border:1px solid #252b30;background:#101214;padding:16px 14px;text-align:left;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;gap:8px;box-shadow:0 0 0 1px rgba(0,0,0,0.4);transition:background 0.12s,border-color 0.12s,transform 0.08s}
+    .homeTile:active{transform:scale(0.985);border-color:var(--accent)}
+    .homeTileIcon{font-size:20px;margin-bottom:2px}
+    .homeTileTitle{font-size:15px;font-weight:600;color:var(--accent)}
+    .homeTileDesc{font-size:11px;color:var(--muted);line-height:1.4}
+
+    .iconBtn{border:none;background:transparent;color:var(--muted);font-size:22px;line-height:1;padding:4px;cursor:pointer;border-radius:999px}
+    .iconBtn:active{transform:scale(0.92);background:#111;}
+
+.spFilters{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:8px;
+}
+.spFilterBtn{
+  border:none;
+  background:#11161a;
+  padding:4px 8px;
+  border-radius:999px;
+  font-size:12px;
+  color:#cfd5dd;
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+
+.spCount{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:18px;
+  height:18px;
+  padding:0 6px;
+  border-radius:999px;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.12);
+  font-size:11px;
+  margin-left:6px;
+}
+.spFilterBtn span.emoji{font-size:14px;}
+.spFilterBtn.active{
+  background:#47b500;
+  color:#fff;
+}
+.spStats div{
+  margin:2px 0;
+}
+
+.spRow{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  margin:4px 0;
+}
+.spRow .merchant{
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.spRow .amt{
+  white-space:nowrap;
+  font-weight:600;
+}
+.spCatMini{
+  border:none;
+  background:#11161a;
+  color:#cfd5dd;
+  border-radius:999px;
+  padding:3px 8px;
+  font-size:11px;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  cursor:pointer;
+}
+.spCatMini:hover{ filter:brightness(1.08); }
+.linkBtn{
+  border:none;
+  background:none;
+  color:#6ea6ff;
+  padding:0;
+  margin-top:6px;
+  font-size:12px;
+  text-decoration:underline;
+}
+.linkBtn.small{
+  font-size:11px;
+}
+.emojiList{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:4px;
+}
+.emojiList button{
+  border:none;
+  background:#11161a;
+  border-radius:999px;
+  padding:4px 6px;
+  font-size:18px;
+}
+.emojiList button.active{
+  background:#47b500;
+}
+
+  /* === FIX (2025-12-21): restore non-stretched screens + prevent tab label truncation === */
+  @media screen{
+    /* Force the whole app to stay compact on wide monitors (mobile-first MVP). */
+    .wrap{max-width:520px !important; width:100% !important;}
+
+    /* Tabs: keep full labels (e.g. "Ustawienia") and avoid forced shrinking. */
+    .tabs{flex-wrap:wrap !important;}
+    .tab{flex:0 0 auto !important; width:auto !important; max-width:none !important; overflow:visible !important; text-overflow:clip !important;}
   }
-  if(!getActiveChatId() && meta[0]?.id) setActiveChatId(meta[0].id);
-};
 
-const formatShortDate = (ts)=>{
-  try{ const d=new Date(ts||Date.now()); return d.toISOString().slice(0,10); }catch(e){ return ''; }
-};
+.tableScroll{
+  width:100%;
+  overflow-x:auto;
+  margin-top:8px;
+}
+.tableScroll table{
+  min-width:100%;
+}
+#autoAcc{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+}
+#autoAcc thead tr{
+  border-bottom:1px solid #20262b;
+}
+#autoAcc th{
+  font-weight:500;
+  color:#9aa2ae;
+  padding:6px 4px;
+  text-align:left;
+  white-space:nowrap;
+}
+#autoAcc td{
+  padding:6px 4px;
+  font-size:12px;
+  white-space:nowrap;
+}
+#autoAcc th:nth-child(4),
+#autoAcc th:nth-child(5),
+#autoAcc td:nth-child(4),
+#autoAcc td:nth-child(5){
+  text-align:right;
+}
+#autoAcc input{
+  width:100%;
+  max-width:90px;
+}
+#autoAcc select{
+  max-width:110px;
+}
 
-const renderChatList = ()=>{
-  const host = byId('aiChatList');
-  if(!host) return;
-  const meta = getChatsMeta().slice().sort((a,b)=>(b?.updatedAt||0)-(a?.updatedAt||0));
-  const active = getActiveChatId();
-  host.innerHTML = meta.map(m=>{
-    const isA = m.id===active;
-    const name = escHtml(m.title || 'Chat');
-    const dt = escHtml(formatShortDate(m.updatedAt||m.createdAt));
-    return `<div class="aiChatItem ${isA?'active':''}" data-id="${escHtml(m.id)}">
-      <div style="min-width:0;flex:1">
-        <div class="name">${name}</div>
-        <div class="meta">${dt}</div>
+    .homeHeader{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px}
+.homeLogo{grid-column:2;justify-self:center}
+.homeMenuBtn{grid-column:3;justify-self:end}
+    .homeMenuBtn{
+      border:none;
+      background:transparent;
+      color:var(--muted);
+      font-size:20px;
+      padding:4px 8px;
+      border-radius:999px;
+      cursor:pointer;
+    }
+    .homeMenuBtn:active{
+      background:#111820;
+      transform:scale(0.96);
+    }
+/* AI Chat (ChatGPT-ish UI, but without the ego) */
+.aiChatShell{padding:0;overflow:hidden}
+.aiChatHeader{display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:14px 14px 10px;border-bottom:1px solid #22282c}
+.aiChatHeaderBtns{margin-left:auto;display:flex;gap:8px;align-items:center}
+.aiChatHeader .meta{min-width:0}
+.aiChatHeader .title{font-weight:800;font-size:16px;line-height:1.1}
+.aiChatHeader .sub{margin-top:3px}
+.aiChatThread{padding:12px 12px 6px;max-height:360px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.aiMsg{display:flex}
+.aiMsg.user{justify-content:flex-end}
+.aiBubble{max-width:86%;padding:10px 12px;border-radius:14px;border:1px solid #2a3136;background:#0f1214;color:#e6edf3;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.35}
+.aiMsg.user .aiBubble{background:#1a2320;border-color:#274b32}
+.aiMsg.bot .aiBubble{background:#111416;border-color:#20262b}
+.aiChatChips{padding:0 12px 10px;display:flex;flex-wrap:wrap;gap:6px}
+.aiChatChips .btn.secondary{padding:6px 10px;border-radius:999px;font-size:12px}
+.aiComposer{display:flex;gap:8px;padding:10px 12px 12px;border-top:1px solid #22282c;align-items:flex-end}
+.aiComposer textarea{flex:1;min-height:40px;max-height:120px;resize:none;border-radius:12px;background:#14181b;color:#e9eef2;border:1px solid #242b30;padding:10px 12px;outline:none}
+.aiComposer textarea::placeholder{color:#7a8792}
+.aiComposer textarea:focus{border-color:#2f5b3b;box-shadow:0 0 0 2px rgba(71,181,0,.12)}
+.aiComposer .btn{min-width:54px}
+
+/* AI chat drawer (multi-chat) */
+.aiDrawerOverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);display:none;z-index:9999}
+.aiDrawerOverlay.show{display:block}
+.aiDrawer{position:absolute;left:0;top:0;bottom:0;width:300px;max-width:86vw;background:#0f1214;border-right:1px solid #22282c;padding:12px;display:flex;flex-direction:column;gap:10px}
+.aiDrawerHeader{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.aiDrawerHeader .title{font-weight:800}
+.aiChatList{flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+.aiChatItem{border:1px solid #22282c;border-radius:12px;padding:10px 10px;cursor:pointer;display:flex;align-items:center;gap:10px}
+.aiChatItem.active{border-color:#2f5b3b;box-shadow:0 0 0 2px rgba(71,181,0,.10)}
+.aiChatItem .name{font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aiChatItem .meta{font-size:12px;color:#8a96a0}
+.aiChatItem .actions{display:flex;gap:6px}
+.aiChatItem .mini{border:1px solid #22282c;background:transparent;color:#cfd7dd;border-radius:10px;padding:4px 8px;font-size:12px}
+
+
+
+/* === QALTA-STYLE CASH (visual only) === */
+.top{display:flex;align-items:center;justify-content:space-between;
+  position:fixed;left:50%;transform:translateX(-50%);
+  top:calc(env(safe-area-inset-top) + 10px);
+  width:min(520px, calc(100% - 24px));
+  margin:0 auto;
+  padding:10px 12px;
+  z-index:1000;
+  background:rgba(15,18,20,0.78);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:16px;
+  backdrop-filter:blur(12px);
+}
+.brand b{font-size:16px;letter-spacing:0.2px;color:var(--accent)}
+.top .brand{cursor:pointer;user-select:none}
+.iconBtn{appearance:none;border:0;background:transparent;color:var(--text);font-size:18px;line-height:1;padding:8px;border-radius:12px}
+.iconBtn:active{transform:scale(0.98);background:rgba(255,255,255,0.06)}
+.wrap{padding-top: calc(84px + env(safe-area-inset-top));}
+.navOverlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:flex-end;justify-content:center;padding:0 12px calc(env(safe-area-inset-bottom, 0px) + 90px);box-sizing:border-box}
+.navSheet{width:min(520px,100%);background:#0f1214;border:1px solid #20262b;border-radius:18px;padding:14px 12px 18px}
+.navHeader{position:relative;display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px;min-height:28px}
+.navTitle{position:absolute;left:0;right:0;text-align:center;font-weight:800;pointer-events:none}
+.navList{display:flex;flex-direction:column;gap:8px}
+.navItem{appearance:none;border:1px solid #20262b;background:#121619;color:#e6edf3;border-radius:14px;padding:12px 12px;text-align:left;font-weight:700}
+.navItem:active{transform:scale(0.99);background:#171c20}
+
+.section#kasa{margin-top:10px}
+.kasa-qalta{background:rgba(15,18,20,0.82);color:var(--text);border-radius:26px;border:1px solid rgba(255,255,255,0.10);padding:18px 16px 96px;position:relative;backdrop-filter:blur(10px)}
+.q-header{padding:2px 2px 12px}
+.q-sub{font-size:13px;color:var(--muted);font-weight:700}
+.q-balance{font-size:44px;font-weight:900;letter-spacing:-0.8px;margin-top:4px;font-variant-numeric:tabular-nums}
+.q-deltas{display:flex;gap:8px;align-items:center;margin-top:8px}
+.q-chip{font-size:13px;font-weight:800;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06)}
+.q-chip.pos{color:#72ff4a}
+.q-chip.neg{color:#ff8a8a}
+
+.q-feed{margin-top:8px;display:flex;flex-direction:column;gap:10px}
+.q-day{font-size:12px;font-weight:800;color:var(--muted);margin:10px 2px 2px}
+.q-item{display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:18px;padding:10px 10px}
+.q-left{display:flex;gap:10px;align-items:center;min-width:0}
+.q-ic{width:34px;height:34px;border-radius:12px;background:rgba(71,181,0,0.12);border:1px solid rgba(71,181,0,0.20);display:flex;align-items:center;justify-content:center;font-size:18px}
+.q-text{min-width:0}
+.q-title{font-weight:900;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-sub2{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.q-right{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.q-amt{font-weight:900;font-variant-numeric:tabular-nums}
+.q-amt.pos{color:#72ff4a}
+.q-amt.neg{color:#ff8a8a}
+.q-miniRow{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+.q-mini{appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--muted);border-radius:10px;padding:4px 7px;font-size:12px;white-space:nowrap}
+
+.q-actions{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;width:min(520px, calc(100% - 24px));display:flex;align-items:center;justify-content:space-between;gap:12px;background:rgba(15,18,20,0.90);border:1px solid rgba(255,255,255,0.12);border-radius:26px;padding:12px 16px;box-shadow:0 22px 55px rgba(0,0,0,0.55);backdrop-filter:blur(10px);z-index:1000}
+.q-act{appearance:none;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.06);color:var(--text);width:46px;height:46px;border-radius:999px;display:flex;align-items:center;justify-content:center}
+.q-act:active{transform:scale(0.98)}
+.q-act.q-main{width:58px;height:58px;background:#0b0e10;color:#ffffff;font-size:28px;font-weight:900;border:1px solid rgba(71,181,0,0.35);box-shadow:0 16px 40px rgba(0,0,0,0.55)}
+.q-ico{font-size:18px}
+
+/* Bottom sheet */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px 22px 0 0;padding:10px 14px 16px;box-shadow:0 -22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
+.sheet-handle{width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,0.18);margin:6px auto 10px}
+.sheet-top{display:flex;align-items:center;justify-content:space-between}
+.sheet-title{font-weight:900}
+.sheet-close{appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--text);border-radius:12px;padding:8px 10px}
+.sheet-toggle{display:flex;gap:8px;margin-top:10px}
+.seg{flex:1;appearance:none;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:var(--text);border-radius:14px;padding:10px 12px;font-weight:900}
+.seg.active{background:rgba(71,181,0,0.16);color:#dfffd1;border-color:rgba(71,181,0,0.35)}
+.sheet-field{margin-top:10px}
+.lbl{font-size:12px;font-weight:800;color:var(--muted);margin-bottom:6px}
+.sheet input, .sheet select{width:100%;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:12px 12px;font-size:16px;background:rgba(0,0,0,0.25);color:var(--text)}
+.sheet input:focus, .sheet select:focus{outline:none;border-color:rgba(71,181,0,0.55);box-shadow:0 0 0 4px rgba(71,181,0,0.10)}
+.sheet-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.sheet-row .btn{flex:1;min-width:120px}
+.sheet-adv{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.speechSel{flex:0 0 auto}
+.micStatus{font-size:12px;color:var(--muted);flex:0 1 auto;min-width:0;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);padding:6px 10px;border-radius:999px}
+
+/* Ensure cash section doesn't sit under fixed action bar */
+.section#kasa{padding-bottom:120px}
+
+
+/* Voice waveform hint (ChatGPT-ish) */
+#micBtn{position:relative;overflow:hidden}
+#micBtn .q-voice-bars{display:none;width:22px;height:22px}
+#micBtn.on{background:#0f1214 !important}
+#micBtn.on .q-ico{display:none}
+#micBtn.on .q-voice-bars{display:block}
+#micBtn.on .q-voice-bars:before,
+#micBtn.on .q-voice-bars:after{content:'';display:block;width:100%;height:100%;background:
+  linear-gradient(to right,
+    rgba(255,255,255,0.95) 0 2px, transparent 2px 4px,
+    rgba(255,255,255,0.75) 4px 6px, transparent 6px 9px,
+    rgba(255,255,255,0.95) 9px 11px, transparent 11px 14px,
+    rgba(255,255,255,0.65) 14px 16px, transparent 16px 19px,
+    rgba(255,255,255,0.9) 19px 22px);
+  mask: linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%);
+  border-radius:10px;
+  animation: voicePulse 0.9s infinite ease-in-out;
+}
+@keyframes voicePulse{
+  0%{transform:scaleY(0.55);opacity:0.85}
+  50%{transform:scaleY(1.0);opacity:1}
+  100%{transform:scaleY(0.55);opacity:0.85}
+}
+
+
+
+    /* ==== Subscription cards (Settings) ==== */
+    .subBadge{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;
+      font-size:12px;border:1px solid #22282c;background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      color:var(--text);white-space:nowrap}
+    .subBadge::before{content:'';width:8px;height:8px;border-radius:999px;background:rgba(255,255,255,0.25);display:inline-block}
+    .subBadge.ok::before{background:rgba(71,181,0,0.95);box-shadow:0 0 0 3px rgba(71,181,0,0.16)}
+    .subBadge.warn::before{background:rgba(244,208,111,0.95);box-shadow:0 0 0 3px rgba(244,208,111,0.14)}
+    .subBadge.bad::before{background:rgba(255,112,112,0.95);box-shadow:0 0 0 3px rgba(255,112,112,0.14)}
+    .subBadge.ok{border-color:rgba(71,181,0,0.35);box-shadow:0 0 0 1px rgba(71,181,0,0.14) inset}
+    .subBadge.warn{border-color:rgba(244,208,111,0.35);box-shadow:0 0 0 1px rgba(244,208,111,0.12) inset}
+    .subBadge.bad{border-color:rgba(255,112,112,0.35);box-shadow:0 0 0 1px rgba(255,112,112,0.12) inset}
+    .subStatusBox{margin-top:10px;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.10);background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));box-shadow:0 14px 30px rgba(0,0,0,0.28)}
+    .subStatusBox.ok{border-color:rgba(71,181,0,0.22)}
+    .subStatusBox.warn{border-color:rgba(244,208,111,0.20)}
+    .subStatusBox.bad{border-color:rgba(255,112,112,0.22)}
+    .subStatusMain{font-weight:800}
+    .subStatusMeta{margin-top:6px;color:var(--muted);font-size:12px;display:flex;gap:10px;flex-wrap:wrap}
+    .subPlansGrid{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:10px;margin-top:12px}
+    @media (max-width: 920px){ .subPlansGrid{grid-template-columns:1fr} }
+    .planCard{position:relative;border-radius:14px;border:1px solid rgba(255,255,255,0.10);
+      background:radial-gradient(640px 160px at 10% 0%, rgba(71,181,0,0.18), transparent 62%),
+                 radial-gradient(640px 160px at 90% 100%, rgba(71,181,0,0.11), transparent 62%),
+                 linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015));
+      padding:12px;overflow:hidden;display:flex;flex-direction:column;min-height:268px;cursor:pointer;
+      box-shadow:0 14px 34px rgba(0,0,0,0.28);
+      transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease}
+    .planCard.disabled{opacity:0.92}
+    .planCard:hover{transform:translateY(-1px);border-color:rgba(71,181,0,0.22);box-shadow:0 18px 44px rgba(0,0,0,0.34)}
+    .planCard.disabled{filter:saturate(0.92)}
+    .planCard ul{flex:1}
+    .planCard .row{margin-top:auto}
+    .planCard .subBuyBtn{height:44px;border-radius:999px;font-weight:900}
+    #subTogglePlans{width:100%;height:44px;border-radius:999px;font-weight:900}
+    #subTogglePlans{background:linear-gradient(180deg, rgba(71,181,0,0.92), rgba(38,104,0,0.92));border:1px solid rgba(71,181,0,0.40);box-shadow:0 12px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.16);filter:saturate(1) brightness(1)}
+    #subTogglePlans:hover{filter:saturate(1.05) brightness(1.05)}
+    .planCard .subBuyBtn{background:linear-gradient(180deg, rgba(71,181,0,0.86), rgba(38,104,0,0.86));border:1px solid rgba(71,181,0,0.34);box-shadow:0 10px 18px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.14);filter:saturate(1) brightness(1)}
+    .planCard .subBuyBtn:hover{filter:saturate(1.05) brightness(1.05)}
+
+    .planTitle{font-weight:900}
+    .planPrice{font-size:24px;font-weight:950;margin-top:4px}
+    .planPrice small{font-size:12px;color:var(--muted);font-weight:700}
+    .planPill{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:11px;
+      border:1px solid rgba(255,255,255,0.08);color:var(--muted);background:rgba(0,0,0,0.15)}
+    .planCard ul{margin:10px 0 0 0;padding-left:18px;color:var(--muted);font-size:12px;line-height:1.35;list-style-position:outside}
+    .planCard ul li{margin:0 0 6px 0}
+    .planCard .row{margin-top:10px}
+    .planCard .btn{width:100%}
+
+
+/* ===== PATCH v2025-12-30: AI chat composer like ChatGPT + full height ===== */
+.section#aiAssist .aiChatShell{
+  display:flex;
+  flex-direction:column;
+  min-height:70vh;
+}
+.section#aiAssist .aiChatThread{
+  flex:1 1 auto;
+  max-height:none !important;
+  min-height:40vh;
+}
+.aiComposer{
+  display:flex;
+  gap:10px;
+  padding:10px 12px 12px;
+  border-top:1px solid #22282c;
+  align-items:flex-end;
+}
+.aiInputWrap{
+  position:relative;
+  flex:1;
+  display:flex;
+}
+.aiComposer textarea{
+  width:100%;
+  flex:1;
+  min-height:44px;
+  max-height:140px;
+  resize:none;
+  border-radius:16px;
+  background:#12181d;
+  color:#e9eef2;
+  border:1px solid #242b30;
+  padding:12px 86px 12px 14px; /* space for inside icons */
+  outline:none;
+  line-height:1.25;
+}
+.aiComposer textarea:focus{
+  border-color:#2f5b3b;
+  box-shadow:0 0 0 2px rgba(71,181,0,.12);
+}
+.aiInsideBtn{
+  position:absolute;
+  bottom:6px;
+  width:40px;
+  height:40px;
+  padding:0;
+  border-radius:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+#aiVoiceBtn.aiInsideBtn{ right:48px; }
+#aiChatSend.aiInsideBtn{ right:6px; }
+.aiSendBtn{
+  min-width:40px;
+  height:40px;
+  border-radius:12px;
+}
+/* ===== PATCH v2025-12-30: Analytics donut palette + hover ===== */
+.donutSeg{ transition:opacity .12s ease, stroke-width .12s ease; }
+.donutSeg:hover{ opacity:.92; stroke-width:4.2; }
+
+</style>
+<style>
+  /* Глобальный фон и контейнер */
+  html, body{
+    background:#050708;
+    color: var(--text);
+  }
+
+  body{
+    position:relative;
+    min-height:100vh;
+    background:
+      radial-gradient(1200px 800px at 10% 0%, rgba(71,181,0,0.20), transparent 60%),
+      radial-gradient(900px 700px at 90% 100%, rgba(71,181,0,0.14), transparent 62%),
+      radial-gradient(700px 600px at 50% 40%, rgba(71,181,0,0.06), transparent 65%),
+      linear-gradient(180deg, rgba(5,7,8,0.00) 0%, rgba(5,7,8,0.20) 55%, rgba(5,7,8,0.00) 100%),
+      #050708;
+    background-attachment:fixed;
+  }
+
+  /* Треугольники как в деке + лёгкий шум, чтобы не было “полосы” градиента */
+  body::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:0;
+    background-image:url('data:image/svg+xml,%3Csvg%20xmlns%3D%22http://www.w3.org/2000/svg%22%20viewBox%3D%220%200%202600%201500%22%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%2347b500%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M-115.0%2080.1%20L115.0%2080.1%20L0.0%20-80.1%20Z%22%20transform%3D%22translate%28546.2%201180.6%29%20rotate%28258.6%29%22%20stroke-width%3D%221.11%22%20stroke-opacity%3D%220.222%22/%3E%3Cpath%20d%3D%22M-70.2%2041.0%20L70.2%2041.0%20L0.0%20-41.0%20Z%22%20transform%3D%22translate%281258.8%20396.6%29%20rotate%28129.2%29%22%20stroke-width%3D%221.49%22%20stroke-opacity%3D%220.137%22/%3E%3Cpath%20d%3D%22M-99.8%2066.0%20L99.8%2066.0%20L0.0%20-66.0%20Z%22%20transform%3D%22translate%281763.1%201138.9%29%20rotate%2840.0%29%22%20stroke-width%3D%221.02%22%20stroke-opacity%3D%220.217%22/%3E%3Cpath%20d%3D%22M-82.2%2072.3%20L82.2%2072.3%20L0.0%20-72.3%20Z%22%20transform%3D%22translate%281829.3%20903.0%29%20rotate%28262.8%29%22%20stroke-width%3D%221.30%22%20stroke-opacity%3D%220.283%22/%3E%3Cpath%20d%3D%22M-78.9%2062.4%20L78.9%2062.4%20L0.0%20-62.4%20Z%22%20transform%3D%22translate%282348.4%20457.6%29%20rotate%28109.5%29%22%20stroke-width%3D%221.07%22%20stroke-opacity%3D%220.274%22/%3E%3Cpath%20d%3D%22M-99.7%2056.9%20L99.7%2056.9%20L0.0%20-56.9%20Z%22%20transform%3D%22translate%282232.0%201621.2%29%20rotate%2874.3%29%22%20stroke-width%3D%221.44%22%20stroke-opacity%3D%220.251%22/%3E%3Cpath%20d%3D%22M-43.1%2031.4%20L43.1%2031.4%20L0.0%20-31.4%20Z%22%20transform%3D%22translate%282612.3%20-119.0%29%20rotate%28355.8%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.155%22/%3E%3Cpath%20d%3D%22M-58.7%2041.9%20L58.7%2041.9%20L0.0%20-41.9%20Z%22%20transform%3D%22translate%281760.8%20995.9%29%20rotate%28294.7%29%22%20stroke-width%3D%221.55%22%20stroke-opacity%3D%220.296%22/%3E%3Cpath%20d%3D%22M-82.5%2068.3%20L82.5%2068.3%20L0.0%20-68.3%20Z%22%20transform%3D%22translate%281549.7%201035.2%29%20rotate%2857.1%29%22%20stroke-width%3D%220.91%22%20stroke-opacity%3D%220.185%22/%3E%3Cpath%20d%3D%22M-117.8%2070.9%20L117.8%2070.9%20L0.0%20-70.9%20Z%22%20transform%3D%22translate%281295.0%201410.2%29%20rotate%2849.8%29%22%20stroke-width%3D%221.17%22%20stroke-opacity%3D%220.152%22/%3E%3Cpath%20d%3D%22M-61.5%2037.7%20L61.5%2037.7%20L0.0%20-37.7%20Z%22%20transform%3D%22translate%28565.4%20-140.0%29%20rotate%28283.6%29%22%20stroke-width%3D%220.91%22%20stroke-opacity%3D%220.168%22/%3E%3Cpath%20d%3D%22M-115.0%2088.8%20L115.0%2088.8%20L0.0%20-88.8%20Z%22%20transform%3D%22translate%281006.5%20803.6%29%20rotate%28155.2%29%22%20stroke-width%3D%221.46%22%20stroke-opacity%3D%220.134%22/%3E%3Cpath%20d%3D%22M-59.7%2034.7%20L59.7%2034.7%20L0.0%20-34.7%20Z%22%20transform%3D%22translate%281300.2%20778.4%29%20rotate%28359.2%29%22%20stroke-width%3D%221.48%22%20stroke-opacity%3D%220.196%22/%3E%3Cpath%20d%3D%22M-56.0%2044.4%20L56.0%2044.4%20L0.0%20-44.4%20Z%22%20transform%3D%22translate%281677.4%2051.6%29%20rotate%28335.6%29%22%20stroke-width%3D%221.00%22%20stroke-opacity%3D%220.132%22/%3E%3Cpath%20d%3D%22M-103.5%2088.3%20L103.5%2088.3%20L0.0%20-88.3%20Z%22%20transform%3D%22translate%281049.0%201408.2%29%20rotate%28165.1%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.320%22/%3E%3Cpath%20d%3D%22M-90.1%2049.9%20L90.1%2049.9%20L0.0%20-49.9%20Z%22%20transform%3D%22translate%282616.9%20-47.2%29%20rotate%2863.8%29%22%20stroke-width%3D%221.24%22%20stroke-opacity%3D%220.128%22/%3E%3Cpath%20d%3D%22M-59.4%2044.6%20L59.4%2044.6%20L0.0%20-44.6%20Z%22%20transform%3D%22translate%282222.4%201623.6%29%20rotate%28288.7%29%22%20stroke-width%3D%221.19%22%20stroke-opacity%3D%220.112%22/%3E%3Cpath%20d%3D%22M-110.9%2069.0%20L110.9%2069.0%20L0.0%20-69.0%20Z%22%20transform%3D%22translate%282689.6%2011.0%29%20rotate%28333.3%29%22%20stroke-width%3D%221.48%22%20stroke-opacity%3D%220.262%22/%3E%3Cpath%20d%3D%22M-70.1%2047.3%20L70.1%2047.3%20L0.0%20-47.3%20Z%22%20transform%3D%22translate%282118.5%20719.3%29%20rotate%28331.1%29%22%20stroke-width%3D%221.26%22%20stroke-opacity%3D%220.125%22/%3E%3Cpath%20d%3D%22M-87.3%2050.4%20L87.3%2050.4%20L0.0%20-50.4%20Z%22%20transform%3D%22translate%28-71.9%201293.5%29%20rotate%28126.8%29%22%20stroke-width%3D%221.11%22%20stroke-opacity%3D%220.145%22/%3E%3Cpath%20d%3D%22M-104.3%2079.3%20L104.3%2079.3%20L0.0%20-79.3%20Z%22%20transform%3D%22translate%28311.1%20588.7%29%20rotate%28136.1%29%22%20stroke-width%3D%221.17%22%20stroke-opacity%3D%220.285%22/%3E%3Cpath%20d%3D%22M-87.8%2050.6%20L87.8%2050.6%20L0.0%20-50.6%20Z%22%20transform%3D%22translate%28-165.9%20299.8%29%20rotate%28191.1%29%22%20stroke-width%3D%221.19%22%20stroke-opacity%3D%220.264%22/%3E%3Cpath%20d%3D%22M-32.9%2021.0%20L32.9%2021.0%20L0.0%20-21.0%20Z%22%20transform%3D%22translate%28398.4%201586.2%29%20rotate%2863.1%29%22%20stroke-width%3D%221.00%22%20stroke-opacity%3D%220.198%22/%3E%3Cpath%20d%3D%22M-40.4%2029.3%20L40.4%2029.3%20L0.0%20-29.3%20Z%22%20transform%3D%22translate%281259.8%20931.1%29%20rotate%28155.7%29%22%20stroke-width%3D%221.37%22%20stroke-opacity%3D%220.228%22/%3E%3Cpath%20d%3D%22M-103.8%2068.8%20L103.8%2068.8%20L0.0%20-68.8%20Z%22%20transform%3D%22translate%2833.8%20374.3%29%20rotate%28128.8%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.126%22/%3E%3Cpath%20d%3D%22M-52.8%2029.3%20L52.8%2029.3%20L0.0%20-29.3%20Z%22%20transform%3D%22translate%28446.7%201455.9%29%20rotate%28252.9%29%22%20stroke-width%3D%221.03%22%20stroke-opacity%3D%220.139%22/%3E%3Cpath%20d%3D%22M-64.6%2054.7%20L64.6%2054.7%20L0.0%20-54.7%20Z%22%20transform%3D%22translate%28888.4%20860.8%29%20rotate%28165.7%29%22%20stroke-width%3D%221.47%22%20stroke-opacity%3D%220.162%22/%3E%3Cpath%20d%3D%22M-106.1%2078.3%20L106.1%2078.3%20L0.0%20-78.3%20Z%22%20transform%3D%22translate%28290.4%20529.5%29%20rotate%28194.9%29%22%20stroke-width%3D%221.42%22%20stroke-opacity%3D%220.135%22/%3E%3Cpath%20d%3D%22M-40.5%2026.6%20L40.5%2026.6%20L0.0%20-26.6%20Z%22%20transform%3D%22translate%282332.4%201311.7%29%20rotate%2858.4%29%22%20stroke-width%3D%220.95%22%20stroke-opacity%3D%220.312%22/%3E%3Cpath%20d%3D%22M-53.4%2035.5%20L53.4%2035.5%20L0.0%20-35.5%20Z%22%20transform%3D%22translate%281232.4%20790.1%29%20rotate%28292.5%29%22%20stroke-width%3D%221.34%22%20stroke-opacity%3D%220.143%22/%3E%3Cpath%20d%3D%22M-34.4%2025.8%20L34.4%2025.8%20L0.0%20-25.8%20Z%22%20transform%3D%22translate%28973.2%201302.7%29%20rotate%2898.6%29%22%20stroke-width%3D%221.01%22%20stroke-opacity%3D%220.300%22/%3E%3Cpath%20d%3D%22M-38.0%2032.6%20L38.0%2032.6%20L0.0%20-32.6%20Z%22%20transform%3D%22translate%28642.5%20-176.7%29%20rotate%28265.9%29%22%20stroke-width%3D%221.44%22%20stroke-opacity%3D%220.101%22/%3E%3Cpath%20d%3D%22M-63.8%2054.4%20L63.8%2054.4%20L0.0%20-54.4%20Z%22%20transform%3D%22translate%281530.2%20-87.3%29%20rotate%2812.7%29%22%20stroke-width%3D%221.38%22%20stroke-opacity%3D%220.306%22/%3E%3Cpath%20d%3D%22M-88.1%2064.6%20L88.1%2064.6%20L0.0%20-64.6%20Z%22%20transform%3D%22translate%282213.8%20-139.0%29%20rotate%28269.6%29%22%20stroke-width%3D%221.39%22%20stroke-opacity%3D%220.204%22/%3E%3Cpath%20d%3D%22M-63.6%2048.6%20L63.6%2048.6%20L0.0%20-48.6%20Z%22%20transform%3D%22translate%28893.8%20297.3%29%20rotate%28251.7%29%22%20stroke-width%3D%221.15%22%20stroke-opacity%3D%220.121%22/%3E%3Cpath%20d%3D%22M-116.3%2097.2%20L116.3%2097.2%20L0.0%20-97.2%20Z%22%20transform%3D%22translate%2877.7%201159.1%29%20rotate%28198.8%29%22%20stroke-width%3D%220.93%22%20stroke-opacity%3D%220.294%22/%3E%3Cpath%20d%3D%22M-98.8%2088.1%20L98.8%2088.1%20L0.0%20-88.1%20Z%22%20transform%3D%22translate%282016.5%20463.9%29%20rotate%28169.0%29%22%20stroke-width%3D%221.44%22%20stroke-opacity%3D%220.204%22/%3E%3Cpath%20d%3D%22M-34.0%2021.3%20L34.0%2021.3%20L0.0%20-21.3%20Z%22%20transform%3D%22translate%281579.7%20-124.4%29%20rotate%289.7%29%22%20stroke-width%3D%221.33%22%20stroke-opacity%3D%220.219%22/%3E%3Cpath%20d%3D%22M-46.9%2040.6%20L46.9%2040.6%20L0.0%20-40.6%20Z%22%20transform%3D%22translate%282309.9%20-130.0%29%20rotate%28271.4%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.163%22/%3E%3Cpath%20d%3D%22M-42.5%2033.2%20L42.5%2033.2%20L0.0%20-33.2%20Z%22%20transform%3D%22translate%28824.3%201499.7%29%20rotate%2810.8%29%22%20stroke-width%3D%221.34%22%20stroke-opacity%3D%220.249%22/%3E%3Cpath%20d%3D%22M-99.3%2071.9%20L99.3%2071.9%20L0.0%20-71.9%20Z%22%20transform%3D%22translate%282141.4%20361.1%29%20rotate%28246.0%29%22%20stroke-width%3D%221.13%22%20stroke-opacity%3D%220.180%22/%3E%3Cpath%20d%3D%22M-111.0%2081.2%20L111.0%2081.2%20L0.0%20-81.2%20Z%22%20transform%3D%22translate%28128.8%201189.9%29%20rotate%28349.6%29%22%20stroke-width%3D%221.31%22%20stroke-opacity%3D%220.169%22/%3E%3Cpath%20d%3D%22M-48.1%2039.3%20L48.1%2039.3%20L0.0%20-39.3%20Z%22%20transform%3D%22translate%28712.3%201130.6%29%20rotate%28104.7%29%22%20stroke-width%3D%221.18%22%20stroke-opacity%3D%220.126%22/%3E%3Cpath%20d%3D%22M-79.2%2068.5%20L79.2%2068.5%20L0.0%20-68.5%20Z%22%20transform%3D%22translate%281058.0%20712.4%29%20rotate%28179.4%29%22%20stroke-width%3D%221.33%22%20stroke-opacity%3D%220.285%22/%3E%3Cpath%20d%3D%22M-115.7%2089.6%20L115.7%2089.6%20L0.0%20-89.6%20Z%22%20transform%3D%22translate%28755.9%20251.3%29%20rotate%2838.9%29%22%20stroke-width%3D%221.58%22%20stroke-opacity%3D%220.258%22/%3E%3Cpath%20d%3D%22M-58.8%2048.1%20L58.8%2048.1%20L0.0%20-48.1%20Z%22%20transform%3D%22translate%281736.4%20896.7%29%20rotate%28167.3%29%22%20stroke-width%3D%221.04%22%20stroke-opacity%3D%220.245%22/%3E%3Cpath%20d%3D%22M-46.6%2027.3%20L46.6%2027.3%20L0.0%20-27.3%20Z%22%20transform%3D%22translate%28762.4%20903.6%29%20rotate%2853.4%29%22%20stroke-width%3D%221.28%22%20stroke-opacity%3D%220.162%22/%3E%3Cpath%20d%3D%22M-106.5%2062.5%20L106.5%2062.5%20L0.0%20-62.5%20Z%22%20transform%3D%22translate%281818.1%20409.5%29%20rotate%28350.5%29%22%20stroke-width%3D%221.49%22%20stroke-opacity%3D%220.259%22/%3E%3Cpath%20d%3D%22M-91.0%2051.4%20L91.0%2051.4%20L0.0%20-51.4%20Z%22%20transform%3D%22translate%281681.2%201097.1%29%20rotate%28248.8%29%22%20stroke-width%3D%220.93%22%20stroke-opacity%3D%220.318%22/%3E%3Cpath%20d%3D%22M-85.9%2072.4%20L85.9%2072.4%20L0.0%20-72.4%20Z%22%20transform%3D%22translate%282687.2%201628.9%29%20rotate%28220.2%29%22%20stroke-width%3D%221.38%22%20stroke-opacity%3D%220.309%22/%3E%3Cpath%20d%3D%22M-93.1%2067.1%20L93.1%2067.1%20L0.0%20-67.1%20Z%22%20transform%3D%22translate%281491.6%201210.8%29%20rotate%28195.7%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.259%22/%3E%3Cpath%20d%3D%22M-103.9%2082.8%20L103.9%2082.8%20L0.0%20-82.8%20Z%22%20transform%3D%22translate%28889.2%20737.2%29%20rotate%28283.3%29%22%20stroke-width%3D%221.08%22%20stroke-opacity%3D%220.145%22/%3E%3Cpath%20d%3D%22M-116.5%20103.1%20L116.5%20103.1%20L0.0%20-103.1%20Z%22%20transform%3D%22translate%282328.9%20726.9%29%20rotate%28260.6%29%22%20stroke-width%3D%221.20%22%20stroke-opacity%3D%220.110%22/%3E%3Cpath%20d%3D%22M-34.7%2021.0%20L34.7%2021.0%20L0.0%20-21.0%20Z%22%20transform%3D%22translate%282583.5%20891.6%29%20rotate%2855.3%29%22%20stroke-width%3D%221.23%22%20stroke-opacity%3D%220.277%22/%3E%3Cpath%20d%3D%22M-59.5%2034.2%20L59.5%2034.2%20L0.0%20-34.2%20Z%22%20transform%3D%22translate%281197.3%20199.0%29%20rotate%2885.8%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.220%22/%3E%3Cpath%20d%3D%22M-102.1%2060.0%20L102.1%2060.0%20L0.0%20-60.0%20Z%22%20transform%3D%22translate%281264.7%20774.0%29%20rotate%28294.4%29%22%20stroke-width%3D%221.00%22%20stroke-opacity%3D%220.238%22/%3E%3Cpath%20d%3D%22M-68.4%2052.3%20L68.4%2052.3%20L0.0%20-52.3%20Z%22%20transform%3D%22translate%28-51.6%201044.6%29%20rotate%28210.5%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.202%22/%3E%3Cpath%20d%3D%22M-49.1%2031.5%20L49.1%2031.5%20L0.0%20-31.5%20Z%22%20transform%3D%22translate%28-194.3%201380.2%29%20rotate%28179.9%29%22%20stroke-width%3D%221.45%22%20stroke-opacity%3D%220.114%22/%3E%3Cpath%20d%3D%22M-83.4%2072.8%20L83.4%2072.8%20L0.0%20-72.8%20Z%22%20transform%3D%22translate%28509.9%20332.2%29%20rotate%2855.5%29%22%20stroke-width%3D%221.10%22%20stroke-opacity%3D%220.279%22/%3E%3Cpath%20d%3D%22M-65.6%2048.6%20L65.6%2048.6%20L0.0%20-48.6%20Z%22%20transform%3D%22translate%281490.1%20-180.2%29%20rotate%2886.8%29%22%20stroke-width%3D%220.96%22%20stroke-opacity%3D%220.249%22/%3E%3Cpath%20d%3D%22M-87.0%2073.7%20L87.0%2073.7%20L0.0%20-73.7%20Z%22%20transform%3D%22translate%281933.5%201693.4%29%20rotate%28273.8%29%22%20stroke-width%3D%221.35%22%20stroke-opacity%3D%220.309%22/%3E%3Cpath%20d%3D%22M-86.2%2072.5%20L86.2%2072.5%20L0.0%20-72.5%20Z%22%20transform%3D%22translate%281470.1%20476.8%29%20rotate%28189.0%29%22%20stroke-width%3D%221.48%22%20stroke-opacity%3D%220.291%22/%3E%3Cpath%20d%3D%22M-90.0%2073.1%20L90.0%2073.1%20L0.0%20-73.1%20Z%22%20transform%3D%22translate%281371.4%201541.2%29%20rotate%28290.3%29%22%20stroke-width%3D%220.96%22%20stroke-opacity%3D%220.275%22/%3E%3Cpath%20d%3D%22M-77.3%2054.7%20L77.3%2054.7%20L0.0%20-54.7%20Z%22%20transform%3D%22translate%281113.3%2036.5%29%20rotate%2865.8%29%22%20stroke-width%3D%221.49%22%20stroke-opacity%3D%220.254%22/%3E%3Cpath%20d%3D%22M-52.4%2035.5%20L52.4%2035.5%20L0.0%20-35.5%20Z%22%20transform%3D%22translate%28140.1%201581.4%29%20rotate%28132.6%29%22%20stroke-width%3D%220.95%22%20stroke-opacity%3D%220.117%22/%3E%3Cpath%20d%3D%22M-31.8%2021.3%20L31.8%2021.3%20L0.0%20-21.3%20Z%22%20transform%3D%22translate%282396.6%201533.4%29%20rotate%2892.6%29%22%20stroke-width%3D%221.10%22%20stroke-opacity%3D%220.288%22/%3E%3Cpath%20d%3D%22M-42.5%2030.1%20L42.5%2030.1%20L0.0%20-30.1%20Z%22%20transform%3D%22translate%28476.8%20189.6%29%20rotate%2893.6%29%22%20stroke-width%3D%221.13%22%20stroke-opacity%3D%220.219%22/%3E%3Cpath%20d%3D%22M-55.9%2049.8%20L55.9%2049.8%20L0.0%20-49.8%20Z%22%20transform%3D%22translate%2820.1%20-25.0%29%20rotate%28328.5%29%22%20stroke-width%3D%221.56%22%20stroke-opacity%3D%220.190%22/%3E%3Cpath%20d%3D%22M-96.0%2064.5%20L96.0%2064.5%20L0.0%20-64.5%20Z%22%20transform%3D%22translate%28731.0%20216.0%29%20rotate%2820.7%29%22%20stroke-width%3D%221.52%22%20stroke-opacity%3D%220.178%22/%3E%3Cpath%20d%3D%22M-37.6%2021.2%20L37.6%2021.2%20L0.0%20-21.2%20Z%22%20transform%3D%22translate%281182.5%20164.1%29%20rotate%28132.3%29%22%20stroke-width%3D%220.94%22%20stroke-opacity%3D%220.311%22/%3E%3Cpath%20d%3D%22M-115.6%2095.2%20L115.6%2095.2%20L0.0%20-95.2%20Z%22%20transform%3D%22translate%28458.4%20337.8%29%20rotate%28224.8%29%22%20stroke-width%3D%221.01%22%20stroke-opacity%3D%220.248%22/%3E%3Cpath%20d%3D%22M-110.4%2087.3%20L110.4%2087.3%20L0.0%20-87.3%20Z%22%20transform%3D%22translate%28-36.0%20997.4%29%20rotate%2862.5%29%22%20stroke-width%3D%221.43%22%20stroke-opacity%3D%220.125%22/%3E%3Cpath%20d%3D%22M-117.5%2071.3%20L117.5%2071.3%20L0.0%20-71.3%20Z%22%20transform%3D%22translate%28565.0%201539.9%29%20rotate%28341.9%29%22%20stroke-width%3D%221.08%22%20stroke-opacity%3D%220.297%22/%3E%3Cpath%20d%3D%22M-48.9%2035.5%20L48.9%2035.5%20L0.0%20-35.5%20Z%22%20transform%3D%22translate%28681.7%20439.2%29%20rotate%2831.2%29%22%20stroke-width%3D%221.22%22%20stroke-opacity%3D%220.228%22/%3E%3Cpath%20d%3D%22M-85.2%2062.3%20L85.2%2062.3%20L0.0%20-62.3%20Z%22%20transform%3D%22translate%281746.4%201563.8%29%20rotate%28188.2%29%22%20stroke-width%3D%221.29%22%20stroke-opacity%3D%220.289%22/%3E%3Cpath%20d%3D%22M-55.9%2049.2%20L55.9%2049.2%20L0.0%20-49.2%20Z%22%20transform%3D%22translate%281863.9%2041.0%29%20rotate%2859.0%29%22%20stroke-width%3D%221.28%22%20stroke-opacity%3D%220.254%22/%3E%3Cpath%20d%3D%22M-80.3%2058.0%20L80.3%2058.0%20L0.0%20-58.0%20Z%22%20transform%3D%22translate%28-6.9%20-147.5%29%20rotate%28302.7%29%22%20stroke-width%3D%221.51%22%20stroke-opacity%3D%220.176%22/%3E%3Cpath%20d%3D%22M-109.7%2085.0%20L109.7%2085.0%20L0.0%20-85.0%20Z%22%20transform%3D%22translate%28191.7%201659.4%29%20rotate%28106.5%29%22%20stroke-width%3D%221.17%22%20stroke-opacity%3D%220.177%22/%3E%3Cpath%20d%3D%22M-31.3%2018.8%20L31.3%2018.8%20L0.0%20-18.8%20Z%22%20transform%3D%22translate%282693.5%20294.7%29%20rotate%28262.3%29%22%20stroke-width%3D%221.25%22%20stroke-opacity%3D%220.133%22/%3E%3Cpath%20d%3D%22M-115.9%2082.8%20L115.9%2082.8%20L0.0%20-82.8%20Z%22%20transform%3D%22translate%28-146.5%201287.9%29%20rotate%28351.7%29%22%20stroke-width%3D%221.16%22%20stroke-opacity%3D%220.194%22/%3E%3Cpath%20d%3D%22M-119.5%2079.7%20L119.5%2079.7%20L0.0%20-79.7%20Z%22%20transform%3D%22translate%282485.2%201322.3%29%20rotate%28257.1%29%22%20stroke-width%3D%221.24%22%20stroke-opacity%3D%220.163%22/%3E%3Cpath%20d%3D%22M-99.2%2083.6%20L99.2%2083.6%20L0.0%20-83.6%20Z%22%20transform%3D%22translate%28254.9%20537.1%29%20rotate%28173.8%29%22%20stroke-width%3D%221.42%22%20stroke-opacity%3D%220.270%22/%3E%3Cpath%20d%3D%22M-58.0%2048.7%20L58.0%2048.7%20L0.0%20-48.7%20Z%22%20transform%3D%22translate%281988.0%2061.6%29%20rotate%2884.5%29%22%20stroke-width%3D%221.26%22%20stroke-opacity%3D%220.178%22/%3E%3Cpath%20d%3D%22M-78.2%2047.0%20L78.2%2047.0%20L0.0%20-47.0%20Z%22%20transform%3D%22translate%281237.8%201646.1%29%20rotate%28281.6%29%22%20stroke-width%3D%221.56%22%20stroke-opacity%3D%220.142%22/%3E%3Cpath%20d%3D%22M-65.2%2039.9%20L65.2%2039.9%20L0.0%20-39.9%20Z%22%20transform%3D%22translate%282642.9%201031.8%29%20rotate%2817.5%29%22%20stroke-width%3D%221.56%22%20stroke-opacity%3D%220.134%22/%3E%3Cpath%20d%3D%22M-90.1%2076.1%20L90.1%2076.1%20L0.0%20-76.1%20Z%22%20transform%3D%22translate%281943.5%20195.6%29%20rotate%28113.2%29%22%20stroke-width%3D%221.10%22%20stroke-opacity%3D%220.264%22/%3E%3Cpath%20d%3D%22M-67.4%2053.9%20L67.4%2053.9%20L0.0%20-53.9%20Z%22%20transform%3D%22translate%281722.7%201213.7%29%20rotate%2888.9%29%22%20stroke-width%3D%220.92%22%20stroke-opacity%3D%220.251%22/%3E%3Cpath%20d%3D%22M-56.3%2049.3%20L56.3%2049.3%20L0.0%20-49.3%20Z%22%20transform%3D%22translate%28610.4%20512.9%29%20rotate%28123.6%29%22%20stroke-width%3D%221.25%22%20stroke-opacity%3D%220.287%22/%3E%3Cpath%20d%3D%22M-118.4%2085.5%20L118.4%2085.5%20L0.0%20-85.5%20Z%22%20transform%3D%22translate%282064.2%201579.3%29%20rotate%28179.2%29%22%20stroke-width%3D%221.21%22%20stroke-opacity%3D%220.218%22/%3E%3Cpath%20d%3D%22M-59.9%2039.5%20L59.9%2039.5%20L0.0%20-39.5%20Z%22%20transform%3D%22translate%281565.0%20615.9%29%20rotate%2828.1%29%22%20stroke-width%3D%221.39%22%20stroke-opacity%3D%220.165%22/%3E%3Cpath%20d%3D%22M-98.9%2070.8%20L98.9%2070.8%20L0.0%20-70.8%20Z%22%20transform%3D%22translate%281690.0%20111.8%29%20rotate%28349.9%29%22%20stroke-width%3D%221.00%22%20stroke-opacity%3D%220.212%22/%3E%3Cpath%20d%3D%22M-59.4%2033.8%20L59.4%2033.8%20L0.0%20-33.8%20Z%22%20transform%3D%22translate%28605.8%20446.7%29%20rotate%2866.4%29%22%20stroke-width%3D%221.21%22%20stroke-opacity%3D%220.291%22/%3E%3Cpath%20d%3D%22M-81.0%2071.2%20L81.0%2071.2%20L0.0%20-71.2%20Z%22%20transform%3D%22translate%28720.6%20798.8%29%20rotate%28236.8%29%22%20stroke-width%3D%221.46%22%20stroke-opacity%3D%220.174%22/%3E%3Cpath%20d%3D%22M-59.0%2038.0%20L59.0%2038.0%20L0.0%20-38.0%20Z%22%20transform%3D%22translate%28252.5%2097.5%29%20rotate%28262.4%29%22%20stroke-width%3D%221.57%22%20stroke-opacity%3D%220.207%22/%3E%3Cpath%20d%3D%22M-74.4%2066.4%20L74.4%2066.4%20L0.0%20-66.4%20Z%22%20transform%3D%22translate%28-146.7%20-152.5%29%20rotate%28153.2%29%22%20stroke-width%3D%221.18%22%20stroke-opacity%3D%220.197%22/%3E%3Cpath%20d%3D%22M-39.5%2022.8%20L39.5%2022.8%20L0.0%20-22.8%20Z%22%20transform%3D%22translate%282653.5%20969.0%29%20rotate%28198.7%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.258%22/%3E%3Cpath%20d%3D%22M-109.3%2061.0%20L109.3%2061.0%20L0.0%20-61.0%20Z%22%20transform%3D%22translate%282006.7%20704.9%29%20rotate%28216.2%29%22%20stroke-width%3D%221.10%22%20stroke-opacity%3D%220.232%22/%3E%3Cpath%20d%3D%22M-46.6%2027.5%20L46.6%2027.5%20L0.0%20-27.5%20Z%22%20transform%3D%22translate%281999.0%201362.8%29%20rotate%28194.7%29%22%20stroke-width%3D%221.58%22%20stroke-opacity%3D%220.205%22/%3E%3Cpath%20d%3D%22M-54.8%2031.8%20L54.8%2031.8%20L0.0%20-31.8%20Z%22%20transform%3D%22translate%28-87.9%20784.1%29%20rotate%28200.7%29%22%20stroke-width%3D%221.11%22%20stroke-opacity%3D%220.101%22/%3E%3Cpath%20d%3D%22M-55.9%2035.9%20L55.9%2035.9%20L0.0%20-35.9%20Z%22%20transform%3D%22translate%282413.2%20271.1%29%20rotate%28287.6%29%22%20stroke-width%3D%221.41%22%20stroke-opacity%3D%220.299%22/%3E%3Cpath%20d%3D%22M-49.2%2027.2%20L49.2%2027.2%20L0.0%20-27.2%20Z%22%20transform%3D%22translate%282691.9%201207.0%29%20rotate%28176.8%29%22%20stroke-width%3D%221.15%22%20stroke-opacity%3D%220.197%22/%3E%3Cpath%20d%3D%22M-79.9%2050.1%20L79.9%2050.1%20L0.0%20-50.1%20Z%22%20transform%3D%22translate%28620.9%20842.0%29%20rotate%28266.9%29%22%20stroke-width%3D%221.60%22%20stroke-opacity%3D%220.154%22/%3E%3Cpath%20d%3D%22M-98.3%2081.3%20L98.3%2081.3%20L0.0%20-81.3%20Z%22%20transform%3D%22translate%281031.4%201645.2%29%20rotate%2897.2%29%22%20stroke-width%3D%221.40%22%20stroke-opacity%3D%220.190%22/%3E%3Cpath%20d%3D%22M-112.4%2091.0%20L112.4%2091.0%20L0.0%20-91.0%20Z%22%20transform%3D%22translate%28361.3%2073.3%29%20rotate%28241.5%29%22%20stroke-width%3D%221.01%22%20stroke-opacity%3D%220.264%22/%3E%3Cpath%20d%3D%22M-33.2%2025.8%20L33.2%2025.8%20L0.0%20-25.8%20Z%22%20transform%3D%22translate%28116.0%201577.4%29%20rotate%28251.9%29%22%20stroke-width%3D%221.46%22%20stroke-opacity%3D%220.300%22/%3E%3Cpath%20d%3D%22M-119.7%2083.6%20L119.7%2083.6%20L0.0%20-83.6%20Z%22%20transform%3D%22translate%2817.5%201488.4%29%20rotate%28203.5%29%22%20stroke-width%3D%221.58%22%20stroke-opacity%3D%220.245%22/%3E%3Cpath%20d%3D%22M-54.6%2043.0%20L54.6%2043.0%20L0.0%20-43.0%20Z%22%20transform%3D%22translate%28474.5%20183.5%29%20rotate%28288.2%29%22%20stroke-width%3D%221.44%22%20stroke-opacity%3D%220.240%22/%3E%3Cpath%20d%3D%22M-95.6%2075.2%20L95.6%2075.2%20L0.0%20-75.2%20Z%22%20transform%3D%22translate%28672.3%20601.5%29%20rotate%28244.7%29%22%20stroke-width%3D%221.05%22%20stroke-opacity%3D%220.162%22/%3E%3Cpath%20d%3D%22M-115.1%2088.7%20L115.1%2088.7%20L0.0%20-88.7%20Z%22%20transform%3D%22translate%28880.6%201436.2%29%20rotate%28192.1%29%22%20stroke-width%3D%221.54%22%20stroke-opacity%3D%220.155%22/%3E%3Cpath%20d%3D%22M-95.0%2053.1%20L95.0%2053.1%20L0.0%20-53.1%20Z%22%20transform%3D%22translate%281043.9%201053.0%29%20rotate%28179.9%29%22%20stroke-width%3D%221.53%22%20stroke-opacity%3D%220.150%22/%3E%3Cpath%20d%3D%22M-97.4%2075.2%20L97.4%2075.2%20L0.0%20-75.2%20Z%22%20transform%3D%22translate%281643.6%201571.7%29%20rotate%2884.9%29%22%20stroke-width%3D%220.94%22%20stroke-opacity%3D%220.279%22/%3E%3Cpath%20d%3D%22M-83.2%2064.1%20L83.2%2064.1%20L0.0%20-64.1%20Z%22%20transform%3D%22translate%28365.6%20409.7%29%20rotate%28296.2%29%22%20stroke-width%3D%221.12%22%20stroke-opacity%3D%220.119%22/%3E%3Cpath%20d%3D%22M-76.2%2062.1%20L76.2%2062.1%20L0.0%20-62.1%20Z%22%20transform%3D%22translate%2820.5%20885.0%29%20rotate%28345.9%29%22%20stroke-width%3D%221.36%22%20stroke-opacity%3D%220.137%22/%3E%3Cpath%20d%3D%22M-94.6%2083.0%20L94.6%2083.0%20L0.0%20-83.0%20Z%22%20transform%3D%22translate%282226.8%20-92.2%29%20rotate%28317.1%29%22%20stroke-width%3D%221.35%22%20stroke-opacity%3D%220.131%22/%3E%3Cpath%20d%3D%22M-76.5%2052.6%20L76.5%2052.6%20L0.0%20-52.6%20Z%22%20transform%3D%22translate%282430.4%201336.6%29%20rotate%28155.1%29%22%20stroke-width%3D%221.40%22%20stroke-opacity%3D%220.309%22/%3E%3Cpath%20d%3D%22M-98.4%2071.8%20L98.4%2071.8%20L0.0%20-71.8%20Z%22%20transform%3D%22translate%282590.1%201631.7%29%20rotate%28349.6%29%22%20stroke-width%3D%220.92%22%20stroke-opacity%3D%220.272%22/%3E%3Cpath%20d%3D%22M-33.7%2030.1%20L33.7%2030.1%20L0.0%20-30.1%20Z%22%20transform%3D%22translate%28164.9%20766.2%29%20rotate%28260.7%29%22%20stroke-width%3D%220.96%22%20stroke-opacity%3D%220.119%22/%3E%3Cpath%20d%3D%22M-95.5%2063.2%20L95.5%2063.2%20L0.0%20-63.2%20Z%22%20transform%3D%22translate%28177.0%20617.8%29%20rotate%2810.3%29%22%20stroke-width%3D%220.96%22%20stroke-opacity%3D%220.121%22/%3E%3Cpath%20d%3D%22M-110.5%2077.7%20L110.5%2077.7%20L0.0%20-77.7%20Z%22%20transform%3D%22translate%282080.3%20798.2%29%20rotate%28154.3%29%22%20stroke-width%3D%221.31%22%20stroke-opacity%3D%220.121%22/%3E%3Cpath%20d%3D%22M-96.8%2061.7%20L96.8%2061.7%20L0.0%20-61.7%20Z%22%20transform%3D%22translate%28512.3%201199.6%29%20rotate%28137.9%29%22%20stroke-width%3D%221.05%22%20stroke-opacity%3D%220.125%22/%3E%3Cpath%20d%3D%22M-75.1%2049.5%20L75.1%2049.5%20L0.0%20-49.5%20Z%22%20transform%3D%22translate%281585.0%201440.2%29%20rotate%2835.6%29%22%20stroke-width%3D%221.51%22%20stroke-opacity%3D%220.303%22/%3E%3Cpath%20d%3D%22M-104.5%2079.5%20L104.5%2079.5%20L0.0%20-79.5%20Z%22%20transform%3D%22translate%281791.0%201227.9%29%20rotate%28316.2%29%22%20stroke-width%3D%221.09%22%20stroke-opacity%3D%220.121%22/%3E%3Cpath%20d%3D%22M-48.7%2027.4%20L48.7%2027.4%20L0.0%20-27.4%20Z%22%20transform%3D%22translate%281361.4%201466.8%29%20rotate%28355.6%29%22%20stroke-width%3D%221.30%22%20stroke-opacity%3D%220.156%22/%3E%3Cpath%20d%3D%22M-117.3%2090.4%20L117.3%2090.4%20L0.0%20-90.4%20Z%22%20transform%3D%22translate%282747.4%201395.8%29%20rotate%28328.1%29%22%20stroke-width%3D%221.19%22%20stroke-opacity%3D%220.306%22/%3E%3Cpath%20d%3D%22M-72.2%2053.9%20L72.2%2053.9%20L0.0%20-53.9%20Z%22%20transform%3D%22translate%281155.1%201130.6%29%20rotate%28142.9%29%22%20stroke-width%3D%221.28%22%20stroke-opacity%3D%220.185%22/%3E%3Cpath%20d%3D%22M-62.9%2036.6%20L62.9%2036.6%20L0.0%20-36.6%20Z%22%20transform%3D%22translate%28-61.4%201310.7%29%20rotate%28271.0%29%22%20stroke-width%3D%221.35%22%20stroke-opacity%3D%220.289%22/%3E%3Cpath%20d%3D%22M-108.4%2072.9%20L108.4%2072.9%20L0.0%20-72.9%20Z%22%20transform%3D%22translate%281683.0%201092.5%29%20rotate%28198.2%29%22%20stroke-width%3D%221.24%22%20stroke-opacity%3D%220.170%22/%3E%3Cpath%20d%3D%22M-57.4%2045.6%20L57.4%2045.6%20L0.0%20-45.6%20Z%22%20transform%3D%22translate%281760.9%20166.4%29%20rotate%28163.9%29%22%20stroke-width%3D%221.08%22%20stroke-opacity%3D%220.294%22/%3E%3Cpath%20d%3D%22M-49.9%2036.9%20L49.9%2036.9%20L0.0%20-36.9%20Z%22%20transform%3D%22translate%281534.4%20-130.3%29%20rotate%28270.9%29%22%20stroke-width%3D%221.02%22%20stroke-opacity%3D%220.300%22/%3E%3Cpath%20d%3D%22M-76.4%2053.4%20L76.4%2053.4%20L0.0%20-53.4%20Z%22%20transform%3D%22translate%28403.6%20981.6%29%20rotate%2867.9%29%22%20stroke-width%3D%221.39%22%20stroke-opacity%3D%220.151%22/%3E%3Cpath%20d%3D%22M-90.3%2080.3%20L90.3%2080.3%20L0.0%20-80.3%20Z%22%20transform%3D%22translate%28865.9%20-14.6%29%20rotate%2813.3%29%22%20stroke-width%3D%221.36%22%20stroke-opacity%3D%220.150%22/%3E%3Cpath%20d%3D%22M-114.2%2095.3%20L114.2%2095.3%20L0.0%20-95.3%20Z%22%20transform%3D%22translate%281506.6%20166.5%29%20rotate%28110.9%29%22%20stroke-width%3D%221.45%22%20stroke-opacity%3D%220.231%22/%3E%3Cpath%20d%3D%22M-107.1%2090.0%20L107.1%2090.0%20L0.0%20-90.0%20Z%22%20transform%3D%22translate%28815.7%201218.4%29%20rotate%2876.6%29%22%20stroke-width%3D%221.09%22%20stroke-opacity%3D%220.313%22/%3E%3Cpath%20d%3D%22M-101.2%2063.7%20L101.2%2063.7%20L0.0%20-63.7%20Z%22%20transform%3D%22translate%281986.3%20868.1%29%20rotate%289.6%29%22%20stroke-width%3D%221.46%22%20stroke-opacity%3D%220.125%22/%3E%3Cpath%20d%3D%22M-104.1%2086.2%20L104.1%2086.2%20L0.0%20-86.2%20Z%22%20transform%3D%22translate%2840.6%201075.2%29%20rotate%28329.1%29%22%20stroke-width%3D%221.37%22%20stroke-opacity%3D%220.139%22/%3E%3Cpath%20d%3D%22M-111.2%2082.7%20L111.2%2082.7%20L0.0%20-82.7%20Z%22%20transform%3D%22translate%282762.4%20652.8%29%20rotate%28203.4%29%22%20stroke-width%3D%221.48%22%20stroke-opacity%3D%220.320%22/%3E%3Cpath%20d%3D%22M-49.5%2039.1%20L49.5%2039.1%20L0.0%20-39.1%20Z%22%20transform%3D%22translate%28150.6%201575.5%29%20rotate%2827.8%29%22%20stroke-width%3D%221.06%22%20stroke-opacity%3D%220.223%22/%3E%3Cpath%20d%3D%22M-102.2%2072.1%20L102.2%2072.1%20L0.0%20-72.1%20Z%22%20transform%3D%22translate%281606.2%20576.6%29%20rotate%28332.7%29%22%20stroke-width%3D%221.20%22%20stroke-opacity%3D%220.165%22/%3E%3Cpath%20d%3D%22M-81.0%2059.6%20L81.0%2059.6%20L0.0%20-59.6%20Z%22%20transform%3D%22translate%282030.6%201476.6%29%20rotate%28205.7%29%22%20stroke-width%3D%221.05%22%20stroke-opacity%3D%220.208%22/%3E%3Cpath%20d%3D%22M-58.2%2047.2%20L58.2%2047.2%20L0.0%20-47.2%20Z%22%20transform%3D%22translate%282523.0%201133.0%29%20rotate%28317.9%29%22%20stroke-width%3D%221.42%22%20stroke-opacity%3D%220.222%22/%3E%3Cpath%20d%3D%22M-19.5%2015.1%20L19.5%2015.1%20L0.0%20-15.1%20Z%22%20transform%3D%22translate%281053.8%20264.1%29%20rotate%28169.9%29%22%20stroke-width%3D%220.81%22%20stroke-opacity%3D%220.193%22/%3E%3Cpath%20d%3D%22M-23.3%2015.6%20L23.3%2015.6%20L0.0%20-15.6%20Z%22%20transform%3D%22translate%28553.3%2051.9%29%20rotate%28216.3%29%22%20stroke-width%3D%220.71%22%20stroke-opacity%3D%220.184%22/%3E%3Cpath%20d%3D%22M-18.5%2015.2%20L18.5%2015.2%20L0.0%20-15.2%20Z%22%20transform%3D%22translate%282577.7%201263.6%29%20rotate%2895.9%29%22%20stroke-width%3D%221.19%22%20stroke-opacity%3D%220.083%22/%3E%3Cpath%20d%3D%22M-9.7%206.7%20L9.7%206.7%20L0.0%20-6.7%20Z%22%20transform%3D%22translate%28324.4%20582.7%29%20rotate%28266.3%29%22%20stroke-width%3D%220.64%22%20stroke-opacity%3D%220.142%22/%3E%3Cpath%20d%3D%22M-12.3%206.8%20L12.3%206.8%20L0.0%20-6.8%20Z%22%20transform%3D%22translate%28196.9%201400.7%29%20rotate%28264.7%29%22%20stroke-width%3D%220.72%22%20stroke-opacity%3D%220.095%22/%3E%3Cpath%20d%3D%22M-12.0%206.9%20L12.0%206.9%20L0.0%20-6.9%20Z%22%20transform%3D%22translate%281995.4%2016.6%29%20rotate%28260.7%29%22%20stroke-width%3D%220.70%22%20stroke-opacity%3D%220.217%22/%3E%3Cpath%20d%3D%22M-26.0%2016.1%20L26.0%2016.1%20L0.0%20-16.1%20Z%22%20transform%3D%22translate%28672.4%20122.2%29%20rotate%28308.3%29%22%20stroke-width%3D%221.04%22%20stroke-opacity%3D%220.095%22/%3E%3Cpath%20d%3D%22M-23.0%2020.2%20L23.0%2020.2%20L0.0%20-20.2%20Z%22%20transform%3D%22translate%281932.2%20488.7%29%20rotate%28197.4%29%22%20stroke-width%3D%220.85%22%20stroke-opacity%3D%220.157%22/%3E%3Cpath%20d%3D%22M-14.4%2010.6%20L14.4%2010.6%20L0.0%20-10.6%20Z%22%20transform%3D%22translate%281017.8%20747.0%29%20rotate%2852.3%29%22%20stroke-width%3D%220.77%22%20stroke-opacity%3D%220.087%22/%3E%3Cpath%20d%3D%22M-9.6%206.1%20L9.6%206.1%20L0.0%20-6.1%20Z%22%20transform%3D%22translate%28733.4%20667.3%29%20rotate%28181.1%29%22%20stroke-width%3D%220.93%22%20stroke-opacity%3D%220.089%22/%3E%3Cpath%20d%3D%22M-28.8%2024.9%20L28.8%2024.9%20L0.0%20-24.9%20Z%22%20transform%3D%22translate%281047.2%201248.3%29%20rotate%2842.1%29%22%20stroke-width%3D%220.87%22%20stroke-opacity%3D%220.169%22/%3E%3Cpath%20d%3D%22M-22.7%2017.3%20L22.7%2017.3%20L0.0%20-17.3%20Z%22%20transform%3D%22translate%28149.8%20509.0%29%20rotate%2869.3%29%22%20stroke-width%3D%221.03%22%20stroke-opacity%3D%220.210%22/%3E%3Cpath%20d%3D%22M-14.1%2011.1%20L14.1%2011.1%20L0.0%20-11.1%20Z%22%20transform%3D%22translate%28484.2%20477.0%29%20rotate%28199.7%29%22%20stroke-width%3D%220.93%22%20stroke-opacity%3D%220.097%22/%3E%3Cpath%20d%3D%22M-19.0%2017.0%20L19.0%2017.0%20L0.0%20-17.0%20Z%22%20transform%3D%22translate%281513.1%20651.7%29%20rotate%28291.4%29%22%20stroke-width%3D%220.65%22%20stroke-opacity%3D%220.122%22/%3E%3Cpath%20d%3D%22M-17.9%2014.5%20L17.9%2014.5%20L0.0%20-14.5%20Z%22%20transform%3D%22translate%282288.4%20570.7%29%20rotate%28298.8%29%22%20stroke-width%3D%220.61%22%20stroke-opacity%3D%220.195%22/%3E%3Cpath%20d%3D%22M-14.1%2011.6%20L14.1%2011.6%20L0.0%20-11.6%20Z%22%20transform%3D%22translate%28449.6%20782.1%29%20rotate%28349.9%29%22%20stroke-width%3D%220.63%22%20stroke-opacity%3D%220.087%22/%3E%3Cpath%20d%3D%22M-21.4%2018.4%20L21.4%2018.4%20L0.0%20-18.4%20Z%22%20transform%3D%22translate%281931.2%201247.9%29%20rotate%2828.9%29%22%20stroke-width%3D%220.61%22%20stroke-opacity%3D%220.205%22/%3E%3Cpath%20d%3D%22M-10.4%206.3%20L10.4%206.3%20L0.0%20-6.3%20Z%22%20transform%3D%22translate%281766.5%20441.4%29%20rotate%2855.2%29%22%20stroke-width%3D%221.02%22%20stroke-opacity%3D%220.095%22/%3E%3Cpath%20d%3D%22M-16.8%2013.5%20L16.8%2013.5%20L0.0%20-13.5%20Z%22%20transform%3D%22translate%28154.4%20736.2%29%20rotate%2835.8%29%22%20stroke-width%3D%221.07%22%20stroke-opacity%3D%220.102%22/%3E%3Cpath%20d%3D%22M-12.9%2010.4%20L12.9%2010.4%20L0.0%20-10.4%20Z%22%20transform%3D%22translate%28557.2%20736.4%29%20rotate%2816.7%29%22%20stroke-width%3D%220.83%22%20stroke-opacity%3D%220.129%22/%3E%3Cpath%20d%3D%22M-12.4%2010.4%20L12.4%2010.4%20L0.0%20-10.4%20Z%22%20transform%3D%22translate%281588.2%201188.6%29%20rotate%28242.9%29%22%20stroke-width%3D%220.94%22%20stroke-opacity%3D%220.205%22/%3E%3Cpath%20d%3D%22M-19.0%2014.8%20L19.0%2014.8%20L0.0%20-14.8%20Z%22%20transform%3D%22translate%28102.9%20986.8%29%20rotate%28255.7%29%22%20stroke-width%3D%220.73%22%20stroke-opacity%3D%220.061%22/%3E%3Cpath%20d%3D%22M-22.4%2014.9%20L22.4%2014.9%20L0.0%20-14.9%20Z%22%20transform%3D%22translate%282386.1%20144.3%29%20rotate%2814.0%29%22%20stroke-width%3D%220.75%22%20stroke-opacity%3D%220.137%22/%3E%3Cpath%20d%3D%22M-26.6%2015.5%20L26.6%2015.5%20L0.0%20-15.5%20Z%22%20transform%3D%22translate%28439.3%20566.2%29%20rotate%2853.9%29%22%20stroke-width%3D%221.18%22%20stroke-opacity%3D%220.176%22/%3E%3Cpath%20d%3D%22M-24.2%2020.5%20L24.2%2020.5%20L0.0%20-20.5%20Z%22%20transform%3D%22translate%281416.9%20703.1%29%20rotate%28276.5%29%22%20stroke-width%3D%220.82%22%20stroke-opacity%3D%220.149%22/%3E%3Cpath%20d%3D%22M-22.2%2019.6%20L22.2%2019.6%20L0.0%20-19.6%20Z%22%20transform%3D%22translate%281075.9%201443.5%29%20rotate%28297.7%29%22%20stroke-width%3D%220.87%22%20stroke-opacity%3D%220.117%22/%3E%3Cpath%20d%3D%22M-18.6%2014.4%20L18.6%2014.4%20L0.0%20-14.4%20Z%22%20transform%3D%22translate%28275.5%201035.2%29%20rotate%2827.7%29%22%20stroke-width%3D%220.95%22%20stroke-opacity%3D%220.104%22/%3E%3Cpath%20d%3D%22M-19.4%2011.1%20L19.4%2011.1%20L0.0%20-11.1%20Z%22%20transform%3D%22translate%281909.1%201306.6%29%20rotate%283.8%29%22%20stroke-width%3D%221.07%22%20stroke-opacity%3D%220.159%22/%3E%3Cpath%20d%3D%22M-24.7%2017.1%20L24.7%2017.1%20L0.0%20-17.1%20Z%22%20transform%3D%22translate%282138.5%201114.5%29%20rotate%28114.2%29%22%20stroke-width%3D%221.17%22%20stroke-opacity%3D%220.097%22/%3E%3Cpath%20d%3D%22M-13.1%2010.8%20L13.1%2010.8%20L0.0%20-10.8%20Z%22%20transform%3D%22translate%28481.8%20457.3%29%20rotate%2856.2%29%22%20stroke-width%3D%220.81%22%20stroke-opacity%3D%220.115%22/%3E%3Cpath%20d%3D%22M-14.9%2011.1%20L14.9%2011.1%20L0.0%20-11.1%20Z%22%20transform%3D%22translate%282215.4%201383.0%29%20rotate%2813.7%29%22%20stroke-width%3D%220.83%22%20stroke-opacity%3D%220.105%22/%3E%3Cpath%20d%3D%22M-25.3%2015.6%20L25.3%2015.6%20L0.0%20-15.6%20Z%22%20transform%3D%22translate%281151.3%20975.5%29%20rotate%28243.8%29%22%20stroke-width%3D%221.18%22%20stroke-opacity%3D%220.195%22/%3E%3Cpath%20d%3D%22M-14.2%209.9%20L14.2%209.9%20L0.0%20-9.9%20Z%22%20transform%3D%22translate%282193.7%20815.9%29%20rotate%28248.0%29%22%20stroke-width%3D%220.73%22%20stroke-opacity%3D%220.208%22/%3E%3Cpath%20d%3D%22M-12.9%2010.0%20L12.9%2010.0%20L0.0%20-10.0%20Z%22%20transform%3D%22translate%281885.8%20536.1%29%20rotate%28130.7%29%22%20stroke-width%3D%221.07%22%20stroke-opacity%3D%220.181%22/%3E%3Cpath%20d%3D%22M-16.1%2012.0%20L16.1%2012.0%20L0.0%20-12.0%20Z%22%20transform%3D%22translate%281889.8%201285.6%29%20rotate%28286.3%29%22%20stroke-width%3D%220.80%22%20stroke-opacity%3D%220.064%22/%3E%3Cpath%20d%3D%22M-27.1%2017.2%20L27.1%2017.2%20L0.0%20-17.2%20Z%22%20transform%3D%22translate%281718.7%20201.7%29%20rotate%2884.9%29%22%20stroke-width%3D%220.61%22%20stroke-opacity%3D%220.197%22/%3E%3Cpath%20d%3D%22M-27.9%2022.4%20L27.9%2022.4%20L0.0%20-22.4%20Z%22%20transform%3D%22translate%282100.0%2054.0%29%20rotate%2871.7%29%22%20stroke-width%3D%220.79%22%20stroke-opacity%3D%220.141%22/%3E%3Cpath%20d%3D%22M-10.1%208.5%20L10.1%208.5%20L0.0%20-8.5%20Z%22%20transform%3D%22translate%28748.7%20405.5%29%20rotate%28215.6%29%22%20stroke-width%3D%221.06%22%20stroke-opacity%3D%220.089%22/%3E%3Cpath%20d%3D%22M-26.6%2021.7%20L26.6%2021.7%20L0.0%20-21.7%20Z%22%20transform%3D%22translate%282522.8%20399.9%29%20rotate%28188.1%29%22%20stroke-width%3D%221.05%22%20stroke-opacity%3D%220.151%22/%3E%3Cpath%20d%3D%22M-14.1%2011.3%20L14.1%2011.3%20L0.0%20-11.3%20Z%22%20transform%3D%22translate%281251.0%20180.1%29%20rotate%28308.0%29%22%20stroke-width%3D%221.15%22%20stroke-opacity%3D%220.090%22/%3E%3C/g%3E%3C/svg%3E');
+    background-size:cover;
+    background-repeat:no-repeat;
+    background-position:center;
+    opacity:0.22;
+    filter:drop-shadow(0 0 8px rgba(71,181,0,0.12));
+  }
+
+  body::after{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:0;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(71,181,0,0.10), transparent 55%),
+      radial-gradient(circle at 50% 120%, rgba(0,0,0,0.55), transparent 60%),
+      url('data:image/svg+xml,%3Csvg%20xmlns="http://www.w3.org/2000/svg"%20width="180"%20height="180"%3E%0A%20%20%3Cfilter%20id="n"%3E%0A%20%20%20%20%3CfeTurbulence%20type="fractalNoise"%20baseFrequency="0.8"%20numOctaves="3"%20stitchTiles="stitch"/%3E%0A%20%20%20%20%3CfeColorMatrix%20type="matrix"%20values="%0A%20%20%20%20%20%201%200%200%200%200%0A%20%20%20%20%20%200%201%200%200%200%0A%20%20%20%20%20%200%200%201%200%200%0A%20%20%20%20%20%200%200%200%200.18%200"/%3E%0A%20%20%3C/filter%3E%0A%20%20%3Crect%20width="180"%20height="180"%20filter="url(#n)"/%3E%0A%3C/svg%3E');
+    background-size:auto, auto, 180px 180px;
+    background-repeat:no-repeat, no-repeat, repeat;
+    opacity:0.22;
+    mix-blend-mode:overlay;
+  }
+.wrap{
+    position:relative;
+    z-index:1;
+    max-width:480px;
+    margin:0 auto;
+    padding:20px 12px 40px;
+  }
+
+  /* Домашний экран */
+  .homeScreen{
+    position:relative;
+    z-index:1;
+    max-width:480px;
+    margin:0 auto;
+    padding:24px 12px 36px;
+  }
+
+  .homeHeader{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom:4px;
+  }
+
+  .homeLogo{
+    font-size:26px;
+    font-weight:800;
+    letter-spacing:0.03em;
+  }
+
+  .homeSub{
+    font-size:12px;
+    color:var(--muted);
+    margin:4px 2px 18px;
+    line-height:1.5;
+    text-align:center;
+  }
+
+  /* Карточки и общий вид */
+  .card,
+  .trendCard{
+    border-radius:16px;
+    border:1px solid rgba(255,255,255,0.06);
+    background:
+      linear-gradient(145deg, #111317, #060708);
+    box-shadow:0 18px 40px rgba(0,0,0,0.65);
+  }
+
+  .card{
+    padding:14px 14px 12px;
+  }
+
+  .trendCard{
+    margin:12px 0 18px;
+    padding:12px 12px 14px;
+  }
+
+  .muted{
+    color:var(--muted);
+  }
+
+  .muted.small{
+    font-size:11px;
+  }
+
+  /* Главная сетка тайлов */
+  .homeGrid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:10px;
+    margin-top:6px;
+  }
+
+  .homeTile{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    border-radius:18px;
+    background:
+      radial-gradient(circle at 0 0, rgba(71,181,0,0.22), transparent 60%),
+      #050708;
+    border:1px solid rgba(151,204,120,0.28);
+    padding:12px 12px 14px;
+    box-shadow:0 14px 32px rgba(0,0,0,0.7);
+    transition:
+      transform 0.08s ease-out,
+      box-shadow 0.12s ease-out,
+      border-color 0.12s ease-out,
+      background 0.12s ease-out;
+  }
+
+  .homeTile:active{
+    transform:scale(0.97) translateY(1px);
+    box-shadow:0 8px 18px rgba(0,0,0,0.6);
+  }
+
+  .homeTileIcon{
+    width:36px;
+    height:36px;
+    border-radius:12px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:rgba(71,181,0,0.10);
+    margin-bottom:6px;
+    font-size:18px;
+  }
+
+  .homeTileTitle{
+    font-size:15px;
+    font-weight:600;
+    margin-bottom:2px;
+  }
+
+  .homeTileDesc{
+    font-size:12px;
+    color:var(--muted);
+    line-height:1.4;
+  }
+
+  /* Кнопки */
+  .btn{
+    border-radius:999px;
+    padding:9px 16px;
+    font-size:13px;
+    font-weight:600;
+    letter-spacing:0.01em;
+  }
+
+  .btn.secondary{
+    background:#101417;
+    color:var(--text);
+    border:1px solid rgba(255,255,255,0.10);
+  }
+
+  .btn.secondary:hover{
+    border-color:var(--accent);
+  }
+
+  .btn.ghost{
+    border-radius:999px;
+    border:1px dashed rgba(255,255,255,0.25);
+    background:transparent;
+    color:var(--muted);
+  }
+
+  .btn.ghost.small{
+    font-size:11px;
+    padding:6px 10px;
+  }
+
+  .btn.link{
+    font-size:12px;
+  }
+
+  /* Табы и секции */
+  .tabs{
+    display:flex;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    gap:6px;
+    padding:8px 2px 4px;
+    margin-top:6px;
+  }
+
+  .tabs::-webkit-scrollbar{
+    display:none;
+  }
+
+  .tab{
+    padding:7px 12px;
+    border-radius:999px;
+    background:#101316;
+    border:1px solid rgba(255,255,255,0.08);
+    font-size:12px;
+    font-weight:600;
+    color:#cfe6d7;
+    white-space:nowrap;
+  }
+
+  .tab.active{
+    background:var(--accent);
+    color:#050908;
+    border-color:#5cf08a;
+  }
+
+  .section{
+    margin-top:16px;
+  }
+
+  /* Таблицы — чуть аккуратнее */
+  table{
+    border-collapse:separate;
+    border-spacing:0;
+  }
+
+  th, td{
+    border-bottom:1px solid rgba(255,255,255,0.06);
+    padding:7px 6px;
+    font-size:12px;
+  }
+
+  th{
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.03em;
+  }
+
+  /* Мелкие визуальные элементы */
+  .pill{
+    border-radius:999px;
+    border:1px solid rgba(255,255,255,0.12);
+    background:rgba(15,18,20,0.9);
+  }
+
+  .badge{
+    border-radius:999px;
+  }
+
+  .gate{
+    border-radius:12px;
+    border:1px solid rgba(255,112,112,0.6);
+    background:rgba(42,31,31,0.9);
+  }
+
+  .lang button{
+    border-radius:999px;
+  }
+
+  .lang button.on{
+    background:#1b2c20;
+    border-color:#3a874e;
+  }
+
+  .mic{
+    box-shadow:0 10px 24px rgba(0,0,0,0.7);
+  }
+
+  .thumb{
+    border-radius:10px;
+  }
+
+  .helper-chip{
+    border-radius:999px;
+  }
+</style>
+
+<style id="otd-safe-offsets">
+/* === FIX: prevent floating top/bottom bars from covering content === */
+:root{
+  --otd-topbar-space: calc(env(safe-area-inset-top) + 96px);
+  --otd-bottombar-space: calc(env(safe-area-inset-bottom) + 120px);
+}
+/* The file defines .wrap multiple times; this override must be LAST. */
+.wrap{ padding-top: var(--otd-topbar-space) !important; }
+/* Floating header */
+.top{ top: calc(env(safe-area-inset-top) + 8px) !important; }
+/* Cash bottom action bar should sit above iOS safe area */
+.q-actions{ bottom: calc(14px + env(safe-area-inset-bottom)) !important; }
+/* Ensure the cash feed never hides behind the fixed bottom bar */
+/* Cash screen: lock layout so only the history scrolls */
+.section#kasa.active{
+  margin-top: 0 !important;
+  height: calc(100dvh - var(--otd-topbar-space) - 32px) !important;
+  padding-bottom: 0 !important;
+  overflow: hidden !important;
+}
+.section#kasa.active .kasa-qalta{
+  height: 100% !important;
+  padding-bottom: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+.section#kasa.active .q-header{ flex: 0 0 auto !important; }
+.section#kasa.active .q-feed{
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(130px + env(safe-area-inset-bottom)) !important;
+}
+.section#kasa.active .q-actions{
+  bottom: calc(18px + env(safe-area-inset-bottom)) !important;
+}
+
+/* Small phones need a bit more breathing room */
+@media (max-width: 380px){
+  :root{ --otd-topbar-space: calc(env(safe-area-inset-top) + 110px); }
+}
+</style>
+
+  <link rel="stylesheet" href="/css/scrollbar-premium.css">
+</head>
+<body>
+<div class="wrap">
+<div class="homeScreen" id="homeScreen">
+<div class="homeHeader">
+<div class="homeLogo">OneTapDay</div>
+<button class="homeMenuBtn" onclick="appGoSection('ustawienia')" type="button">⋯</button>
+</div>
+<div class="homeSub" data-i18n="home.tagline"></div>
+<div class="trendCard" id="trendCard" role="button" tabindex="0" aria-label="Analityka">
+<div class="trendHeader">
+<span data-i18n="home.trend_title"></span>
+<span class="trendChip" id="trendChange">—</span>
+</div>
+<div class="trendChart" id="trendChart">
+<div class="muted small" data-i18n="home.trend_empty"></div>
+</div>
+</div>
+<div class="homeGrid">
+<button class="homeTile" onclick="appGoSection('docs')" type="button">
+<div class="homeTileIcon">📤</div>
+<div class="homeTileTitle" data-i18n="home.tile_docs_title"></div>
+<div class="homeTileDesc" data-i18n="home.tile_docs_desc"></div>
+</button>
+<button class="homeTile" onclick="appGoSection('pulpit')" type="button">
+<div class="homeTileIcon">💸</div>
+<div class="homeTileTitle" data-i18n="home.tile_money_title"></div>
+<div class="homeTileDesc" data-i18n="home.tile_money_desc"></div>
+</button>
+<button class="homeTile" onclick="appGoSection('aiAssist')" type="button">
+<div class="homeTileIcon">🧠</div>
+<div class="homeTileTitle" data-i18n="home.tile_ai_title"></div>
+<div class="homeTileDesc" data-i18n="home.tile_ai_desc"></div>
+</button>
+<button class="homeTile" onclick="appGoSection('kasa')" type="button">
+<div class="homeTileIcon">💰</div>
+<div class="homeTileTitle" data-i18n="home.tile_cash_title"></div>
+<div class="homeTileDesc" data-i18n="home.tile_cash_desc"></div>
+</button>
+<button class="homeTile" onclick="appGoSection('konta')" type="button">
+<div class="homeTileIcon">💳</div>
+<div class="homeTileTitle" data-i18n="home.tile_accounts_title"></div>
+<div class="homeTileDesc" data-i18n="home.tile_accounts_desc"></div>
+</button>
+<button class="homeTile" onclick="appGoSection('reports')" type="button">
+<div class="homeTileIcon">📊</div>
+<div class="homeTileTitle" data-i18n="home.tile_reports_title"></div>
+<div class="homeTileDesc" data-i18n="home.tile_reports_desc"></div>
+</button>
+</div>
+</div>
+<div class="top" id="topBar">
+  <button aria-label="Menu" class="iconBtn iconPill" id="navBtn" type="button">☰</button>
+  <div class="brand" id="brandHome" role="button" tabindex="0" aria-label="Home"><b>OneTapDay</b></div>
+  <div class="topRight" id="topRight">
+    <button aria-label="Ustawienia" class="iconBtn iconPill" id="navSettingsBtn" type="button">⚙︎</button>
+  </div>
+</div>
+<!-- ACCESS GATE (hidden if demo/sub active) -->
+<div class="gate hidden" id="gate">
+<div data-i18n="gate_locked_title" style="font-weight:700;margin-bottom:6px">Dostęp zablokowany</div>
+<div class="muted" data-i18n="gate_locked_desc">
+      Okres demo zakończony lub brak aktywnej subskrypcji. Przejdź do Ustawień, aby uruchomić demo (24h) lub opłacić dostęp.
+    </div>
+<div class="row" style="margin-top:8px">
+<button class="btn secondary" data-i18n="gate_open_settings" onclick="(function(){try{if(window.appGoSection){window.appGoSection('ustawienia');return;}}catch(e){}try{var b=document.getElementById('navSettingsBtn');if(b)b.click();}catch(e){}})()">Otwórz Ustawienia</button>
+</div>
+</div>
+<!-- DASHBOARD -->
+<div class="section" id="pulpit">
+<div class="card" style="margin:10px 0">
+<div style="font-weight:700">OneTapDay • Twój dzień</div>
+<div class="muted small" data-i18n="pulpit_intro">
+        Jeden ekran, który mówi Ci, czy dziś jest spokojnie z pieniędzmi.
       </div>
-      <div class="actions">
-        <button class="mini" data-act="rename" title="Rename">✎</button>
-        <button class="mini" data-act="del" title="Delete">🗑</button>
+<div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end">
+<div style="flex:1; min-width:120px">
+<div class="muted small" data-i18n="hero_today_label">Wynik dnia (PLN)</div>
+<div style="font-size:26px; font-weight:700; margin-top:4px">
+<span id="todayNet">—</span>
+</div>
+</div>
+<div style="flex:1; min-width:140px">
+<div class="muted small" data-i18n="hero_buffer_label">Bufor bezpieczeństwa</div>
+<div style="margin-top:4px">
+<span class="pill" id="daysSafe">Dni bezpieczeństwa: —</span>
+</div>
+</div>
+</div>
+<div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:16px">
+<div style="flex:1; min-width:120px">
+<div class="muted small" data-i18n="hero_7d_label">Do zapłaty w 7 dni</div>
+<div style="margin-top:4px">
+<span class="pill" id="oblig7">—</span>
+</div>
+</div>
+<div style="flex:1; min-width:120px">
+<div class="muted small" data-i18n="hero_30d_label">Do zapłaty w 30 dni</div>
+<div style="margin-top:4px">
+<span class="pill" id="oblig30">—</span>
+</div>
+</div>
+</div>
+</div>
+<div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap; align-items:center">
+<span class="pill"><span data-i18n="kpi.banks">Banki</span>: <b><span id="kpiBank">—</span> PLN</b></span>
+<span class="pill"><span data-i18n="kpi.cash">Kasa</span>: <b><span id="kpiCash">—</span> PLN</b></span>
+<span class="pill"><span data-i18n="kpi.total">Razem dostępne</span>: <b><span id="kpiAvail">—</span> PLN</b></span>
+<span style="flex:1"></span>
+<button class="btn secondary" data-i18n="btn_close_day" id="closeDay" style="min-width:140px">Zamknij dzień</button>
+</div>
+<div class="card">
+<div data-i18n="ritual_title" style="font-weight:700">Dzisiejszy rytuał</div>
+<div class="muted small" data-i18n="ritual_note">AI-CFO odświeża dane i dopasowuje płatności. Ty tylko zatwierdzasz.</div>
+<div class="row" style="margin-top:10px; flex-wrap:wrap; gap:8px">
+<button class="btn" data-i18n="btn_run_day_ai" id="runDayAI" style="flex:1; min-width:180px">Zrób dzień z AI-CFO</button>
+<button class="btn secondary" data-i18n="btn_ai_questions" id="openAIQuestions" style="min-width:160px">Pytania AI-CFO</button>
+</div>
+</div>
+<div class="card" id="aiQuestionsCard" style="margin-top:10px; display:none">
+<div data-i18n="aiq_title" style="font-weight:700">Pytania AI-CFO</div>
+<div class="muted small" id="aiQuestionsText">
+        AI-CFO pokaże tu pytania, gdy coś będzie wymagało Twojej decyzji.
       </div>
-    </div>`;
-  }).join('');
-};
+</div>
+<div class="card owner-hidden" style="margin-top:10px; display:none">
+<div data-i18n="forecast_7d" style="font-weight:700">Prognoza 7 dni</div>
+<div class="muted" data-i18n="forecast7d_note">Liczy PLN-konta z wyciągu (włączone) + kasa.</div>
+<div class="barwrap" id="forecastBars"></div>
+<div class="muted" id="forecastMeta" style="margin-top:6px">—</div>
+</div>
+<div class="card owner-hidden" style="margin-top:10px; display:none">
+<div data-i18n="month_summary_title" style="font-weight:700">Podsumowanie miesiąca</div>
+<div class="muted" id="monthSummary">—</div>
+</div>
+<div class="card" id="spendingCard" style="margin-top:10px">
+<div data-i18n="spending.title" style="font-weight:700"></div>
+<div class="muted small" data-i18n="spending.desc"></div>
+<div class="spFilters" id="spendingFilters"></div>
+<div class="row" style="margin-top:6px; gap:10px; flex-wrap:wrap">
+<button class="linkBtn small" data-i18n="spending.add_custom" id="addSpCatBtn" type="button"></button>
+<button class="linkBtn small" data-i18n="spending.manage" id="manageSpCatsBtn" type="button"></button>
+<button class="linkBtn small" id="uncatBtn" type="button">
+<span data-i18n="spending.uncat"></span>
+<span class="spCount" id="uncatCount">0</span>
+</button>
+</div>
+<div class="spStats muted small" data-i18n="spending.empty" id="spendingStats" style="margin-top:6px"></div>
+</div>
+</div>
+<!-- Modals -->
+<div class="modal-overlay" id="addTodayModal">
+<div class="modal-card">
+<h3 data-i18n="add_today_title">Dodaj dzisiejsze ruchy</h3>
+<div class="muted small" data-i18n="add_today_note">Szybko dodaj brakujące ruchy, jeśli czegoś nie ma w wyciągu.</div>
+<div class="modal-row">
+<button class="btn secondary" data-i18n="add_today_bank" id="addBankBtn" style="width:100%;margin-bottom:6px">Ruchy banku</button>
+</div>
+<div class="modal-row">
+<button class="btn secondary" data-i18n="add_today_cash" id="addCashBtn" style="width:100%;margin-bottom:6px">Ruchy kasy</button>
+</div>
+<div class="modal-row">
+<button class="btn secondary" data-i18n="add_today_bills" id="addBillsBtn" style="width:100%">Faktury</button>
+</div>
+<div class="modal-actions">
+<button class="btn secondary" data-i18n="add_today_cancel" id="addTodayCancel">Zamknij</button>
+</div>
+</div>
+</div>
+<div class="modal-overlay" id="closeDayModal">
+<div class="modal-card">
+<h3 data-i18n="close_day_title">Podsumowanie dnia</h3>
+<div class="modal-row" id="cd_today">Dziś: —</div>
+<div class="modal-row" id="cd_oblig">Płatności: —</div>
+<div class="modal-row" id="cd_risk">Status: —</div>
+<div class="modal-row" id="cd_target">Cel na jutro: —</div>
+<div class="modal-actions">
+<button class="btn secondary" data-i18n="close_day_cancel" id="closeDayCancel">Zamknij</button>
+</div>
+</div>
+</div>
+<div class="modal-overlay" id="addSpCatModal">
+<div class="modal-card">
+<h3 data-i18n="spcat.title"></h3>
+<div class="muted small" data-i18n="spcat.desc" style="margin-bottom:8px"></div>
+<label class="muted small" data-i18n="spcat.name_label"></label>
+<input class="input" data-i18n-ph="spcat.name_ph" id="spCatName" type="text"/>
+<div class="muted small" data-i18n="spcat.emoji_label" style="margin-top:8px"></div>
+<div class="emojiList" id="spCatEmojiList">
+<button type="button">🍞</button>
+<button type="button">☕</button>
+<button type="button">🛒</button>
+<button type="button">🍽️</button>
+<button type="button">⛽</button>
+<button type="button">🚗</button>
+<button type="button">🏠</button>
+<button type="button">🧾</button>
+<button type="button">💳</button>
+<button type="button">📱</button>
+<button type="button">🎮</button>
+<button type="button">💊</button>
+<button type="button">🎁</button>
+<button type="button">🎓</button>
+<button type="button">✈️</button>
+<button type="button">🐶</button>
+<button type="button">🧠</button>
+<button type="button">📦</button>
+</div>
+<label class="muted small" data-i18n="spcat.custom_emoji_label" style="margin-top:10px">Własne emoji (opcjonalnie)</label>
+<input class="input" data-i18n-ph="spcat.custom_emoji_ph" id="spCatEmojiCustom" maxlength="6" placeholder="np. 🧠" type="text"/>
+<input id="spCatEditId" type="hidden" value=""/>
+<div class="modal-row" style="margin-top:12px;display:flex;gap:8px">
+<button class="btn secondary" data-i18n="spcat.delete" id="spCatDelete" style="display:none;flex:0 0 auto;min-width:90px;border-color:rgba(255,80,80,.55);color:rgba(255,140,140,.95)">Usuń</button>
+<button class="btn" data-i18n="spcat.save" id="spCatSave" style="flex:1"></button>
+<button class="btn secondary" data-i18n="spcat.cancel" id="spCatCancel" style="flex:1"></button>
+</div>
+</div>
+</div>
+<div class="modal-overlay" id="catModal">
+<div class="modal-card">
+<h3 data-i18n="modal.cat_title">Kategoria</h3>
+<div class="muted small" data-i18n="modal.cat_desc" style="margin-bottom:8px">Wybierz kategorię dla wpisu.</div>
+<select id="catSelect" style="width:100%;margin-bottom:8px"></select>
+<label class="muted small" style="display:flex;gap:8px;align-items:center">
+<input id="catApplySame" type="checkbox"/>
+<span data-i18n="modal.cat_apply_same">Zastosuj do podobnych (gdy kategoria pusta)</span>
+</label>
+<div class="modal-row" style="margin-top:12px;display:flex;gap:8px">
+<button class="btn" data-i18n="modal.cat_save" id="catSaveBtn" style="flex:1">Zapisz</button>
+<button class="btn secondary" data-i18n="modal.cat_cancel" id="catCancelBtn" style="flex:1">Anuluj</button>
+</div>
+<!-- SPENDING CATEGORY MANAGER -->
+<div class="modal-overlay" id="spCatMgrModal">
+<div class="modal-card">
+<h3 data-i18n="spcatmgr.title">Kategorie wydatków</h3>
+<div class="muted small" data-i18n="spcatmgr.desc" style="margin-bottom:8px">Edytuj nazwy i emoji. ID zostaje to samo.</div>
+<div id="spCatMgrList" style="display:flex;flex-direction:column;gap:8px"></div>
+<div class="modal-row" style="margin-top:10px;display:flex;gap:8px">
+<button class="btn secondary" data-i18n="spcatmgr.add" id="spCatMgrAdd" style="flex:1">Dodaj</button>
+<button class="btn" data-i18n="spcatmgr.close" id="spCatMgrClose" style="flex:1">Zamknij</button>
+</div>
+</div>
+</div>
+<!-- UNCATEGORIZED LIST -->
+<div class="modal-overlay" id="uncatModal">
+<div class="modal-card">
+<h3 data-i18n="uncat.title">Bez kategorii</h3>
+<div class="muted small" data-i18n="uncat.desc" style="margin-bottom:8px">Wybierz kategorię dla wydatków bez przypisania.</div>
+<div id="uncatList" style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow:auto"></div>
+<div class="modal-row" style="margin-top:12px;display:flex;gap:8px">
+<button class="btn" data-i18n="uncat.close" id="uncatClose" style="flex:1">Zamknij</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- INVOICE TEMPLATE (local) -->
+<div class="modal-overlay" id="invoiceTplModal">
+<div class="modal-card">
+<h3 data-i18n="documents.template_invoice">Szablon faktury</h3>
+<div class="muted small" style="margin-bottom:8px">
+      Tworzysz i zapisujesz szablon faktury lokalnie. To nie dodaje wpisu do zakładki „Faktury”,
+      tylko daje plik do pobrania i zapis w aplikacji.
+    </div><div class="muted small" id="invoiceTplEditState" style="margin:8px 0 10px"></div><div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap"><select id="invoiceVoiceLang" style="max-width:130px"><option value="pl-PL">PL</option><option value="ru-RU">RU</option><option value="uk-UA">UKR</option><option value="en-US">EN</option></select><button class="btn ghost small" id="invoiceVoiceBtn" type="button" data-i18n="documents.btn_dictation">🎤 Dyktowanie</button><div class="muted small" data-i18n="documents.voice_hint"></div></div>
+<input id="invoiceTplName" placeholder="Nazwa szablonu (np. Usługi IT)" style="width:100%;margin-bottom:8px"/>
+<div style="display:flex;gap:8px;margin-bottom:8px">
+<input id="invoiceTplNumber" placeholder="Numer (np. FV/01/2025)" style="flex:1"/>
+<input id="invoiceTplCurrency" placeholder="PLN" style="width:90px"/>
+</div>
+<div style="display:flex;gap:8px;margin-bottom:8px">
+<input id="invoiceTplIssue" placeholder="Data wystawienia (YYYY-MM-DD)" style="flex:1"/>
+<input id="invoiceTplDue" placeholder="Termin płatności (YYYY-MM-DD)" style="flex:1"/>
+</div>
+<textarea id="invoiceTplSeller" placeholder="Sprzedawca (nazwa, NIP, adres)" style="width:100%;min-height:60px;margin-bottom:8px"></textarea>
+<textarea id="invoiceTplBuyer" placeholder="Nabywca (nazwa, NIP, adres)" style="width:100%;min-height:60px;margin-bottom:8px"></textarea>
+<div style="display:flex;gap:8px;margin-bottom:8px">
+<input id="invoiceTplTitle" placeholder="Opis (np. Usługi / Konsultacje)" style="flex:1"/>
+<input id="invoiceTplAmount" placeholder="Kwota brutto" style="width:140px"/>
+</div>
+<textarea id="invoiceTplNote" placeholder="Uwagi (opcjonalnie)" style="width:100%;min-height:46px"></textarea>
+<div class="muted small" style="margin-top:10px;margin-bottom:6px">Zapisane szablony</div>
+<div id="invoiceTplList" style="display:flex;flex-direction:column;gap:8px;max-height:22vh;overflow:auto;margin-bottom:10px"></div>
+<div class="modal-row" style="display:flex;gap:8px">
+<button class="btn" id="invoiceTplSave" style="flex:1">Zapisz</button>
+<button class="btn ghost" id="invoiceTplNew" style="flex:1" type="button">Nowy</button></div>
+<div class="modal-row" style="margin-top:8px;display:flex;gap:8px"><button class="btn secondary" id="invoiceTplDownloadHTML" style="flex:1">Pobierz HTML</button>
+<button class="btn secondary" id="invoiceTplDownloadCSV" style="flex:1">Pobierz CSV</button>
+<button class="btn ghost" id="invoiceTplClose" style="flex:1">Zamknij</button>
+</div>
+</div>
+</div>
+<!-- INVENTORY TEMPLATE (local) -->
+<div class="modal-overlay" id="inventoryTplModal">
+<div class="modal-card">
+<h3 data-i18n="documents.template_inventory">Szablon inwentaryzacji</h3>
+<div class="muted small" style="margin-bottom:8px">
+      Tworzysz i zapisujesz szablon inwentaryzacji lokalnie. To nie tworzy żadnych wpisów w aplikacji,
+      tylko daje plik do pobrania i zapis szablonu.
+    </div><div class="muted small" id="inventoryTplEditState" style="margin:8px 0 10px"></div>
+<input id="inventoryTplName" placeholder="Nazwa szablonu (np. Magazyn / Sklep)" style="width:100%;margin-bottom:8px"/>
+<div style="display:flex;gap:8px;margin-bottom:8px">
+<input id="inventoryTplDate" placeholder="Data (YYYY-MM-DD)" style="flex:1"/>
+<input id="inventoryTplLocation" placeholder="Lokalizacja / magazyn (opcjonalnie)" style="flex:1"/>
+</div>
+<div style="display:flex;gap:8px;margin-bottom:8px">
+<input id="inventoryTplRows" placeholder="Ile pustych wierszy (np. 50)" style="width:170px"/>
+<div class="muted small" style="display:flex;align-items:center">Kolumny są gotowe: nazwa, SKU, jednostka, ilość, cena, VAT, lokalizacja, notatki.</div>
+</div>
+<div class="muted small" style="margin-top:10px;margin-bottom:6px">Zapisane szablony</div>
+<div id="inventoryTplList" style="display:flex;flex-direction:column;gap:8px;max-height:22vh;overflow:auto;margin-bottom:10px"></div>
+<div class="modal-row" style="display:flex;gap:8px">
+<button class="btn" id="inventoryTplSave" style="flex:1">Zapisz</button>
+<button class="btn ghost" id="inventoryTplNew" style="flex:1" type="button">Nowy</button></div><div class="modal-row" style="margin-top:8px;display:flex;gap:8px"><button class="btn secondary" id="inventoryTplDownloadCSV" style="flex:1">Pobierz CSV</button><button class="btn secondary" id="inventoryTplDownloadXLSX" style="flex:1">Pobierz XLSX</button></div>
+<div class="modal-row" style="margin-top:8px;display:flex;gap:8px">
+<button class="btn ghost" id="inventoryTplClose" style="flex:1">Zamknij</button>
+</div>
+</div>
+</div><div class="modal-overlay" id="accountantToolsModal"><div class="modal-card"><h3 data-i18n="documents.accountant_modal_title"></h3><div class="muted small" data-i18n="documents.accountant_modal_desc" style="margin-bottom:10px"></div><div class="modal-row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-i18n="documents.accountant_tab_exports" id="acctTabExports" type="button"></button><button class="btn secondary" data-i18n="documents.accountant_tab_templates" id="acctTabTemplates" type="button"></button></div><div id="acctPanelExports" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="docExportTxBtn" type="button" data-i18n="documents.export_statements">Wyciągi (CSV)</button><button class="btn secondary" id="docExportBillsBtn" type="button" data-i18n="documents.export_invoices">Faktury (CSV)</button><button class="btn secondary" id="docExportBookBtn" type="button" data-i18n="documents.export_book">Księga (CSV)</button><button class="btn secondary" id="docExportCashBtn" type="button" data-i18n="documents.export_cash">Kasa (CSV)</button></div><div id="acctPanelTemplates" style="margin-top:10px;display:none;gap:8px;flex-wrap:wrap"><button class="btn secondary" id="openInvoiceTplBtn" type="button" data-i18n="documents.template_invoice">Szablon faktury</button><button class="btn secondary" id="openInventoryTplBtn" type="button" data-i18n="documents.template_inventory">Szablon inwentaryzacji</button></div><div class="muted small" data-i18n="documents.accountant_modal_hint" style="margin-top:10px"></div><div class="modal-row" style="margin-top:12px;display:flex;gap:8px"><button class="btn ghost" data-i18n="buttons.close" id="accountantToolsClose" style="flex:1" type="button">Zamknij</button></div></div></div>
+<!-- ANALYTICS -->
+<div class="section" id="analytics" style="display:none">
+  <div class="card" style="margin:10px 0">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="font-weight:800" data-i18n="analytics.title">Analityka</div>
+        <span class="trendChip" id="analyticsNetChip">—</span>
+      </div>
+      <div class="muted small" id="analyticsRangeLabel" data-i18n="analytics.range_12m">Ostatnie 12 miesięcy</div>
+    </div>
+    <div class="muted small" style="margin-top:6px">
+      <span data-i18n="analytics.hint">Kliknij wykres na ekranie głównym, aby wejść tutaj. Wersja MVP.</span>
+    </div>
 
-const openChatDrawer = ()=>{ const d=byId('aiChatDrawer'); if(!d) return; d.classList.add('show'); renderChatList(); };
-const closeChatDrawer = ()=>{ const d=byId('aiChatDrawer'); if(!d) return; d.classList.remove('show'); };
+    <div class="analyticsKpis" id="analyticsKpis" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"></div>
 
-byId('aiChatsBtn')?.addEventListener('click', openChatDrawer);
-byId('aiChatDrawerClose')?.addEventListener('click', closeChatDrawer);
-byId('aiChatDrawer')?.addEventListener('click', (e)=>{ if(e.target===byId('aiChatDrawer')) closeChatDrawer(); });
-byId('aiChatNew')?.addEventListener('click', ()=>{
-  ensureDefaultChat();
-  const meta = getChatsMeta();
-  const id = makeChatId();
-  meta.unshift({ id, title:'Новый чат', createdAt:Date.now(), updatedAt:Date.now() });
-  saveChatsMeta(meta);
-  setActiveChatId(id);
-  saveChat(id, []);
-  renderChat();
-  renderChatList();
-});
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn ghost" id="analyticsRange30" type="button">30d</button>
+      <button class="btn ghost" id="analyticsRange90" type="button">90d</button>
+      <button class="btn" id="analyticsRange365" type="button">12m</button>
+      <button class="btn ghost" id="analyticsRangeCustom" type="button" data-i18n="analytics.range_custom">Zakres</button>
+    </div>
+  </div>
 
-byId('aiChatList')?.addEventListener('click', (e)=>{
-  const item = e.target.closest('.aiChatItem');
-  if(!item) return;
-  const id = item.getAttribute('data-id')||'';
-  if(!id) return;
-  const act = e.target?.getAttribute?.('data-act');
-  if(act==='rename'){
-    const meta = getChatsMeta();
-    const i = meta.findIndex(x=>x.id===id);
-    const cur = i>=0 ? (meta[i].title||'Chat') : 'Chat';
-    const nn = prompt(TT("prompts.chat_name", null, "Название чата"), cur);
-    if(nn && i>=0){ meta[i].title = String(nn).trim().slice(0,60) || cur; meta[i].updatedAt=Date.now(); saveChatsMeta(meta); renderChatList(); }
-    return;
-  }
-  if(act==='del'){
-    const ok = confirm(TT('dialogs.delete_chat', null, 'Удалить чат? (только локально)'));
-    if(!ok) return;
-    const meta = getChatsMeta().filter(x=>x.id!==id);
-    saveChatsMeta(meta);
-    try{ localStorage.removeItem(chatKey(id)); }catch(e){}
-    if(getActiveChatId()===id){ setActiveChatId(meta[0]?.id || ''); }
-    ensureDefaultChat();
-    renderChat();
-    renderChatList();
-    return;
-  }
-  setActiveChatId(id);
-  renderChat();
-  closeChatDrawer();
-});
+  <div class="analyticsGrid">
+    <div class="card analyticsCard">
+      <div class="analyticsCardHeader">
+        <div style="font-weight:700" data-i18n="analytics.card_expenses">Wydatki</div>
+        <div class="muted small" id="analyticsExpenseTotal">—</div>
+      </div>
 
-ensureDefaultChat();
+      <div class="analyticsDonutRow">
+        <div class="donutWrap">
+          <div id="analyticsDonut"></div>
+          <div class="donutCenter">
+            <div class="donutValue" id="analyticsDonutValue">—</div>
+            <div class="muted small" id="analyticsDonutLabel" data-i18n="analytics.donut_label">Wydatki</div>
+          </div>
+        </div>
 
-const renderChat = ()=>{
-  const host = byId('aiChatLog');
-  if(!host) return;
-  ensureDefaultChat();
-  const activeId = getActiveChatId();
-  let msgs = loadChat(activeId);
-  if(!Array.isArray(msgs)) msgs = [];
+        <div class="analyticsList" id="analyticsCatList"></div>
+      </div>
+    </div>
 
-  // Seed with greeting once (per chat)
-  if(msgs.length === 0){
-        let greet = tSafe('ai.chat_intro', 'Привет! Я AI‑бухгалтер OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?');
-    // If i18n returns the key itself (common "missing translation" behavior), fallback to a real greeting.
-    if(!greet || greet === 'ai.chat_intro'){
-      greet = (window.OTD_AI && typeof window.OTD_AI.greeting==='function')
-        ? window.OTD_AI.greeting(getProfile())
-        : 'Привет! Я AI‑бухгалтер OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?';
-    }
+    <div class="card analyticsCard">
+      <div class="analyticsCardHeader">
+        <div style="font-weight:700" data-i18n="analytics.card_movement">Ruch</div>
+        <div class="muted small" id="analyticsMovementTotal">—</div>
+      </div>
+      <div class="trendChart" id="analyticsChart" style="margin-top:10px;height:240px"></div>
+    </div>
+  </div>
 
-    msgs.push({ role:'assistant', text: greet, ts: Date.now() });
-    saveChat(activeId, msgs);
-    touchChatMeta(activeId);
-  }
+  <div class="card analyticsCard" style="margin:12px 0">
+    <div class="analyticsCardHeader">
+      <div style="font-weight:700" data-i18n="analytics.top_merchants">Top kontrahenci</div>
+      <button class="btn secondary small" id="analyticsOpenSpendingListBtn" type="button" data-i18n="analytics.open_list">Otwórz listę</button>
+    </div>
+    <div id="analyticsTopMerchants" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div>
+  </div>
+</div>
 
-  host.innerHTML = msgs.map(m=>{
-    const role = (m.role === 'user') ? 'user' : 'bot';
-    const atts = Array.isArray(m.attachments) ? m.attachments : [];
-    let attHtml = '';
-    if(atts.length){
-      const items = atts.map(a=>{
-        const url = String(a.fileUrl || a.url || '').trim();
-        const name = String(a.fileName || a.name || 'file').trim();
-        const mime = String(a.fileMime || a.mime || '').toLowerCase();
-        const safeUrl = url.replace(/"/g,'&quot;');
-        const thumb = (mime.startsWith('image/') && url)
-          ? '<img class="aiAttachThumb" src="'+safeUrl+'" alt=""/>'
-          : '<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid #242b30;background:#0f1418;font-size:14px">📎</div>';
-        return '<a class="aiAttachItem aiAttachLink" href="'+safeUrl+'" target="_blank" rel="noopener">'+thumb+'<div class="aiAttachName">'+escHtml(name)+'</div></a>';
-      }).join('');
-      attHtml = '<div class="aiAttachList">'+items+'</div>';
-    }
-    return '<div class="aiMsg '+role+'"><div class="aiBubble">'+escHtml(m.text||'')+attHtml+'</div></div>';
-  }).join('');
-  host.scrollTop = host.scrollHeight;
-};
+<!-- STATEMENT -->
+<div class="section" id="docs">
+<div class="card">
+<div data-i18n="documents.title" style="font-weight:700"></div>
+<div class="muted small" data-i18n="documents.desc"></div>
+<div class="homeSub" data-i18n="documents.add_what" style="margin:10px 0 0;font-size:12px;padding:0"></div>
+<div class="homeGrid" style="margin-top:10px">
+<div class="homeTile" style="padding:12px 10px;border-radius:14px">
+<div class="homeTileTitle" data-i18n="documents.statements"></div>
+<div class="homeTileDesc" data-i18n="documents.statements_desc"></div>
+<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+<button class="btn secondary" id="docTxCsvBtn" data-i18n="documents.btn_import_statement">Import wyciągu</button>
+<button class="btn secondary" data-i18n="documents.btn_screenshot" id="docTxImgBtn"></button>
+<button class="btn ghost small" data-i18n="documents.btn_open_statements" onclick="appGoSection('pulpit')" type="button"></button>
+</div>
+</div>
+<div class="homeTile" style="padding:12px 10px;border-radius:14px">
+<div class="homeTileTitle" data-i18n="documents.invoices"></div>
+<div class="homeTileDesc" data-i18n="documents.invoices_desc"></div>
+<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+<button class="btn secondary" id="docBillCsvBtn" data-i18n="documents.btn_import_invoices">Import faktur</button>
+<button class="btn secondary" data-i18n="documents.btn_screenshot" id="docBillImgBtn"></button>
+<button class="btn ghost small" data-i18n="documents.btn_open_invoices" onclick="appGoSection('faktury')" type="button"></button>
+</div>
+</div>
+<div class="homeTile" style="padding:12px 10px;border-radius:14px">
+<div class="homeTileTitle" data-i18n="documents.receipts"></div>
+<div class="homeTileDesc" data-i18n="documents.receipts_desc"></div>
+<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+<button class="btn secondary" data-i18n="documents.btn_photo_scan" id="docCashImgBtn"></button>
+<button class="btn ghost small" data-i18n="documents.btn_open_cash" onclick="appGoSection('kasa')" type="button"></button>
+</div>
+</div>
+<div class="homeTile" style="padding:12px 10px;border-radius:14px"><div class="homeTileTitle" data-i18n="documents.accountant_tools"></div><div class="homeTileDesc" data-i18n="documents.accountant_tools_desc"></div><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn secondary" data-i18n="documents.accountant_open" id="openAccountantToolsBtn" type="button"></button></div><div class="muted small" data-i18n="documents.accountant_hint" style="margin-top:8px"></div></div>
 
-const pushMsg = (role, text)=>{
-  ensureDefaultChat();
-  const activeId = getActiveChatId();
-  const msgs = loadChat(activeId);
-  msgs.push({ role, text, ts: Date.now() });
-  saveChat(activeId, msgs);
-  touchChatMeta(activeId);
-  renderChat();
-};
+<div class="homeTile" style="padding:12px 10px;border-radius:14px">
+  <div class="homeTileTitle" data-i18n="vault.tile_title">Moje dokumenty</div>
+  <div class="homeTileDesc" data-i18n="vault.tile_desc">Foldery i pliki: paragony, faktury, umowy. Żeby nic nie zginęło.</div>
+  <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+    <button class="btn secondary" id="openVaultBtn" type="button" data-i18n="vault.btn_open">Otwórz foldery</button>
+  </div>
+  <div class="muted small" style="margin-top:8px" data-i18n="vault.note_access">Dostępne z telefonu i komputera. Księgowy widzi dopiero po zaakceptowaniu zaproszenia.</div>
+</div>
+</div>
+</div>
+</div>
+<div class="section" id="wyciag">
+<div class="muted small" data-i18n="hint_wyciag" style="margin:6px 0 10px 0">Krok 1: załaduj wyciąg z banku w CSV lub jako zdjęcie. Krok 2: sprawdź, czy operacje się zgadzają.</div>
+<div class="row">
+<label class="btn ghost">
+<input accept=".csv,.xlsx,.xls,.mt940,.sta,.ofx,.qif,.txt,.xml,.json,
+text/csv,
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,
+application/vnd.ms-excel,
+application/x-ofx" id="txFile" type="file"/>
+<span data-i18n="upload_statement">Załaduj wyciąg (CSV)</span>
+</label>
+<label class="btn ghost">
+<input accept="image/*" id="txImage" multiple="" style="display:none" type="file"/>
+<span data-i18n="upload_statement_image">Załaduj zrzut wyciągu (galeria)</span>
+</label>
+<img class="thumb" id="txLastThumb" style="display:none"/>
+<span class="muted" data-i18n="statement_columns_note">
+        Kolumny: Data księgowania, ID transakcji, ID konta (lub IBAN), Kontrahent, Tytuł/Opis, Kwota(±), Waluta, Status, Saldo?
+      </span>
+<button class="btn secondary" data-i18n="btn_export_tx_csv" id="exportTxCSV" style="margin-left:12px">Eksport wyciągu (CSV)</button>
+</div>
+<details class="history-block">
+<summary data-i18n="history.statements">Historia wyciągu</summary>
+<div class="tableScroll">
+<table id="txTable">
+<thead>
+<tr>
+<th data-i18n="th_date">Data</th>
+<th data-i18n="th_account">Konto</th>
+<th data-i18n="th_counterparty">Kontrahent</th>
+<th data-i18n="th_desc">Opis</th>
+<th data-i18n="th_category">Kategoria</th>
+<th data-i18n="th_amount">Kwota</th>
+<th data-i18n="th_currency">Waluta</th>
+<th data-i18n="th_status">Status</th>
+<th data-i18n="th_actions">Działania</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
+</details>
+<!-- (таблица księgi убрана — экспорт доступен на Панели) -->
+</div>
+<!-- INVOICES -->
+<div class="section" id="faktury">
+<div class="muted small" data-i18n="hint_faktury" style="margin:6px 0 10px 0">Tu widzisz faktury do zapłaty i opłacone. Po dopasowaniu płatności status zmieni się automatycznie.</div>
+<div class="row" style="align-items:center;margin-bottom:8px">
+<label class="btn ghost">
+<input accept=".csv,.xlsx,.xls,.mt940,.sta,.ofx,.qif,.txt,.xml,.json,
+text/csv,
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,
+application/vnd.ms-excel,
+application/x-ofx" id="billFile" type="file"/>
+<span data-i18n="upload_invoices">Załaduj faktury (CSV)</span>
+</label>
+<label class="btn ghost">
+<input accept="image/*" id="billImage" multiple="" style="display:none" type="file"/>
+<span data-i18n="upload_invoice_images">Załaduj zdjęcia faktur</span>
+</label>
+<span class="muted" data-i18n="invoices_note" style="margin-left:12px">Tu wykrywamy numer faktury, kwotę i datę.</span>
+<button class="btn secondary" data-i18n="btn_export_bills_csv" id="exportBillsCSV" style="margin-left:12px">Eksport faktur (CSV)</button>
+</div>
+<details class="history-block">
+<summary data-i18n="history.invoices">Historia faktur</summary>
+<div class="tableScroll">
+<table id="billTable">
+<thead>
+<tr>
+<th data-i18n="inv_th_due">Termin</th>
+<th data-i18n="inv_th_number">Nr</th>
+<th data-i18n="inv_th_supplier">Dostawca</th>
+<th data-i18n="inv_th_amount">Kwota</th>
+<th data-i18n="inv_th_currency">Waluta</th>
+<th data-i18n="th_category">Kategoria</th>
+<th data-i18n="inv_th_status">Status</th>
+<th data-i18n="inv_th_candidate">Kandydat</th>
+<th data-i18n="inv_th_score">Score</th>
+<th data-i18n="inv_th_action">Działanie</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
+</details>
+</div>
+<!-- ACCOUNTS -->
+<div class="section" id="konta">
+<div class="card">
+<div data-i18n="auto_accounts_title" style="font-weight:700">Konta z wyciągu (auto)</div>
+<div class="muted" data-i18n="auto_accounts_desc">Edycja waluty, salda początkowego i uwzględnienia w planie.</div>
+<div class="tableScroll">
+<table id="autoAcc">
+<thead>
+<tr>
+<th data-i18n="acc_th_account">Konto</th>
+<th data-i18n="acc_th_type">Typ</th>
+<th data-i18n="acc_th_currency">Waluta</th>
+<th data-i18n="acc_th_balance_calc">Saldo (oblicz)</th>
+<th data-i18n="acc_th_start_balance">Start</th>
+<th data-i18n="acc_th_include">Uwzględnij</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
+</div>
+</div>
+<div class="section" id="kasa">
+<div class="kasa-qalta">
+<div class="q-header">
+<div class="q-sub" data-i18n="cash.balance_label">Balance</div>
+<div class="q-balance" id="cashBalanceBig">—</div>
+<div class="q-deltas">
+<span class="q-chip pos" id="cashMonthIn">+—</span>
+<span class="q-chip neg" id="cashMonthOut">-—</span>
+</div>
+</div>
+<div class="q-feed" id="kasaFeed"></div>
+<div aria-label="Cash actions" class="q-actions">
+<button aria-label="Photo" class="q-act" id="cashBtnPhoto" type="button">
+<span class="q-ico">📷</span>
+</button>
+<button aria-label="Add" class="q-act q-main" id="cashBtnAdd" type="button">+</button>
+<button aria-label="Voice" class="q-act" id="micBtn" type="button">
+<span class="q-ico">🎤</span>
+<span aria-hidden="true" class="q-voice-bars"></span></button>
+</div>
+<input accept="image/*" id="cashPhoto" style="display:none" type="file"/>
+</div>
+<div class="sheet-backdrop" id="cashSheetBackdrop" style="display:none">
+<div aria-modal="true" class="sheet" id="cashSheet" role="dialog">
+<div class="sheet-handle"></div>
+<div class="sheet-top">
+<div class="sheet-title">Kasa</div>
+<button aria-label="Close" class="sheet-close" id="cashSheetClose" type="button">✕</button>
+</div>
+<div aria-label="Type" class="sheet-toggle" role="tablist">
+<button aria-selected="true" class="seg active" id="cashTypeOut" type="button">− Wydatek</button>
+<button aria-selected="false" class="seg" id="cashTypeIn" type="button">+ Przyjęcie</button>
+</div>
+<div class="sheet-field">
+<div class="lbl">Suma</div>
+<input id="quickAmt" placeholder="0.00" step="0.01" type="number"/>
+</div>
+<div class="sheet-field">
+<div class="lbl">Opis</div>
+<input id="quickNote" placeholder="np. Biedronka, paliwo..." type="text"/>
+</div>
+<div class="sheet-field">
+<div class="lbl" data-i18n="cash.lbl_category">Kategoria</div>
+<select id="quickCashCat">
+<option value="" data-i18n="cash.opt_category">Kategoria</option>
+</select>
+</div>
+<div class="sheet-row">
+<button class="btn" id="cashSheetSave" type="button">Zapisz</button>
+</div>
+<div class="sheet-adv">
+<select class="speechSel" id="speechLang">
+<option value="pl-PL">PL</option>
+<option value="ru-RU">RU</option>
+<option value="en-US">EN</option>
+<option value="uk-UA">UKR</option>
+</select>
+<span class="micStatus" id="micStatus">—</span>
+<button class="btn ghost" id="exportCashCSV" type="button">Eksport CSV</button>
+</div>
+<!-- Legacy table kept for debugging/compat; hidden -->
+<details style="display:none">
+<summary data-i18n="history.cash_debug">Historia kasy (debug)</summary>
+<div class="tableScroll">
+<table id="kasaTable">
+<thead>
+<tr>
+<th>#</th><th>Data</th><th>Typ</th><th>Kwota</th><th>Źródło</th><th>Kategoria</th><th>Komentarz</th><th>Akcje</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
+</details>
+</div>
+</div>
+</div>
+<!-- SETTINGS -->
+<div class="section" id="ustawienia">
+<div class="card">
+<div data-i18n="settings.lang_title" style="font-weight:700"></div>
+<div class="muted small" data-i18n="settings.lang_desc" style="margin-top:4px"></div>
+<div class="lang" id="langBarMain">
+<button class="on" data-lang="pl">PL</button>
+<button data-lang="ru">RU</button>
+<button data-lang="en">EN</button>
+<button data-lang="uk">UKR</button>
+</div>
+</div>
+<div class="card">
+<div style="font-weight:700" data-i18n="settings.mvp_title">Ustawienia (MVP)</div>
+<div class="muted small" style="margin-top:4px" data-i18n="settings.mvp_desc">Zostawiamy tylko to, co ma sens teraz: zapis oraz czyszczenie lokalnej historii.</div>
+<div class="row" style="margin-top:10px">
+<button class="btn secondary" data-i18n="btn_save_settings" id="applySettings" type="button">Zapisz</button>
+<button class="btn ghost" data-i18n="btn_clear_all" id="clearAll" type="button">Wyczyść historię (lokalnie)</button>
+</div>
+</div>
+<div class="card" id="subscriptionCard">
+  <div class="row" style="align-items:center;justify-content:space-between;gap:10px">
+    <div data-i18n="sub_title" style="font-weight:700">Subskrypcja / Demo</div>
+    <div id="subBadge" class="subBadge">—</div>
+  </div>
 
+  <div id="subStatus" class="subStatusBox">
+    <div class="subStatusMain">—</div>
+    <div class="subStatusMeta"></div>
+  </div>
 
-// --- AI chat attachments + voice (MVP: no OCR/AI required) ---
-let __otdAiPendingAtt = [];
-const __otdAiInboxKey = 'otd_ai_inbox_folder_id';
+  <div class="row" style="margin-top:10px">
+    <button class="btn" id="subTogglePlans" type="button" data-i18n="sub.choose_plan">Wybierz taryfę</button>
+  </div>
 
-const __otdAiNowMonth = ()=>{
-  try{ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }catch(_){ return ''; }
-};
+  <div id="subPlansWrap" class="subPlansWrap hidden">
+    <div class="subPlansGrid" id="subPlansGrid">
 
-async function __otdAiEnsureInboxFolder(){
-  try{
-    const cached = localStorage.getItem(__otdAiInboxKey);
-    if(cached) return cached;
-    const name = TT('ai.inbox_name', null, 'AI Inbox');
-    const r = await fetch('/api/docs/folders/create', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ name })
-    });
-    const j = await r.json().catch(()=>null);
-    if(r.ok && j && j.success && j.folder && j.folder.id){
-      localStorage.setItem(__otdAiInboxKey, j.folder.id);
-      return j.folder.id;
-    }
-  }catch(_e){}
-  // fallback: use smart folder for current month/other
-  try{
-    const month = __otdAiNowMonth();
-    const r = await fetch('/api/docs/folders/ensure', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ month, category:'other' })
-    });
-    const j = await r.json().catch(()=>null);
-    if(r.ok && j && j.success && j.folder && j.folder.id){
-      return j.folder.id;
-    }
-  }catch(_e){}
-  return '';
-}
+    <div class="planCard" id="planMonthly" data-plan="monthly">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="planTitle" data-i18n="sub.plan_monthly_title">Miesięcznie</div>
+        <span class="planPill" data-i18n="sub.recommended">Polecane</span>
+      </div>
+      <div class="planPrice"><span id="subPriceMonthly" data-i18n="sub.price_monthly">99 zł</span><small data-i18n="sub.per_month"> / mies.</small></div>
+      <ul>
+        <li data-i18n="sub.f1">Pełny dostęp do aplikacji</li>
+        <li data-i18n="sub.f3">Import CSV/MT940 + dokumenty</li>
+        <li data-i18n="sub.f2">Asystent AI: podpowiedzi i „Rytuał dnia”</li>
+        <li data-i18n="sub.f5">Księgowy w aplikacji: czat, zadania, dokumenty</li>
+      </ul>
+      <div class="row">
+        <button class="btn subBuyBtn" id="payNow" data-plan="monthly" data-i18n="sub.select">Wybierz</button>
+      </div>
+    </div>
 
-function __otdAiRenderAttachRow(){
-  const row = byId('aiAttachRow');
-  if(!row) return;
-  if(!__otdAiPendingAtt.length){
-    row.style.display = 'none';
-    row.innerHTML = '';
-    return;
-  }
-  row.style.display = 'flex';
-  row.innerHTML = __otdAiPendingAtt.map((a, idx)=>{
-    const name = escHtml(String(a.fileName || 'file'));
-    const mime = String(a.fileMime || '').toLowerCase();
-    const status = a.status || 'ready';
-    const badge = status === 'uploading' ? '⏳' : (status === 'error' ? '⚠️' : '✅');
-    const thumb = (mime.startsWith('image/') && a.fileUrl)
-      ? '<img class="aiAttachThumb" src="'+String(a.fileUrl).replace(/"/g,'&quot;')+'" alt=""/>'
-      : '<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid #242b30;background:#0f1418;font-size:14px">📎</div>';
-    return '<div class="aiAttachItem" data-ai-att-idx="'+idx+'">'+thumb+'<div class="aiAttachName">'+badge+' '+name+'</div><button class="btn ghost aiAttachRemove" type="button" data-ai-att-remove="'+idx+'">×</button></div>';
-  }).join('');
+    <div class="planCard" id="plan6m" data-plan="6m">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="planTitle" data-i18n="sub.plan_6m_title">6 miesięcy</div>
+        <span class="planPill" data-i18n="sub.save_6m">Oszczędzasz</span>
+      </div>
+      <div class="planPrice"><span id="subPrice6m" data-i18n="sub.price_6m">499 zł</span><small data-i18n="sub.per_6m"> / 6 mies.</small></div>
+      <ul>
+        <li data-i18n="sub.f1">Pełny dostęp do aplikacji</li>
+        <li data-i18n="sub.f3">Import CSV/MT940 + dokumenty</li>
+        <li data-i18n="sub.f2">Asystent AI: podpowiedzi i „Rytuał dnia”</li>
+        <li data-i18n="sub.f5">Księgowy w aplikacji: czat, zadania, dokumenty</li>
+      </ul>
+      <div class="row">
+        <button class="btn subBuyBtn" id="subBuy6m" data-plan="6m" data-i18n="sub.select">Wybierz</button>
+      </div>
+    </div>
 
-  row.querySelectorAll('[data-ai-att-remove]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const i = parseInt(btn.getAttribute('data-ai-att-remove')||'-1',10);
-      if(isNaN(i) || i<0) return;
-      __otdAiPendingAtt.splice(i,1);
-      __otdAiRenderAttachRow();
-    });
-  });
-}
+    <div class="planCard" id="planYearly" data-plan="yearly">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="planTitle" data-i18n="sub.plan_yearly_title">Rocznie</div>
+        <span class="planPill" data-i18n="sub.save_yearly">Najlepsza cena</span>
+      </div>
+      <div class="planPrice"><span id="subPriceYearly" data-i18n="sub.price_yearly">1059 zł</span><small data-i18n="sub.per_year"> / rok</small></div>
+      <ul>
+        <li data-i18n="sub.f1">Pełny dostęp do aplikacji</li>
+        <li data-i18n="sub.f3">Import CSV/MT940 + dokumenty</li>
+        <li data-i18n="sub.f2">Asystent AI: podpowiedzi i „Rytuał dnia”</li>
+        <li data-i18n="sub.f5">Księgowy w aplikacji: czat, zadania, dokumenty</li>
+      </ul>
+      <div class="row">
+        <button class="btn subBuyBtn" id="subBuyYearly" data-plan="yearly" data-i18n="sub.select">Wybierz</button>
+      </div>
+    </div>
 
-async function __otdAiUploadFileToDocs(file){
-  const MAX = 9.5 * 1024 * 1024;
-  if(!file) return null;
-  if(file.size > MAX){
-    return { ok:false, error: TT('ai.file_too_large', null, 'Файл слишком большой (макс 10MB).') };
-  }
-  const folderId = await __otdAiEnsureInboxFolder();
-  if(!folderId){
-    return { ok:false, error: TT('ai.file_no_folder', null, 'Не смог создать папку для файлов (Docs).') };
-  }
-  const dataUrl = await new Promise((resolve, reject)=>{
-    const fr = new FileReader();
-    fr.onload = ()=> resolve(String(fr.result||''));
-    fr.onerror = ()=> reject(new Error('read_failed'));
-    fr.readAsDataURL(file);
-  });
+    </div>
+  </div>
+</div>
+</div>
+</div>
+<div class="section" id="aiAssist">
+<div class="card aiChatShell">
+<div class="aiChatHeader">
+<button class="btn ghost" id="aiChatsBtn" title="Czaty" type="button">☰</button>
+<div class="meta">
+<div class="title" data-i18n="ai.top_title">AI konsultant</div>
+<div class="muted small sub" data-i18n="ai.top_desc">Porady na podstawie Twoich danych (MVP).</div>
+</div>
+<div class="aiChatHeaderBtns">
+<button class="btn ghost" id="aiSettingsBtn" title="Ustawienia" type="button">⚙︎</button>
+</div>
+</div>
+<div aria-live="polite" class="aiChatThread" id="aiChatLog"></div>
+<div class="aiAttachRow" id="aiAttachRow" style="display:none"></div>
+<div class="aiComposer">
+  <button class="btn ghost aiToolBtn" id="aiAttachBtn" type="button" data-i18n-title="ai.attach_title" data-i18n-aria="ai.attach_aria">＋</button>
+  <div class="aiInputWrap">
+    <textarea id="aiChatInput" data-i18n-ph="ai.input_ph" placeholder="Napisz wiadomość…"></textarea>
+    <button class="btn ghost aiToolBtn aiInsideBtn" id="aiVoiceBtn" type="button" data-i18n-title="ai.voice_title" data-i18n-aria="ai.voice_aria">🎤</button>
+    <button class="btn aiSendBtn aiInsideBtn" id="aiChatSend" type="button" data-i18n-title="ai.send_title" data-i18n-aria="ai.send_aria">➤</button>
+  </div>
+  <input id="aiFileInput" type="file" accept="image/*,application/pdf" multiple style="display:none" />
+</div>
+<!-- AI chats drawer (multi-chat) -->
+<div class="aiDrawerOverlay" id="aiChatDrawer">
+<div aria-label="Czaty AI" class="aiDrawer" role="dialog">
+<div class="aiDrawerHeader">
+<div class="title">Czaty</div>
+<button class="btn ghost" id="aiChatDrawerClose" type="button">×</button>
+</div>
+<div class="aiChatList" id="aiChatList"></div>
+<div class="row" style="gap:8px">
+<button class="btn secondary" id="aiChatNew" type="button">Nowy chat</button>
+</div>
+<div class="muted small">Chmura: na razie nie. To tylko lokalna historia UI.</div>
+</div>
+</div>
+</div>
+<!-- AI settings (moved out of the main chat to stop looking like a form from 2007) -->
+<div class="modal-overlay" id="aiSettingsOverlay">
+<div class="modal-card">
+<div class="row" style="justify-content:space-between;align-items:center;gap:10px">
+<div style="font-weight:800">Ustawienia AI‑księgowego</div>
+<button class="btn ghost" id="aiSettingsClose" type="button">×</button>
+</div>
+<div id="aiProfileBlock" style="margin-top:12px">
+<div class="muted small" data-i18n="ai.profile_who"></div>
+<select id="aiProfileType">
+<option data-i18n="ai.profile_who_solo" value="solo"></option>
+<option data-i18n="ai.profile_who_owner" value="owner"></option>
+<option data-i18n="ai.profile_who_team" value="team"></option>
+</select>
+<div class="muted small" data-i18n="ai.profile_niche" style="margin-top:10px"></div>
+<input data-i18n-ph="ai.profile_niche_ph" id="aiProfileNiche" type="text"/>
+<div class="muted small" data-i18n="ai.profile_goal" style="margin-top:10px"></div>
+<select id="aiProfileGoal">
+<option data-i18n="ai.profile_goal_survive" value="survive"></option>
+<option data-i18n="ai.profile_goal_stable" value="stable"></option>
+<option data-i18n="ai.profile_goal_grow" value="grow"></option>
+</select>
+<div class="muted small" style="margin-top:10px">Cel przychodu miesięcznie (PLN)</div>
+<input id="aiProfileIncomeTarget" inputmode="numeric" placeholder="np. 20000" type="number"/>
+<button class="btn" data-i18n="ai.profile_save" id="aiProfileSave" style="margin-top:12px" type="button"></button>
+<div class="muted small" data-i18n="ai.profile_saved" id="aiProfileSaved" style="margin-top:8px;display:none"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="section" id="reports">
+<div class="card">
+<div data-i18n="reports.title" style="font-weight:700"></div>
+<div class="muted small" data-i18n="reports.desc"></div>
+<div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px">
+<button class="btn secondary" data-i18n="reports.export_statements" id="reportsTx"></button>
+<button class="btn secondary" data-i18n="reports.export_invoices" id="reportsBills"></button>
+<button class="btn secondary" data-i18n="reports.export_month" id="reportsBook"></button>
+</div>
+</div>
+</div>
+<script src="/vendor/xlsx.full.min.js"></script>
+<script src="/js/features/ai/ai-tools.js?v=17"></script>
+<script src="/js/features/ai/ai-engine.js?v=17"></script>
+<script src="/js/features/ai/ai-client.js?v=17"></script>
+<script src="/i18n_pack/i18n.js"></script>
+  <script src="/js/core/bootstrap.js?v=1"></script>
+  <script src="/js/core/config_api.js?v=1"></script>
+  <script src="/js/core/i18n_helpers.js?v=1"></script>
+  <script src="/js/core/i18n.js?v=1"></script>
+  <script src="/js/ui/theme_state.js?v=1"></script>
+  <script src="/js/ui/help_content.js?v=1"></script>
+  <script src="/js/ui/help_init.js?v=1"></script>
+  <script src="/js/core/helpers.js?v=1"></script>
+  <script src="/js/features/transactions/import_csv.js?v=1"></script>
+  <script src="/js/features/analytics/trend_panels.js?v=1"></script>
+  <script src="/js/features/analytics/analytics.js?v=1"></script>
+  <script src="/js/features/categories/spending_breakdown.js?v=1"></script>
+  <script src="/js/features/accounts/auto_accounts_fix.js?v=1"></script>
+  <script src="/js/features/transactions/normalize_tx_schema.js?v=1"></script>
+  <script src="/js/features/bills/normalize_import.js?v=1"></script>
+  <script src="/js/core/state.js?v=1"></script>
+  <script src="/js/features/categories/spending_buttons_fix.js?v=1"></script>
+  <script src="/js/services/sync/cloud_sync.js?v=1"></script>
+  <script src="/js/services/sync/remote_sync.js?v=1"></script>
+  <script src="/js/services/money/rates.js?v=1"></script>
+  <script src="/js/features/reconcile/ai_match.js?v=1"></script>
+  <script src="/js/services/storage/persist_local.js?v=1"></script>
+  <script src="/js/services/storage/reliability.js?v=1"></script>
+  <script src="/js/features/workspaces/workspaces.js?v=1"></script>
+  <script src="/js/services/sync/autosync.js?v=1"></script>
+  <script src="/js/features/cash/quick_examples.js?v=1"></script>
+  <script src="/js/features/book/unified_book.js?v=1"></script>
+  <script src="/js/core/render.js?v=1"></script>
+  <script src="/js/features/forecast/plan_forecast.js?v=1"></script>
+  <script src="/js/features/transactions/accept_one.js?v=1"></script>
+  <script src="/js/features/cash/kasa_crud.js?v=1"></script>
+  <script src="/js/core/events_navigation.js?v=1"></script>
+  <script src="/js/features/documents/vault_mvp.js?v=1"></script>
+  <script src="/js/features/notifications/in_app_notifications.js?v=1"></script>
+  <script src="/js/features/documents/vault_folders.js?v=1"></script>
+<script type="module">
+  // Import the functions you need from the SDKs you need
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-analytics.js";
+  // TODO: Add SDKs for Firebase products that you want to use
+  // https://firebase.google.com/docs/web/setup#available-libraries
 
-  const r = await fetch('/api/docs/upload', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ folderId, fileName: file.name || 'file', dataUrl })
-  });
-  const j = await r.json().catch(()=>null);
-  if(r.ok && j && j.success && j.file){
-    return { ok:true, file: j.file };
-  }
-  return { ok:false, error: (j && j.error) ? j.error : 'upload_failed' };
-}
-
-async function __otdAiHandleFiles(files){
-  const list = Array.from(files || []).slice(0, 6); // MVP: limit burst
-  for(const f of list){
-    const tmp = { fileName: f.name, fileMime: f.type, fileSize: f.size, status:'uploading' };
-    __otdAiPendingAtt.push(tmp);
-    __otdAiRenderAttachRow();
-    try{
-      const up = await __otdAiUploadFileToDocs(f);
-      if(up && up.ok && up.file){
-        tmp.status = 'ready';
-        tmp.fileId = up.file.id;
-        tmp.fileUrl = up.file.fileUrl || up.file.url || '';
-        tmp.fileMime = up.file.fileMime || tmp.fileMime;
-      }else{
-        tmp.status = 'error';
-        tmp.error = (up && up.error) ? String(up.error) : 'upload_failed';
-      }
-    }catch(e){
-      tmp.status = 'error';
-      tmp.error = (e && e.message) ? e.message : 'upload_failed';
-    }
-    __otdAiRenderAttachRow();
-  }
-}
-
-function __otdAiAnyUploading(){
-  return __otdAiPendingAtt.some(a=>a && a.status === 'uploading');
-}
-
-function __otdAiGetReadyAttachments(){
-  return __otdAiPendingAtt
-    .filter(a=>a && a.status === 'ready' && a.fileUrl)
-    .map(a=>({ fileId:a.fileId || '', fileUrl:a.fileUrl || '', fileName:a.fileName || 'file', fileMime:a.fileMime || '' }));
-}
-// --- end attachments ---
-const sendAiChat = async ()=>{
-  const inp = byId('aiChatInput');
-  if(!inp) return;
-  const q = (inp.value||'').trim();
-  const hasAtt = Array.isArray(__otdAiPendingAtt) && __otdAiPendingAtt.length;
-  if(!q && !hasAtt) return;
-  if(__otdAiAnyUploading()){
-    pushMsg('assistant', TT('ai.file_uploading_wait', null, 'Подожди: файл ещё загружается.'));
-    return;
-  }
-  const attsReady = __otdAiGetReadyAttachments();
-  inp.value = '';
-
-  // Write user message and a pending assistant bubble into the active chat
-  ensureDefaultChat();
-  const activeId = getActiveChatId();
-  const msgs0 = loadChat(activeId);
-  msgs0.push({ role:'user', text:(q||TT('ai.sent_files', null, '📎 Файлы')), ts: Date.now(), attachments: attsReady });
-  __otdAiPendingAtt = [];
-  __otdAiRenderAttachRow();
-  msgs0.push({ role:'assistant', text:'⌛ Думаю…', ts: Date.now(), _pending:true });
-  saveChat(activeId, msgs0);
-  touchChatMeta(activeId);
-  renderChat();
-
-  try{
-    const profile = getProfile();
-    let ans = '';
-    if(window.OTD_AI && typeof window.OTD_AI.answer === 'function'){
-      ans = await window.OTD_AI.answer(String(q||''), { profile, attachments: attsReady });
-    }else{
-      ans = 'AI модуль не подключен. Проверь, что загружается /js/features/ai/ai-client.js.';
-    }
-
-    const msgs = loadChat(activeId);
-    for(let i=msgs.length-1;i>=0;i--){
-      if(msgs[i] && msgs[i]._pending){
-        msgs[i].text = ans;
-        delete msgs[i]._pending;
-        break;
-      }
-    }
-    saveChat(activeId, msgs);
-    touchChatMeta(activeId);
-    renderChat();
-  }catch(e){
-    const msgs = loadChat(activeId);
-    for(let i=msgs.length-1;i>=0;i--){
-      if(msgs[i] && msgs[i]._pending){
-        msgs[i].text = 'Не смог ответить: ' + ((e && e.message) ? e.message : 'ошибка');
-        delete msgs[i]._pending;
-        break;
-      }
-    }
-    saveChat(activeId, msgs);
-    touchChatMeta(activeId);
-    renderChat();
-  }
-};
-
-byId('aiChatSend')?.addEventListener('click', sendAiChat);
-byId('aiChatInput')?.addEventListener('keydown', (e)=>{
-  if(e.key === 'Enter' && !e.shiftKey){
-    e.preventDefault();
-    sendAiChat();
-  }
-});
-
-
-// Attachments UI
-byId('aiAttachBtn')?.addEventListener('click', ()=>{
-  byId('aiFileInput')?.click();
-});
-byId('aiFileInput')?.addEventListener('change', (e)=>{
-  try{
-    const files = e && e.target && e.target.files ? e.target.files : [];
-    if(files && files.length) __otdAiHandleFiles(files);
-  }catch(_e){}
-  try{ e.target.value = ''; }catch(_){}
-});
-
-// Voice input (stable): record → transcribe → put text into input (no auto-send)
-(function(){
-  const btn = byId('aiVoiceBtn');
-  const inp = byId('aiChatInput');
-  if(!btn || !inp) return;
-
-  // Prevent duplicate listeners after re-renders / re-inits
-  if(btn.dataset && btn.dataset.voiceBound === '1') return;
-  try{ btn.dataset.voiceBound = '1'; }catch(_){}
-
-  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
-  const getLang = ()=>{
-    try{
-      const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
-      return langMap[k] || 'pl-PL';
-    }catch(_){ return 'pl-PL'; }
+  // Your web app's Firebase configuration
+  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+  const firebaseConfig = {
+    apiKey: "AIzaSyClatmXXE1ZG-MjKcHrquz2HSOZ4SswVVs",
+    authDomain: "onetapday-d45a6.firebaseapp.com",
+    databaseURL: "https://onetapday-d45a6-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "onetapday-d45a6",
+    storageBucket: "onetapday-d45a6.firebasestorage.app",
+    messagingSenderId: "402338811274",
+    appId: "1:402338811274:web:ad8ce7c6d47bb51b22cc73",
+    measurementId: "G-DEDSHTT30C"
   };
 
-  let recording = false;
-  let mediaRec = null;
-  let mediaStream = null;
-  let chunks = [];
-  let opId = 0; // cancel stale callbacks
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+</script>
+<script src="/js/services/sync/sync-cloud.js" type="module"></script>
+<div class="navOverlay" id="navOverlay" style="display:none">
+<div class="navSheet">
+<div class="navHeader">
+<div class="navTitle">OneTapDay</div>
+<button aria-label="Close" class="iconBtn" id="navClose" type="button">✕</button>
+</div>
+<div class="navList">
+<button class="navItem" data-nav="home" type="button" data-i18n="nav.home">Strona główna</button>
+<button class="navItem" data-nav="pulpit" type="button" data-i18n="home.tile_money_title">Pieniądze i płatności</button>
+<button class="navItem" data-nav="docs" type="button" data-i18n="home.tile_docs_title">Dokumenty</button>
+<button class="navItem" data-nav="aiAssist" type="button" data-i18n="home.tile_ai_title">AI konsultant</button>
+<button class="navItem" data-nav="kasa" type="button" data-i18n="home.tile_cash_title">Kasa</button>
+<button class="navItem" data-nav="konta" type="button" data-i18n="home.tile_accounts_title">Konta i karty</button>
+<button class="navItem" data-nav="reports" type="button" data-i18n="home.tile_reports_title">Raporty i eksport</button>
+<button class="navItem" data-nav="analytics" type="button" data-i18n="nav.analytics">Analityka</button>
+<button class="navItem" data-nav="ustawienia" type="button" data-i18n="nav.settings">Ustawienia</button>
+</div>
+</div>
+</div>
+<script>
+    function showKasaTodayStats() {
+      try {
+        var today = new Date().toISOString().slice(0, 10); // '2025-12-13'
+        var rows = document.querySelectorAll('#kasaTable tbody tr');
+        var inSum = 0, outSum = 0, inCount = 0, outCount = 0;
 
-  function setUI(on){
-    recording = on;
-    btn.classList.toggle('is-recording', !!on);
-    btn.textContent = on ? '⏹' : '🎤';
-  }
+        rows.forEach(function(tr) {
+          var tds = tr.querySelectorAll('td');
+          if (!tds[1]) return;
 
-  function stopTracks(){
-    try{
-      if(mediaStream){
-        mediaStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){ } });
-      }
-    }catch(_){}
-    mediaStream = null;
-  }
+          var date = (tds[1].innerText || '').trim();
+          if (date !== today) return;
 
-  function blobToBase64(blob){
-    return new Promise((resolve, reject)=>{
-      try{
-        const r = new FileReader();
-        r.onload = ()=> {
-          const s = String(r.result || '');
-          const b64 = s.includes(',') ? s.split(',')[1] : s;
-          resolve(b64);
-        };
-        r.onerror = ()=> reject(r.error || new Error('FileReader error'));
-        r.readAsDataURL(blob);
-      }catch(e){ reject(e); }
-    });
-  }
+          var type = (tds[2]?.innerText || '').trim().toLowerCase();
+          var amountRaw = (tds[3]?.innerText || '')
+            .replace(/\s/g,'')
+            .replace(',', '.');
+          var amount = parseFloat(amountRaw);
+          if (!amount || !isFinite(amount)) return;
 
-  async function transcribe(blob, mime){
-    const b64 = await blobToBase64(blob);
-    const r = await fetch(`${API_BASE}/ai/transcribe`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ audio: b64, mime: mime || blob.type || 'audio/webm', language: getLang() })
-    });
-    const j = await r.json().catch(()=> ({}));
-    if(!r.ok || !j || j.success !== true){
-      throw new Error((j && j.error) ? j.error : ('Transcribe failed ' + r.status));
-    }
-    return String(j.text || '').trim();
-  }
-
-  async function startMedia(){
-    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-    mediaStream = stream;
-    chunks = [];
-    let opts = {};
-    try{
-      const prefer = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg','audio/mp4'];
-      for(const m of prefer){
-        if(window.MediaRecorder && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(m)){
-          opts.mimeType = m;
-          break;
-        }
-      }
-    }catch(_){}
-    mediaRec = new MediaRecorder(stream, opts);
-    mediaRec.ondataavailable = (e)=>{ try{ if(e.data && e.data.size>0) chunks.push(e.data); }catch(_){} };
-    return true;
-  }
-
-  async function start(){
-    if(recording) return;
-    const my = ++opId;
-
-    // Prefer stable flow: record → server STT
-    if(navigator.mediaDevices && window.MediaRecorder){
-      try{
-        await startMedia();
-        setUI(true);
-        mediaRec.onstop = async ()=>{
-          const mine = my;
-          const localChunks = chunks.slice();
-          const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
-          setUI(false);
-          stopTracks();
-
-          if(mine !== opId) return; // cancelled
-          try{
-            const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
-            const text = await transcribe(blob, mime);
-            if(!text) return;
-            const prev = String(inp.value || '').trim();
-            inp.value = (prev ? (prev + ' ') : '') + text;
-            try{ inp.focus(); }catch(_){}
-          }catch(e){
-            // If STT is not available, do not spam the chat. Just show a minimal error.
-            if(typeof pushMsg === 'function'){
-              pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог распознать голос. Проверь AI ключ / доступ.'));
-            }
+          if (type.indexOf('przyję') !== -1 || type.indexOf('przych') !== -1) {
+            inSum += amount; inCount++;
+          } else if (type.indexOf('wydan') !== -1 || type.indexOf('wydatek') !== -1) {
+            outSum += amount; outCount++;
           }
-        };
-        mediaRec.start();
-        return;
-      }catch(_e){
-        // fallthrough to Web Speech if available
-        stopTracks();
-        setUI(false);
+        });
+
+        var net = inSum - outSum;
+        var msg =
+          'Статистика за сегодня:\n\n' +
+          'Приход: ' + inSum.toFixed(2) + ' zł\n' +
+          'Расход: ' + outSum.toFixed(2) + ' zł\n' +
+          'Итого: ' + net.toFixed(2) + ' zł\n' +
+          'Операций: +' + inCount + ' / -' + outCount;
+
+        alert(msg);
+      } catch (e) {
+        console.error('showKasaTodayStats error', e);
       }
     }
-
-    // Fallback: Web Speech API (device-dependent)
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if(!SR){
-      if(typeof pushMsg === 'function'){
-        pushMsg('assistant', TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере.'));
-      }
-      return;
-    }
-
-    try{
-      const rec = new SR();
-      rec.lang = getLang();
-      rec.interimResults = false;
-      rec.continuous = false;
-
-      setUI(true);
-      rec.onresult = (ev)=>{
-        try{
-          const t = ev.results && ev.results[0] && ev.results[0][0] ? ev.results[0][0].transcript : '';
-          const text = String(t || '').trim();
-          if(text){
-            const prev = String(inp.value || '').trim();
-            inp.value = (prev ? (prev + ' ') : '') + text;
-            try{ inp.focus(); }catch(_){}
-          }
-        }catch(_){}
-      };
-      rec.onerror = ()=> setUI(false);
-      rec.onend = ()=> setUI(false);
-      rec.start();
-    }catch(_e){
-      setUI(false);
-      if(typeof pushMsg === 'function'){
-        pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог включить голосовой ввод.'));
-      }
-    }
-  }
-
-  function stop(){
-    // Stop either MediaRecorder or SpeechRecognition (if running)
-    const my = ++opId;
-    try{
-      if(mediaRec && mediaRec.state !== 'inactive'){
-        mediaRec.stop();
-        return;
-      }
-    }catch(_){}
-    // If we reached here, nothing to stop
-    setUI(false);
-    stopTracks();
-  }
-
-  btn.addEventListener('click', ()=>{
-    if(recording) stop();
-    else start();
-  });
-})();;
-// Initial render
-renderChat();
-
-  }catch(e){
-    console.warn('home/ai wiring error', e);
-  }
-  // Tabs (with gate)
-  document.querySelectorAll('.tabs .tab').forEach(t=>{
-    t.addEventListener('click', ()=>{
-      // Если раздел заблокирован — ведём в Ustawienia
-      if (t.classList.contains('disabled')) {
-        document.querySelector('[data-sec=ustawienia]')?.click();
-        return;
-      }
-
-      const secId = t.dataset.sec;
-      if (!secId) return;
-
-      // Панель = раздел pulpit (дневной обзор)
-      if (secId === 'pulpit' && window.appGoSection) {
-        window.appGoSection('pulpit');
-        return;
-      }
-
-      // Остальные вкладки ведут в свои разделы
-      if (window.appGoSection) {
-        window.appGoSection(secId);
-      }
-    });
-  });
-
-  // Buttons
-  $id('backHomeBtn')?.addEventListener('click', ()=> { try{ if(window.appGoHome) window.appGoHome(); }catch(_e){} });
-  $id('settingsBtn')?.addEventListener('click', ()=> window.appGoSection && appGoSection('ustawienia'));
-  $id('runAIAll')?.addEventListener('click', runAIAll);
-  $id('makePlan')?.addEventListener('click', renderPlan);
-  $id('applyPlan')?.addEventListener('click', renderPlan);
-   $id('applyMinPay')?.addEventListener('click', () => {
-    try {
-      // Заглушка: просто пересчитать план и сохранить
-      render();
-      saveLocal();
-      pushState();
-    } catch (e) {
-      console.warn('applyMinPay error', e);
-    }
-  });
-
-  $id('syncNow')?.addEventListener('click', fetchSources);
-  $id('closeDay')?.addEventListener('click', openCloseDayModal);
-  $id('closeDayCancel')?.addEventListener('click', closeCloseDayModal);
-
-  $id('addToday')?.addEventListener('click', openAddTodayModal);
-  $id('addTodayCancel')?.addEventListener('click', closeAddTodayModal);
-  $id('addBankBtn')?.addEventListener('click', goAddBank);
-  $id('addCashBtn')?.addEventListener('click', goAddCash);
-  $id('addBillsBtn')?.addEventListener('click', goAddBills);
-
-  $id('exportBook')?.addEventListener('click', exportBookCSV);
-  $id('exportTxCSV')?.addEventListener('click', exportTxCSV);
-  $id('exportBillsCSV')?.addEventListener('click', exportBillsCSV);
-  $id('exportCashCSV')?.addEventListener('click', exportCashCSV);
-
-
-  $id('runDayAI')?.addEventListener('click', ()=>{ try{ fetchSources(); }catch(e){ console.warn('runDayAI error', e); } });
-  $id('openAIQuestions')?.addEventListener('click', ()=>{
-    try{
-      if(window.appGoSection) window.appGoSection('aiAssist');
-      const inp = document.getElementById('aiChatInput');
-      if(inp){
-        inp.focus();
-        try{ inp.scrollIntoView({block:'center'}); }catch(_){}
-      }
-    }catch(e){
-      console.warn('openAIQuestions error', e);
-    }
-  });
-
-
-// File/url
-// Безопасный импорт файлов с честным сообщением пилоту
-async function safeImportFile(kindLabel, importerFn, file){
-  try{
-    const rows = await importerFn(file);
-    return Array.isArray(rows) ? rows : [];
-  }catch(err){
-    console.error("Ошибка импорта (" + kindLabel + ")", err);
-    alert(
-      "Ошибка при импорте файла (" + kindLabel + ").\n\n" +
-      "Для пилота: попробуйте другой экспорт (CSV) или пришлите файл Никите, чтобы мы допилили импорт."
-    );
-    return [];
-  }
-}
-
-$id('txFile')?.addEventListener('change', async e=>{
-  const f = e.target.files[0];
-  if(!f) return;
-
-  // Защищённый импорт выписки
-  const newRows = await safeImportFile("выписка", importTxByFile, f);
-
-  if(!newRows.length){
-alert(
-  "Не могу распознать файл.\n\n" +
-  "Как это работает сейчас:\n" +
-  "- если это CSV, приложение может спросить номера колонок: дата, сумма, описание, контрагент;\n" +
-  "- если таких окон не было, файл вообще не читается как таблица.\n\n" +
-  "Лучше всего сейчас работает простой CSV-экспорт из банка или Stripe.\n" +
-  "Если это уже CSV и ошибка повторяется – пришлите файл команде OneTapDay, формат добавим в импорт."
-);
-    e.target.value = "";
-    return;
-  }
-
-  const normalized = normalizeImportedTxRows(newRows);
-
-  if(!normalized.length){
-    alert("Не могу распознать файл. Проверьте формат или выберите колонки вручную.");
-    e.target.value = "";
-    return;
-  }
-
-   if(typeof confirmTxImport === "function"){
-    const ok = confirmTxImport(normalized);
-    if(!ok){
-      alert("Импорт отменён.");
-      e.target.value = "";
-      return;
-    }
-  }
-
-// P0: сначала привязываем импорт к счёту (чтобы сразу было понятно, откуда выписка)
-if(typeof assignImportedTxToAccount === "function"){
-  assignImportedTxToAccount(normalized);
-}
-
-// P0: merge без потери пользовательских правок + защита от повторного/частичного импорта
-const existingTx = Array.isArray(tx) ? tx : [];
-
-function _otdNormTxt(s){
-  return String(s||'').trim().toLowerCase().replace(/\s+/g,' ').slice(0,120);
-}
-function _otdAmt(v){
-  try{ return (typeof asNum==="function") ? asNum(v) : Number(String(v||'').replace(',','.')); }catch(_){ return 0; }
-}
-function _otdTxFp(r){
-  const d = String(toISO(getVal(r,["Data księgowania","Data","date","Дата"])||"") || "").slice(0,10);
-  const amt = _otdAmt(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
-  const cur = String(getVal(r,["Waluta","currency","Валюта"])||"PLN").toUpperCase().trim();
-  const desc = _otdNormTxt(getVal(r,["Tytuł/Opis","Opis transakcji","Opis","description","Описание"])||"");
-  const cp = _otdNormTxt(getVal(r,["Kontrahent","Counterparty","Контрагент"])||"");
-  const bal = _otdNormTxt(getVal(r,["Saldo po operacji","Saldo po","balance"])||"");
-  // intentionally NOT including account in fp (so re-assigning account doesn't break dedupe)
-  return [d, Math.round(amt*100), cur, desc, cp, bal].join("|");
-}
-function _otdBankId(r){
-  const raw = String(getVal(r,["ID transakcji","Transaction ID","Id transakcji","ID","id"])||"").trim();
-  return raw || "";
-}
-function _otdEnrichKeep(existing, incoming){
-  // fill only blanks; never overwrite user's category/status if already set
-  if(!existing || !incoming) return;
-  Object.keys(incoming).forEach(k=>{
-    const v = incoming[k];
-    if(v === undefined || v === null) return;
-    const cur = existing[k];
-    const empty = (cur === undefined || cur === null || cur === "");
-    if(empty && v !== "") existing[k] = v;
-  });
-  // ensure account fields
-  if(incoming._acc && !existing._acc) existing._acc = incoming._acc;
-  if(incoming["ID konta"] && !existing["ID konta"]) existing["ID konta"] = incoming["ID konta"];
-}
-
-// Build multiset of existing fingerprints + fast bankId lookup
-const bankIdSet = new Set();
-const fpToIdxs = new Map();
-existingTx.forEach((r, idx)=>{
-  if(!r) return;
-  const bid = _otdBankId(r);
-  if(bid) bankIdSet.add(bid);
-  const fp = _otdTxFp(r);
-  if(!fpToIdxs.has(fp)) fpToIdxs.set(fp, []);
-  fpToIdxs.get(fp).push(idx);
-});
-const fpUsed = new Map();
-
-const toAdd = [];
-normalized.forEach(r=>{
-  if(!r) return;
-
-  const bid = _otdBankId(r);
-  if(bid){
-    if(bankIdSet.has(bid)){
-      // duplicate by bank transaction id -> enrich and skip adding
-      const fp = _otdTxFp(r);
-      const list = fpToIdxs.get(fp) || [];
-      const used = fpUsed.get(fp) || 0;
-      if(list.length && used < list.length){
-        _otdEnrichKeep(existingTx[list[used]], r);
-        fpUsed.set(fp, used+1);
-      }
-      return;
-    }
-    // IMPORTANT: dedupe внутри импорта по bankId (если файл содержит повтор)
-    bankIdSet.add(bid);
-  }
-
-  const fp = _otdTxFp(r);
-  const list = fpToIdxs.get(fp) || [];
-  const used = fpUsed.get(fp) || 0;
-  if(list.length && used < list.length){
-    // duplicate by fingerprint -> enrich existing row and skip adding
-    _otdEnrichKeep(existingTx[list[used]], r);
-    fpUsed.set(fp, used+1);
-    return;
-  }
-
-  toAdd.push(r);
-  // NOTE: we intentionally do NOT "dedupe inside the same file" by fp, because identical operations may be real.
-});
-
-tx = existingTx.concat(toAdd);
-
-if(typeof ensureTxIds === "function") ensureTxIds();
-
-// Нормальные счета по картам из файла
-
-  // Нормальные счета по картам из файла
-  ensureCardAccountsFromTx();
-
-  // Убиваем мусорные авто-счета вида tx-2025-...
-  dropTxGeneratedAccounts();
-
-  // ВАЖНО: НЕ вызываем inferAccounts()
-
-  render();
-  saveLocal();
-  pushState();
-
-  // Сбрасываем input, чтобы можно было залить тот же файл ещё раз
-  e.target.value = "";
-});
-
-
-
-  $id('txImage')?.addEventListener('change', async (e)=>{ 
-    const files = [...(e.target.files || [])];
-    if(!files.length) return;
-    try{
-      if(window.OTD_DocVault?.addFiles){
-        await window.OTD_DocVault.addFiles(files, { source:'image', type:'statement' });
-        try{ await window.OTD_DocVault.refresh?.(null); }catch(_){}
-        try{ window.appGoSection?.('docs'); }catch(_){}
-        try{ toast?.('Dodano do Dokumentów (OCR wyłączony)'); }catch(_){}
-      }else{
-        alert('Dokumenty: moduł DocVault nie jest gotowy.');
-      }
-    }catch(err){
-      console.warn('txImage->DocVault error', err);
-      alert('Nie udało się dodać plików do Dokumentów.');
-    }finally{
-      try{ e.target.value = ''; }catch(_){}
-    }
-  });
-
-  $id('billFile')?.addEventListener('change', async e=>{
-  const f = e.target.files[0];
-  if(!f) return;
-
-  // Защищённый импорт фактур
-  const newRows = await safeImportFile("фактуры", importBillsByFile, f);
-
-  if(!newRows.length){
-    alert("Не могу распознать файл фактур. Проверьте формат или попробуйте CSV.");
-    e.target.value = "";
-    return;
-  }
-
-  const normalized = normalizeImportedBillsRows(newRows);
-
-  if(!normalized.length){
-    alert("Файл фактур распознан, но данные пустые.");
-    e.target.value = "";
-    return;
-  }
-
-  const ok = (typeof confirmBillsImport === "function")
-    ? confirmBillsImport(normalized)
-    : confirm(TT("dialogs.import_invoices_from_file", null, "Импортировать фактуры из файла?"));
-
-  if(!ok){
-    alert("Импорт отменён.");
-    e.target.value = "";
-    return;
-  }
-
-  // ВАЖНО: не стираем старые фактуры
-  bills = Array.isArray(bills) ? bills : [];
-  bills.push(...normalized);
-
-  saveLocal();
-  render();
-  pushState();
-
-  e.target.value = "";
-});
-
-
-  $id('billImage')?.addEventListener('change', async (e)=>{ 
-    const files = [...(e.target.files || [])];
-    if(!files.length) return;
-    try{
-      if(window.OTD_DocVault?.addFiles){
-        await window.OTD_DocVault.addFiles(files, { source:'image', type:'invoice' });
-        try{ await window.OTD_DocVault.refresh?.(null); }catch(_){}
-        try{ window.appGoSection?.('docs'); }catch(_){}
-        try{ toast?.('Dodano do Dokumentów (OCR wyłączony)'); }catch(_){}
-      }else{
-        alert('Dokumenty: moduł DocVault nie jest gotowy.');
-      }
-    }catch(err){
-      console.warn('billImage->DocVault error', err);
-      alert('Nie udało się dodać plików do Dokumentów.');
-    }finally{
-      try{ e.target.value = ''; }catch(_){}
-    }
-  });
-
-  // Cash quick & ops
-function quickCashReadAmount(){
-  const el = $id('quickAmt');
-  if (!el) return NaN;
-  const raw = String(el.value || "").replace(",", ".");
-  const n = (typeof asNum === "function") ? asNum(raw) : Number(raw);
-  return n;
-}
-
-function quickCashAdd(kind){
-  const amtEl  = $id('quickAmt');
-  const noteEl = $id('quickNote');
-  const catSel = $id('quickCashCat');
-  if (!amtEl) return;
-
-  const amount  = quickCashReadAmount();
-  const comment = (noteEl?.value || "").trim();
-  const cat     = catSel ? (catSel.value || "") : "";
-
-  if (!amount || !isFinite(amount)) {
-    alert("Сначала введите сумму");
-    return;
-  }
-
-  if (typeof addKasa !== "function") {
-    console.warn("addKasa is not a function");
-    return;
-  }
-
-  addKasa(kind, amount, comment, 'manual', cat);
-
-  amtEl.value = "";
-  if (noteEl) noteEl.value = "";
-}
-
-function quickCashClose(){
-  if (typeof kasaBalance !== "function") {
-    console.warn("kasaBalance is not a function");
-    return;
-  }
-  const current = kasaBalance().toFixed(2);
-  const a = prompt('Итог в кассе (PLN):', current);
-  if (a === null) return;
-  const v = (typeof asNum === "function") ? asNum(a) : Number(String(a).replace(",", "."));
-  if (isNaN(v)) {
-    alert('Сумма некорректна');
-    return;
-  }
-  addKasa('zamknięcie', v, 'close', 'manual');
-}
-
-// безопасно навешиваем обработчики при загрузке
-$id('addIn')?.addEventListener('click', ()=> quickCashAdd('przyjęcie'));
-$id('addOut')?.addEventListener('click', ()=> quickCashAdd('wydanie'));
-$id('cashClose')?.addEventListener('click', ()=> quickCashClose());
-
-// Save on unload (sendBeacon fallback)
-  window.addEventListener('beforeunload', ()=>{
-    if(!REMOTE_OK) return;
-    try{
-      const email=localStorage.getItem(USER_KEY)||"";
-      if(!email) return;
-      const body={
-        email,
-        tx: _otdGetJSON('tx_manual_import', []),
-        bills: _otdGetJSON('bills_manual_import', []),
-        kasa: _otdGetJSON('kasa', []),
-        accMeta: _otdGetJSON('accMeta', {}),
-        settings: stateKeys.reduce((m,k)=> (m[k]=localStorage.getItem(k), m), {})
-      };
-      const blob=new Blob([JSON.stringify(body)],{type:'application/json'});
-      navigator.sendBeacon && navigator.sendBeacon(`${API_BASE}/state/save`, blob);
-    }catch(e){}
-  });
-});// Speech
-
-// Cash voice (LIVE + AI categorize):
-// - Live text while speaking (Web Speech API) where available
-// - Fallback: record → server STT (/api/ai/transcribe)
-// - Then (optional): AI parse (/api/ai/cash/parse) to detect amount(s) + category(ies)
-// Notes:
-// - Single op: NO auto-save. User confirms by tapping "Zapisz".
-// - Multiple ops in one phrase: we ask confirmation to add them.
-(() => {
-  const micBtn = $id('micBtn');
-  if(!micBtn || micBtn.dataset.voiceBound === '1') return;
-  micBtn.dataset.voiceBound = '1';
-
-  // ---------- mini toast (bottom overlay) ----------
-  let toastEl = $id('cashVoiceToast');
-  if(!toastEl){
-    toastEl = document.createElement('div');
-    toastEl.id = 'cashVoiceToast';
-    toastEl.style.position = 'fixed';
-    toastEl.style.zIndex = '9999';
-    toastEl.style.padding = '10px 12px';
-    toastEl.style.borderRadius = '14px';
-    toastEl.style.background = 'rgba(0,0,0,0.72)';
-    toastEl.style.border = '1px solid rgba(255,255,255,0.10)';
-    toastEl.style.color = '#fff';
-    toastEl.style.fontSize = '14px';
-    toastEl.style.lineHeight = '1.25';
-    toastEl.style.backdropFilter = 'blur(10px)';
-    toastEl.style.display = 'none';
-    toastEl.style.pointerEvents = 'none';
-    document.body.appendChild(toastEl);
-  }
-
-  let toastHideT = null;
-
-  function _cashVoiceActionsRect(){
-    try{
-      // prefer kasa bar
-      const root = document.querySelector('.section#kasa.active') || $id('kasa') || document;
-      const actions = (root && root.querySelector) ? (root.querySelector('.q-actions') || root.querySelector('#cashQuickActions')) : null;
-      const el = actions || document.querySelector('.q-actions') || null;
-      return el ? el.getBoundingClientRect() : null;
-    }catch(_){
-      return null;
-    }
-  }
-
-  function _cashVoiceToastReposition(){
-    try{
-      const r = _cashVoiceActionsRect();
-      if(!r) return;
-      const inset = 14; // keep inside the pill
-      toastEl.style.left = (r.left + inset) + 'px';
-      toastEl.style.width = Math.max(140, (r.width - inset*2)) + 'px';
-      toastEl.style.right = 'auto';
-      toastEl.style.transform = 'none';
-      // place above the bottom action bar
-      toastEl.style.bottom = (window.innerHeight - r.top + 10) + 'px';
-    }catch(_){}
-  }
-
-  window.addEventListener('resize', ()=>{ try{ if(toastEl && toastEl.style.display !== 'none') _cashVoiceToastReposition(); }catch(_){} });
-
-  function setStatus(text, sticky){
-    try{
-      if(toastHideT){ clearTimeout(toastHideT); toastHideT = null; }
-      if(!text){
-        toastEl.style.display = 'none';
-        toastEl.textContent = '';
-        return;
-      }
-      _cashVoiceToastReposition();
-      toastEl.textContent = text;
-      toastEl.style.display = 'block';
-      if(!sticky){
-        toastHideT = setTimeout(()=>{ try{ toastEl.style.display='none'; }catch(_){} }, 3500);
-      }
-    }catch(_){}
-  }
-
-  // ---------- helpers ----------
-  function getLang(){
-    // prefer explicit selector if present (cash sheet)
-    try{
-      const sel = $id('speechLang');
-      const v = sel && sel.value ? String(sel.value) : '';
-      if(v){
-        try{ localStorage.setItem('speechLang', v); }catch(_){}
-        return v;
-      }
-    }catch(_){}
-    return localStorage.getItem('speechLang')
-      || localStorage.getItem('otd_lang')
-      || 'pl-PL';
-  }
-
-  function showCashSheet(kind){
-    // IMPORTANT: in this MVP the cash sheet is opened via backdrop display:flex (cashSheetBackdrop)
-    const sheet = $id('cashSheet');
-    const backdrop = $id('cashSheetBackdrop') || $id('sheetBackdrop');
-
-    try{
-      if(backdrop){
-        backdrop.style.display = 'flex';
-        if(backdrop.classList) backdrop.classList.add('show');
-      }
-      if(sheet && sheet.classList) sheet.classList.add('open');
-    }catch(_){}
-
-    // select type
-    const outBtn = $id('cashTypeOut');
-    const inBtn = $id('cashTypeIn');
-    const k = String(kind || '').toLowerCase();
-    const isIn = (k === 'in' || k.includes('przyj') || k === 'przyjęcie' || k === 'przyjecie');
-    if(isIn){
-      if(inBtn) inBtn.click();
-    }else{
-      if(outBtn) outBtn.click();
-    }
-
-    // categories must be filled
-    try{ if(typeof fillQuickCashCat === 'function') fillQuickCashCat(); }catch(_){}
-  }
-
-  function prefillSingle(item, rawText){
-    try{
-      const _k = String((item && item.kind) || '').toLowerCase();
-      const kind = (_k === 'in' || _k.includes('przyj') || _k === 'przyjęcie' || _k === 'przyjecie') ? 'in' : 'out';
-      const amt = Number(item && item.amount);
-      const note = String((item && item.note) || '').trim() || String(rawText || '').trim();
-      const catId = String((item && item.categoryId) || '').trim();
-
-      showCashSheet(kind);
-
-      const amtEl = $id('quickAmt');
-      if(amtEl && isFinite(amt)) amtEl.value = Math.abs(amt).toFixed(2);
-
-      const noteEl = $id('quickNote');
-      if(noteEl) noteEl.value = note;
-
-      const catEl = $id('quickCashCat');
-      if(catEl && catId){
-        // if option exists, set it
-        const has = Array.from(catEl.options || []).some(o => String(o.value) === catId);
-        if(has) catEl.value = catId;
-      }
-    }catch(e){
-      console.warn('prefillSingle error', e);
-    }
-  }
-
-  function fmtItemLine(it){
-    try{
-      const _k = String(it && it.kind || '').toLowerCase();
-      const sign = (_k === 'in' || _k.includes('przyj') || _k === 'przyjęcie' || _k === 'przyjecie') ? '+' : '-';
-      const amt = isFinite(Number(it.amount)) ? Math.abs(Number(it.amount)).toFixed(2) : String(it.amount||'');
-      const note = String(it.note || '').trim();
-      const cat = String(it.categoryId || '').trim();
-      return `${sign}${amt} | ${note}${cat ? ' | ' + cat : ''}`;
-    }catch(_){
-      return '';
-    }
-  }
-
-  // ---------- fallback parser (no AI) ----------
-  function parseCash(text){
-    const t = String(text||'').trim();
-    if(!t) return { kind:'out', amount:0, note:'' };
-
-    const low = t.toLowerCase();
-
-    // amounts (supports 50, 50.5, 50,50, -50)
-    const nums = [];
-    const re = /[-+]?\d+(?:[.,]\d{1,2})?/g;
-    let m;
-    while((m = re.exec(t))){
-      const raw = m[0];
-      const n = Number(String(raw).replace(',', '.'));
-      if(isFinite(n)) nums.push(n);
-    }
-
-    // determine sign/kind
-    let kind = 'out';
-    const incomeHints = ['przychód','wpływ','wplyw','dostałem','otrzymałem','zarobiłem','plus','+','przyjęcie','wplata','deposit','income','received','got paid'];
-    const expenseHints = ['wydatek','wydatki','kupiłem','kupilem','zapłaciłem','zaplacilem','płaciłem','placilem','minus','-','zapłata','zaplata','spent','paid','purchase','wydaj','wydałem','wydałem'];
-    if(incomeHints.some(h => low.includes(h))) kind = 'in';
-    if(expenseHints.some(h => low.includes(h))) kind = 'out';
-
-    // choose amount: prefer explicit sign in text, else first number
-    let amount = 0;
-    if(nums.length){
-      // if user said "minus 50" but without '-', nums has 50; keep kind logic above
-      amount = Math.abs(nums[0]);
-    }
-
-    // strip numbers and keywords for note
-    let note = t
-      .replace(re, ' ')
-      .replace(/\b(minus|plus|wydatek|wydatki|przychód|przychod|przyjęcie|przyjecie|spent|paid|income|deposit)\b/gi,' ')
-      .replace(/\s+/g,' ')
-      .trim();
-
-    return { kind, amount, note };
-  }
-
-  // ---------- AI parse ----------
-  async function aiParseCash(text){
-    const t = String(text||'').trim();
-    if(!t) return null;
-    try{
-      const r = await fetch(`${API_BASE}/ai/cash/parse`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        credentials:'include',
-        body: JSON.stringify({ text: t, lang: getLang() })
-      });
-      const j = await r.json().catch(()=> ({}));
-      if(!r.ok || !j || j.success !== true || !Array.isArray(j.items)) return null;
-      const items = j.items.filter(it => it && isFinite(Number(it.amount)) && Number(it.amount) !== 0);
-      return items.length ? items : null;
-    }catch(_e){
-      return null;
-    }
-  }
-
-  async function handleFinalText(text){
-    const t = String(text||'').trim();
-    if(!t){ setStatus('', false); return; }
-
-    // quick show what we heard
-    setStatus('🎙️ ' + t, false);
-
-    // try AI parse (amount + category, possibly multiple ops)
-    const items = await aiParseCash(t);
-    if(items && items.length){
-      if(items.length === 1){
-        prefillSingle(items[0], t);
-        return;
-      }
-
-      const lines = items.map(fmtItemLine).filter(Boolean).join('\n');
-      const ok = confirm(`Rozpoznałem ${items.length} operacje:\n\n${lines}\n\nDodać je do kasy?`);
-      if(ok){
-        try{
-          for(const it of items){
-            const _k = String(it && it.kind || '').toLowerCase();
-            const kind = (_k === 'in' || _k.includes('przyj') || _k === 'przyjęcie' || _k === 'przyjecie') ? 'przyjęcie' : 'wydanie';
-            const amt = Math.abs(Number(it.amount));
-            const note = String(it.note || '').trim();
-            const cat = String(it.categoryId || '').trim();
-            if(typeof addKasa === 'function') addKasa(kind, amt, note, 'voice-ai', cat);
-          }
-          try{ if(typeof render === 'function') render(); }catch(_){}
-          setStatus(`✅ Dodano ${items.length}`, false);
-        }catch(_e){
-          // fallback: prefill first item
-          prefillSingle(items[0], t);
-        }
-      }else{
-        prefillSingle(items[0], t);
-      }
-      return;
-    }
-
-    // fallback heuristic
-    const p = parseCash(t);
-    prefillSingle({ kind: p.kind, amount: p.amount, note: p.note, categoryId: '' }, t);
-  }
-
-  // ---------- UI state ----------
-  function setUI(on){
-    try{
-      micBtn.classList.toggle('recording', !!on);
-      // DON'T replace innerHTML: it breaks layout (and you wanted it to stay iPhone-like)
-      const ico = micBtn.querySelector('.q-ico');
-      if(ico) ico.textContent = on ? '⏹' : '🎤';
-    }catch(_){}
-  }
-
-  // ---------- Mode A: Live transcription via Web Speech API ----------
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let speechRec = null;
-  let liveText = '';
-  let isRecording = false;
-  let finalizePending = false;
-  let finalizedOnce = false;
-
-  function startLive(){
-    if(!SR) return false;
-    try{
-      liveText = '';
-      finalizePending = false;
-      finalizedOnce = false;
-
-      speechRec = new SR();
-      speechRec.lang = getLang();
-      speechRec.continuous = true;
-      speechRec.interimResults = true;
-      speechRec.maxAlternatives = 1;
-
-      speechRec.onresult = (e)=>{
-        try{
-          let finalT = '';
-          let interimT = '';
-          for(let i = e.resultIndex; i < e.results.length; i++){
-            const r = e.results[i];
-            const chunk = (r && r[0] && r[0].transcript) ? String(r[0].transcript) : '';
-            if(!chunk) continue;
-            if(r.isFinal) finalT += chunk + ' ';
-            else interimT += chunk + ' ';
-          }
-          const merged = (finalT + interimT).trim();
-          if(merged){
-            liveText = merged;
-            setStatus('🎙️ ' + merged, true);
-          }else{
-            setStatus('🎙️ ...', true);
-          }
-        }catch(_){}
-      };
-      speechRec.onerror = (e)=>{
-        setStatus('🎙️ Błąd głosu: ' + (e && e.error ? e.error : ''), false);
-      };
-      speechRec.onend = ()=>{
-        const pending = finalizePending;
-        const text = String(liveText || '').trim();
-        if(finalizedOnce){
-          speechRec = null;
-          finalizePending = false;
-          isRecording = false;
-          setUI(false);
-          return;
-        }
-        speechRec = null;
-        finalizePending = false;
-      finalizedOnce = false;
-        isRecording = false;
-        setUI(false);
-        if(pending){
-          setStatus('🎙️ Przetwarzam…', true);
-          finalizedOnce = true;
-          handleFinalText(text);
-        }else{
-          if(text){ finalizedOnce = true; handleFinalText(text); }
-          else setStatus('', false);
-        }
-      };
-
-      isRecording = true;
-      setUI(true);
-      setStatus('🎙️ ...', true);
-      speechRec.start();
-      return true;
-    }catch(_e){
-      speechRec = null;
-      return false;
-    }
-  }
-
-  function stopLive(){
-    try{
-      if(!speechRec){
-        finalizePending = false;
-      finalizedOnce = false;
-        isRecording = false;
-        setUI(false);
-        return;
-      }
-      finalizePending = true;
-      setStatus('🎙️ Przetwarzam…', true);
-
-      try{ speechRec.stop(); }catch(e){ try{ speechRec.abort && speechRec.abort(); }catch(_){ } }
-
-      // Some browsers never fire onend reliably. Force finalize after a short delay.
-      setTimeout(()=>{
-        try{
-          if(!speechRec) return; // onend already handled it
-          const text = String(liveText || '').trim();
-          try{ speechRec.abort && speechRec.abort(); }catch(_){}
-          speechRec = null;
-          finalizePending = false;
-      finalizedOnce = false;
-          isRecording = false;
-          setUI(false);
-          if(text){ finalizedOnce = true; handleFinalText(text); }
-          else setStatus('', false);
-        }catch(_){}
-      }, 1200);
-    }catch(_){
-      speechRec = null;
-      finalizePending = false;
-      finalizedOnce = false;
-      isRecording = false;
-      setUI(false);
-    }
-  }
-
-  // ---------- Mode B: Server STT fallback ----------
-  let mediaRec = null;
-  let mediaStream = null;
-  let chunks = [];
-
-  function stopTracks(){
-    try{
-      if(mediaStream){
-        mediaStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){ } });
-      }
-    }catch(_){}
-    mediaStream = null;
-  }
-
-  function blobToBase64(blob){
-    return new Promise((resolve, reject)=>{
-      try{
-        const r = new FileReader();
-        r.onload = ()=> {
-          const s = String(r.result || '');
-          const b64 = s.includes(',') ? s.split(',')[1] : s;
-          resolve(b64);
-        };
-        r.onerror = ()=> reject(r.error || new Error('FileReader error'));
-        r.readAsDataURL(blob);
-      }catch(e){ reject(e); }
-    });
-  }
-
-  async function transcribe(blob, mime){
-    const b64 = await blobToBase64(blob);
-    const r = await fetch(`${API_BASE}/ai/transcribe`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ audio: b64, mime: mime || blob.type || 'audio/webm', language: getLang() })
-    });
-    const j = await r.json().catch(()=> ({}));
-    if(!r.ok || !j || j.success !== true){
-      throw new Error((j && j.error) ? j.error : ('Transcribe failed ' + r.status));
-    }
-    return String(j.text || '').trim();
-  }
-
-  async function startMedia(){
-    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-    mediaStream = stream;
-    chunks = [];
-    let opts = {};
-    try{
-      const prefer = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg','audio/mp4'];
-      for(const m of prefer){
-        if(window.MediaRecorder && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(m)){
-          opts.mimeType = m;
-          break;
-        }
-      }
-    }catch(_){}
-    mediaRec = new MediaRecorder(stream, opts);
-    mediaRec.ondataavailable = (e)=>{ try{ if(e.data && e.data.size>0) chunks.push(e.data); }catch(_){} };
-    return true;
-  }
-
-  async function startServerSTT(){
-    if(!(navigator.mediaDevices && window.MediaRecorder)) return false;
-
-    try{
-      await startMedia();
-      isRecording = true;
-      setUI(true);
-      setStatus('🎙️ Nagrywanie…', true);
-
-      mediaRec.onstop = async ()=>{
-        const localChunks = chunks.slice();
-        const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
-        isRecording = false;
-        setUI(false);
-        stopTracks();
-
-        try{
-          setStatus('🎙️ Przetwarzam…', true);
-          const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
-          const text = await transcribe(blob, mime);
-          finalizedOnce = true;
-          handleFinalText(text);
-        }catch(_e){
-          setStatus('🎙️ Nie rozpoznałem. Sprawdź klucz AI / dostęp.', false);
-        }
-      };
-
-      mediaRec.start();
-      return true;
-    }catch(_e){
-      stopTracks();
-      isRecording = false;
-      setUI(false);
-      return false;
-    }
-  }
-
-  function stopServerSTT(){
-    try{
-      if(mediaRec && mediaRec.state !== 'inactive'){
-        setStatus('🎙️ Przetwarzam…', true);
-        mediaRec.stop();
-        return;
-      }
-    }catch(_){}
-    isRecording = false;
-    setUI(false);
-    stopTracks();
-  }
-
-  // ---------- Click handler ----------
-  micBtn.addEventListener('click', ()=>{
-    if(isRecording){
-      if(speechRec) stopLive();
-      else stopServerSTT();
-      return;
-    }
-
-    // Prefer live UX (ChatGPT-like): show text while speaking.
-    const okLive = startLive();
-    if(okLive) return;
-
-    // Fallback to server STT (record → transcribe)
-    startServerSTT();
-  });
-
-})();
-
-
-/* === Settings MVP bindings (Save/Clear) ===
-   Keep this tiny and stable: settings screen is intentionally minimal now.
-*/
-(function(){
-  // Make settings buttons unbreakable: render() may rebuild DOM, so we use delegated handlers.
-  function doSaveSettingsLocal(){
-    try{
-      if(typeof saveLocal==='function') saveLocal();
-      if(typeof inferAccounts==='function') inferAccounts();
-      if(typeof render==='function') render();
-    }catch(e){
-      console.warn('applySettings error', e);
-    }
-  }
-
-  function doClearHistoryLocal(){
-    try{
-      const ok = confirm(TT('dialogs.clear_local_history', null, 'Wyczyścić lokalną historię? (Transakcje, faktury, kasa)\n\nKategorie zostaną.'));
-      if(!ok) return;
-
-      try{ window.tx = []; }catch(e){}
-      try{ window.bills = []; }catch(e){}
-      try{ window.kasa = []; }catch(e){}
-      try{ window.accMeta = {}; }catch(e){}
-
-      const keysToRemove = [
-        'tx_manual_import','bills_manual_import','kasa','accMeta',
-        'txUrl','billUrl',
-        'tx_last_import','bill_last_import','cash_last_import'
-      ];
-      keysToRemove.forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} });
-
-      if(typeof inferAccounts==='function') try{ inferAccounts(); }catch(e){}
-      if(typeof render==='function') try{ render(); }catch(e){}
-      alert('Wyczyszczono lokalnie ✅');
-    }catch(e){
-      console.warn('clearAll error', e);
-    }
-  }
-
-  // Expose for debugging / optional inline onclick.
-  try{ window._otdSaveSettings = doSaveSettingsLocal; }catch(_){ }
-  try{ window._otdClearHistoryLocal = doClearHistoryLocal; }catch(_){ }
-
-  function delegatedSettingsHandler(e){
-    const t = e.target;
-    if(!t) return;
-
-    const clearBtn = t.closest && t.closest('#clearAll');
-    if(clearBtn){
-      e.preventDefault();
-      e.stopPropagation();
-      doClearHistoryLocal();
-      return;
-    }
-
-    const saveBtn = t.closest && t.closest('#applySettings');
-    if(saveBtn){
-      e.preventDefault();
-      e.stopPropagation();
-      doSaveSettingsLocal();
-    }
-  }
-
-  // Capture phase to survive any stopPropagation in the app.
-  document.addEventListener('click', delegatedSettingsHandler, true);
-  document.addEventListener('pointerup', delegatedSettingsHandler, true);
-})();
-
+  </script>
+
+<!-- Analytics range modal -->
+<div class="modal-overlay" id="analyticsRangeModal" style="display:none">
+  <div class="modal-card">
+    <h3 data-i18n="analytics.range_title">Zakres</h3>
+    <div class="muted small" data-i18n="analytics.range_hint" style="margin-top:-6px">Wybierz miesiąc albo zakres dat.</div>
+
+    <div class="row" style="gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px">
+      <div style="flex:1; min-width:150px">
+        <div class="muted small" data-i18n="analytics.range_from">Od</div>
+        <input class="input" id="analyticsFrom" type="date" />
+      </div>
+      <div style="flex:1; min-width:150px">
+        <div class="muted small" data-i18n="analytics.range_to">Do</div>
+        <input class="input" id="analyticsTo" type="date" />
+      </div>
+    </div>
+
+    <div class="row" style="gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px">
+      <div style="flex:1; min-width:150px">
+        <div class="muted small" data-i18n="analytics.range_month">Miesiąc</div>
+        <input class="input" id="analyticsMonth" type="month" />
+      </div>
+      <div class="muted small" data-i18n="analytics.range_month_hint" style="flex:2; min-width:220px">Wybór miesiąca nadpisze pola Od/Do.</div>
+    </div>
+
+    <div class="row" style="gap:10px; margin-top:14px; flex-wrap:wrap">
+      <button class="btn" id="analyticsRangeApply" type="button" data-i18n="analytics.range_apply">Zastosuj</button>
+      <button class="btn secondary" id="analyticsRangeClear" type="button" data-i18n="analytics.range_clear">Reset</button>
+      <button class="btn ghost" id="analyticsRangeClose" type="button" data-i18n="analytics.range_close">Zamknij</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
