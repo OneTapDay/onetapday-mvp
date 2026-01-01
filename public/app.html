@@ -3,7 +3,7 @@
 <html lang="pl">
 <head>
 <meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
 <!-- App icons -->
 <link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="/icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
@@ -546,9 +546,9 @@
 .q-act.q-main{width:58px;height:58px;background:#0b0e10;color:#ffffff;font-size:28px;font-weight:900;border:1px solid rgba(71,181,0,0.35);box-shadow:0 16px 40px rgba(0,0,0,0.55)}
 .q-ico{font-size:18px}
 
-/* Cash sheet (centered modal) */
-.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px}
-.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px;padding:10px 14px 16px;box-shadow:0 22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
+/* Bottom sheet */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px 22px 0 0;padding:10px 14px 16px;box-shadow:0 -22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
 .sheet-handle{width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,0.18);margin:6px auto 10px}
 .sheet-top{display:flex;align-items:center;justify-content:space-between}
 .sheet-title{font-weight:900}
@@ -989,9 +989,9 @@
 .q-act.q-main{width:58px;height:58px;background:#0b0e10;color:#ffffff;font-size:28px;font-weight:900;border:1px solid rgba(71,181,0,0.35);box-shadow:0 16px 40px rgba(0,0,0,0.55)}
 .q-ico{font-size:18px}
 
-/* Cash sheet (centered modal) */
-.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px}
-.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px;padding:10px 14px 16px;box-shadow:0 22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
+/* Bottom sheet */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px 22px 0 0;padding:10px 14px 16px;box-shadow:0 -22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
 .sheet-handle{width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,0.18);margin:6px auto 10px}
 .sheet-top{display:flex;align-items:center;justify-content:space-between}
 .sheet-title{font-weight:900}
@@ -1142,6 +1142,37 @@
 }
 #aiVoiceBtn.aiInsideBtn{ right:48px; }
 #aiChatSend.aiInsideBtn{ right:6px; }
+
+/* ===== PATCH v2026-01-01: AI sticky input + iOS flex fix ===== */
+.section#aiAssist.active{
+  display:flex;
+  flex-direction:column;
+  height:calc(100dvh - 130px);
+  padding-bottom:calc(16px + env(safe-area-inset-bottom));
+  box-sizing:border-box;
+}
+@supports not (height: 100dvh){
+  .section#aiAssist.active{ height:calc(100vh - 130px); }
+}
+.section#aiAssist .aiChatShell{
+  flex:1 1 auto;
+  min-height:0;
+}
+.section#aiAssist .aiChatThread{
+  flex:1 1 auto;
+  min-height:0 !important; /* critical for iOS flex overflow */
+  overflow:auto;
+  -webkit-overflow-scrolling:touch;
+}
+.section#aiAssist .aiComposer{
+  position:sticky;
+  bottom:0;
+  z-index:5;
+  background:var(--card);
+  padding-bottom:calc(12px + env(safe-area-inset-bottom));
+  align-items:center;
+}
+
 .aiSendBtn{
   min-width:40px;
   height:40px;
@@ -1490,32 +1521,6 @@
 /* Small phones need a bit more breathing room */
 @media (max-width: 380px){
   :root{ --otd-topbar-space: calc(env(safe-area-inset-top) + 110px); }
-}
-    /* --- iOS Safari viewport fix (top/bottom) --- */
-:root{
-  --vv-top: 0px;
-  --vv-bottom: 0px;
-}
-
-/* верхняя панель */
-.top{
-  top: calc(10px + var(--vv-top) + env(safe-area-inset-top)) !important;
-}
-
-/* нижняя панель (+ / mic / photo) */
-.q-actions{
-  bottom: calc(8px + var(--vv-bottom) + env(safe-area-inset-bottom)) !important;
-}
-
-/* чтобы список не залезал под нижнюю панель */
-.feed{
-  padding-bottom: calc(120px + var(--vv-bottom) + env(safe-area-inset-bottom)) !important;
-}
-
-/* чтобы не было “съехало вправо” на iPhone */
-.wrap{
-  padding-left: calc(12px + env(safe-area-inset-left)) !important;
-  padding-right: calc(12px + env(safe-area-inset-right)) !important;
 }
 </style>
 
@@ -2463,29 +2468,6 @@ application/x-ofx" id="billFile" type="file"/>
     </div>
   </div>
 </div>
-<script>
-(function(){
-  const root = document.documentElement;
 
-  function updateVV(){
-    const vv = window.visualViewport;
-    if(!vv){
-      root.style.setProperty('--vv-top','0px');
-      root.style.setProperty('--vv-bottom','0px');
-      return;
-    }
-    const top = vv.offsetTop || 0;
-    const bottom = Math.max(0, (window.innerHeight - vv.height - top));
-    root.style.setProperty('--vv-top', top.toFixed(2) + 'px');
-    root.style.setProperty('--vv-bottom', bottom.toFixed(2) + 'px');
-  }
-
-  updateVV();
-  window.addEventListener('resize', updateVV);
-  window.addEventListener('orientationchange', updateVV);
-  window.visualViewport && window.visualViewport.addEventListener('resize', updateVV);
-  window.visualViewport && window.visualViewport.addEventListener('scroll', updateVV);
-})();
-</script>
 </body>
 </html>
