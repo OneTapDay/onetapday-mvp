@@ -250,44 +250,137 @@
 
   function calcKasaSummary(kasaArr){
     const k = Array.isArray(kasaArr) ? kasaArr : [];
-    let balance = 0;
-    const last7 = { income:0, expense:0, net:0, topCategories:[], byType:{} };
-    const d7 = daysAgoUTC(7);
-    const cat7 = Object.create(null);
+    const sum = {
+      totalCount: k.length,
+      estBalance: 0,
+      last7:  { income:0, expense:0, net:0, topCategories:[], topSources:[], byType:{}, uncategorizedExpense:0 },
+      last30: { income:0, expense:0, net:0, topCategories:[], topSources:[], byType:{}, uncategorizedExpense:0 },
+      last90: { income:0, expense:0, net:0, topCategories:[], topSources:[], byType:{}, uncategorizedExpense:0 },
+      recurring: [] // recurring cash spends by comment/category
+    };
+
+    const d7  = daysAgoUTC(7);
+    const d30 = daysAgoUTC(30);
+    const d90 = daysAgoUTC(90);
+
+    const catAgg = { last7:Object.create(null), last30:Object.create(null), last90:Object.create(null) };
+    const srcAgg = { last7:Object.create(null), last30:Object.create(null), last90:Object.create(null) };
+    const occ90  = Object.create(null);
+
+    function normKey(s){
+      return String(s||'').trim().toLowerCase().replace(/\s+/g,' ').slice(0,80);
+    }
+    function addAgg(map, key, delta){
+      const k = key || '';
+      map[k] = (map[k] || 0) + delta;
+    }
 
     for(const r of k){
       const dt = parseDateAny(r.date);
       const amt = toNum(r.amount);
-      // By convention in app: type in/out; amount is positive; but may be stored as positive always
       const typ = String(r.type||'').toLowerCase();
+      const cat = String(r.category||'').trim() || '';
+      const src = String(r.source||r.src||'').trim() || '';
+      const cmt = String(r.comment||r.title||'').trim() || '';
+
+      // Signed amount (in/out convention)
       let signed = amt;
       if(typ.includes('wyd') || typ==='out' || typ.includes('expense')) signed = -Math.abs(amt);
       else if(typ.includes('przy') || typ==='in' || typ.includes('income')) signed = Math.abs(amt);
-      else signed = amt; // fallback
+      else signed = amt;
 
-      // compute balance roughly (ignore open/close types)
-      if(!(typ.includes('otwar')||typ.includes('open')||typ.includes('zamkn')||typ.includes('close'))){
-        balance += signed;
-      }
+      sum.estBalance += signed;
 
+      // last7
       if(dt && dt >= d7){
-        if(signed >= 0) last7.income += signed; else last7.expense += Math.abs(signed);
-        last7.net += signed;
-        last7.byType[typ||''] = (last7.byType[typ||'']||0) + 1;
-        const c = String(r.category||'').trim();
-        if(c) cat7[c] = (cat7[c]||0) + Math.abs(signed);
+        if(signed >= 0) sum.last7.income += signed; else sum.last7.expense += Math.abs(signed);
+        addAgg(catAgg.last7, cat || '<uncat>', Math.abs(signed));
+        addAgg(srcAgg.last7, src || '<source?>', Math.abs(signed));
+        const tkey = typ || '<type?>';
+        sum.last7.byType[tkey] = (sum.last7.byType[tkey] || 0) + 1;
+        if(signed < 0 && (!cat || cat.toLowerCase().includes('bez'))) sum.last7.uncategorizedExpense += Math.abs(signed);
+      }
+
+      // last30
+      if(dt && dt >= d30){
+        if(signed >= 0) sum.last30.income += signed; else sum.last30.expense += Math.abs(signed);
+        addAgg(catAgg.last30, cat || '<uncat>', Math.abs(signed));
+        addAgg(srcAgg.last30, src || '<source?>', Math.abs(signed));
+        const tkey = typ || '<type?>';
+        sum.last30.byType[tkey] = (sum.last30.byType[tkey] || 0) + 1;
+        if(signed < 0 && (!cat || cat.toLowerCase().includes('bez'))) sum.last30.uncategorizedExpense += Math.abs(signed);
+      }
+
+      // last90 + recurring
+      if(dt && dt >= d90){
+        if(signed >= 0) sum.last90.income += signed; else sum.last90.expense += Math.abs(signed);
+        addAgg(catAgg.last90, cat || '<uncat>', Math.abs(signed));
+        addAgg(srcAgg.last90, src || '<source?>', Math.abs(signed));
+        const tkey = typ || '<type?>';
+        sum.last90.byType[tkey] = (sum.last90.byType[tkey] || 0) + 1;
+        if(signed < 0 && (!cat || cat.toLowerCase().includes('bez'))) sum.last90.uncategorizedExpense += Math.abs(signed);
+
+        // recurring cash spends: use comment first, else category
+        const recKey = normKey(cmt) || normKey(cat) || '<unknown>';
+        if(signed < 0){
+          occ90[recKey] = occ90[recKey] || { key: recKey, occurrences:0, totalExpense:0 };
+          occ90[recKey].occurrences += 1;
+          occ90[recKey].totalExpense += Math.abs(signed);
+        }
       }
     }
 
-    function topMap(m, n){
-      return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,n).map(([k,v])=>({ name:k, amount:Math.round(v*100)/100 }));
+    function topFromAgg(map){
+      const arr = Object.entries(map||{}).map(([k,v])=>({ key:k, amount: Math.round(toNum(v)*100)/100 }));
+      arr.sort((a,b)=> b.amount-a.amount);
+      return arr.slice(0, 8);
     }
-    last7.topCategories = topMap(cat7, 8);
-    last7.income = Math.round(last7.income*100)/100;
-    last7.expense = Math.round(last7.expense*100)/100;
-    last7.net = Math.round(last7.net*100)/100;
 
-    return { totalCount: k.length, estBalance: Math.round(balance*100)/100, last7 };
+    // finalize last windows
+    for(const win of ['last7','last30','last90']){
+      const w = sum[win];
+      w.income  = Math.round(w.income*100)/100;
+      w.expense = Math.round(w.expense*100)/100;
+      w.net     = Math.round((w.income - w.expense)*100)/100;
+      w.topCategories = topFromAgg(catAgg[win]).map(x=>({ category: x.key, amount: x.amount }));
+      w.topSources    = topFromAgg(srcAgg[win]).map(x=>({ source: x.key, amount: x.amount }));
+      w.uncategorizedExpense = Math.round(toNum(w.uncategorizedExpense)*100)/100;
+    }
+
+    // recurring (90d): only if 3+ occurrences
+    const recurring = [];
+    for(const obj of Object.values(occ90)){
+      if(!obj || obj.occurrences < 3) continue;
+      const avg = obj.totalExpense / obj.occurrences;
+      recurring.push({
+        key: obj.key,
+        occurrences: obj.occurrences,
+        avgExpense: Math.round(avg*100)/100,
+        totalExpense: Math.round(obj.totalExpense*100)/100
+      });
+    }
+    recurring.sort((a,b)=> (b.occurrences-a.occurrences) || (b.totalExpense-a.totalExpense));
+    sum.recurring = recurring.slice(0, 10);
+
+    sum.estBalance = Math.round(sum.estBalance*100)/100;
+    return sum;
+  }
+
+  function calcTotalSummary(txSum, kasaSum){
+    const out = { last30:{}, last90:{} };
+    const wins = ['last30','last90'];
+    for(const w of wins){
+      const t = (txSum && txSum[w]) ? txSum[w] : { income:0, expense:0, net:0 };
+      const k = (kasaSum && kasaSum[w]) ? kasaSum[w] : { income:0, expense:0, net:0 };
+      out[w] = {
+        income: Math.round((toNum(t.income)+toNum(k.income))*100)/100,
+        expense: Math.round((toNum(t.expense)+toNum(k.expense))*100)/100,
+        net: Math.round((toNum(t.net)+toNum(k.net))*100)/100,
+        bank: { income: Math.round(toNum(t.income)*100)/100, expense: Math.round(toNum(t.expense)*100)/100, net: Math.round(toNum(t.net)*100)/100 },
+        cash: { income: Math.round(toNum(k.income)*100)/100, expense: Math.round(toNum(k.expense)*100)/100, net: Math.round(toNum(k.net)*100)/100 }
+      };
+    }
+    return out;
   }
 
   async function buildAppContext(ctxArg){
@@ -325,11 +418,18 @@
         bills: Array.isArray(billsArr) ? billsArr.length : 0,
         kasa: Array.isArray(kasaArr) ? kasaArr.length : 0
       },
-      summaries: {
-        tx: calcTxSummary(txArr),
-        bills: calcBillsSummary(billsArr),
-        kasa: calcKasaSummary(kasaArr)
-      },
+      summaries: (function(){
+        const txSummary = calcTxSummary(txArr);
+        const billsSummary = calcBillsSummary(billsArr);
+        const kasaSummary = calcKasaSummary(kasaArr);
+        const totalSummary = calcTotalSummary(txSummary, kasaSummary);
+        return {
+          tx: txSummary,
+          bills: billsSummary,
+          kasa: kasaSummary,
+          total: totalSummary
+        };
+      })(),
       recent: {
         tx: txRecent,
         bills: billsRecent,
