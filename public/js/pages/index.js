@@ -2,6 +2,29 @@
 (() => {
   const DEFAULT_LANG = 'pl';
 
+  // IMPORTANT:
+  // - Language preference is tied to the USER (email) on the server.
+  // - On the access page we only persist language to localStorage when the user explicitly clicks a language button.
+  //   This prevents overwriting the server-stored language when logging-in on a new device.
+  let _lang = DEFAULT_LANG;
+
+  function getSavedLang(){
+    try{ return localStorage.getItem('otd_lang'); }catch(e){ return null; }
+  }
+  function setSavedLang(lang){
+    try{ localStorage.setItem('otd_lang', lang); }catch(e){}
+  }
+  function markLangExplicit(){
+    try{ sessionStorage.setItem('otd_lang_explicit','1'); }catch(e){}
+  }
+  function clearLangExplicit(){
+    try{ sessionStorage.removeItem('otd_lang_explicit'); }catch(e){}
+  }
+  function isLangExplicit(){
+    try{ return sessionStorage.getItem('otd_lang_explicit')==='1'; }catch(e){ return false; }
+  }
+
+
   // tiny i18n for access page (kept intentionally small)
   const STR = {
     pl: {
@@ -60,11 +83,21 @@
 
   const $ = (id) => document.getElementById(id);
 
-  function getLang() {
-    return localStorage.getItem('otd_lang') || DEFAULT_LANG;
+  function getLang(){
+    // For UI: fall back to DEFAULT_LANG even if user hasn't chosen explicitly.
+    return _lang || DEFAULT_LANG;
   }
-  function setLang(lang) {
-    localStorage.setItem('otd_lang', lang);
+
+  function getLangForAuthPayload(){
+    // For server: send lang ONLY when user explicitly selected it on this access page session.
+    // Otherwise, let the server-stored language (by email) win.
+    if (!isLangExplicit()) return undefined;
+    const v = getSavedLang();
+    return v || _lang || DEFAULT_LANG;
+  }
+  function setLang(lang, persist){
+    _lang = lang;
+    if (persist) setSavedLang(lang);
   }
 
   function t(key) {
@@ -72,8 +105,8 @@
     return (STR[lang] && STR[lang][key]) || (STR[DEFAULT_LANG] && STR[DEFAULT_LANG][key]) || key;
   }
 
-  function applyLang(lang) {
-    setLang(lang);
+  function applyLang(lang, persist) {
+    setLang(lang, !!persist);
 
     // lang buttons
     document.querySelectorAll('#langBar button').forEach(b => {
@@ -126,6 +159,16 @@
     return (btn && btn.dataset.tab) || 'login';
   }
 
+  
+
+  function syncLangFromServer(user){
+    try{
+      const l = user && user.lang ? String(user.lang).toLowerCase().trim() : '';
+      if (l) setSavedLang(l);
+      clearLangExplicit();
+    }catch(e){}
+  }
+
   function selectedRole() {
     const el = document.querySelector('input[name="role"]:checked');
     return el ? el.value : 'freelance_business';
@@ -172,7 +215,7 @@
     const isReg = activeTab() === 'reg';
     if (isReg) {
       const role = selectedRole();
-      const res = await postJSON('/register', { email, password, role, lang: getLang() });
+      const res = await postJSON('/register', { email, password, role, lang: (getSavedLang() || _lang || DEFAULT_LANG) });
       if (!res.ok || !res.body || !res.body.success) {
         alert((res.body && (res.body.error || res.body.detail)) || 'Register failed');
         return;
@@ -200,12 +243,13 @@
       localStorage.setItem('otd_role', u.role || role);
       setTimeout(() => { window.location.href = (u.role === 'accountant') ? '/accountant.html' : '/app.html'; }, 150);
     } else {
-      const res = await postJSON('/login', { email, password, lang: getLang() });
+      const res = await postJSON('/login', { email, password, lang: getLangForAuthPayload() });
       if (!res.ok || !res.body || !res.body.success) {
         alert((res.body && (res.body.error || res.body.detail)) || 'Login failed');
         return;
       }
       const u = res.body.user || {};
+      syncLangFromServer(u);
       // Bind local state to the current account (fix: switching accounts on same device keeps old data)
       try {
         const newEmail = String(u.email || email || '').trim().toLowerCase();
@@ -275,7 +319,7 @@
             const isReg = activeTab() === 'reg';
             const payload = {
               credential: resp.credential,
-              lang: getLang()
+              lang: getLangForAuthPayload()
             };
             if (isReg) payload.role = selectedRole(); // only meaningful on first creation
 
@@ -352,7 +396,8 @@
         btn.classList.add('on');
         updateRoleWrap();
         // change Google button visibility
-        applyLang(getLang());
+        const saved = getSavedLang();
+    applyLang(saved || DEFAULT_LANG, !!saved);
       });
     });
 
@@ -368,11 +413,12 @@
 
     // language buttons
     document.querySelectorAll('#langBar button').forEach(b => {
-      b.addEventListener('click', () => applyLang(b.dataset.lang));
+      b.addEventListener('click', () => { markLangExplicit(); applyLang(b.dataset.lang, true); });
     });
 
     // initial
-    applyLang(getLang());
+    const saved2 = getSavedLang();
+    applyLang(saved2 || DEFAULT_LANG, !!saved2);
     updateRoleWrap();
 
     // init Google when script is ready
