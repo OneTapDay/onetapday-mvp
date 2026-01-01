@@ -3,7 +3,7 @@
 <html lang="pl">
 <head>
 <meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
 <!-- App icons -->
 <link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="/icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
@@ -1088,40 +1088,75 @@
     .planCard .btn{width:100%}
 
 
-/* ===== PATCH v2025-12-30: AI chat composer like ChatGPT + full height ===== */
-.section#aiAssist .aiChatShell{
+/* ===== PATCH v2026-01-01: AI chat fixed composer + only thread scrolls ===== */
+#aiAssist.active{ margin-top:10px; }
+
+/* Make the AI card fill the visible viewport (mobile-friendly). */
+#aiAssist.active .aiChatShell{
+  height: calc(100dvh - 110px);
+  max-height: calc(100dvh - 110px);
   display:flex;
   flex-direction:column;
-  min-height:70vh;
+  overflow:hidden;
 }
-.section#aiAssist .aiChatThread{
+@supports not (height: 100dvh){
+  #aiAssist.active .aiChatShell{ height: calc(100vh - 110px); max-height: calc(100vh - 110px); }
+}
+
+#aiAssist.active .aiChatHeader{ flex:0 0 auto; }
+
+/* Only messages scroll */
+#aiAssist.active .aiChatThread{
   flex:1 1 auto;
-  max-height:none !important;
-  min-height:40vh;
+  min-height:0;
+  overflow:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  padding-bottom:12px;
 }
-.aiComposer{
-  display:flex;
-  gap:10px;
-  padding:10px 12px 12px;
+
+/* Composer stays pinned at the bottom of the card */
+#aiAssist.active .aiComposer{
+  flex:0 0 auto;
+  position:sticky;
+  bottom:0;
+  z-index:5;
+  padding:10px 12px calc(12px + env(safe-area-inset-bottom));
   border-top:1px solid #22282c;
-  align-items:flex-end;
+  background:linear-gradient(180deg, rgba(21,24,26,0.65), rgba(21,24,26,0.98));
+  backdrop-filter:blur(10px);
+  align-items:center;
 }
-.aiInputWrap{
-  position:relative;
-  flex:1;
+
+/* Clean, consistent buttons */
+.aiComposer .aiToolBtn,
+.aiComposer .aiInsideBtn{
+  width:42px;
+  height:42px;
+  padding:0;
+  border-radius:14px;
+  border:1px solid #242b30;
+  background:rgba(0,0,0,0.18);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.08);
   display:flex;
+  align-items:center;
+  justify-content:center;
 }
+.aiComposer .aiToolBtn:active,
+.aiComposer .aiInsideBtn:active{ transform:scale(0.98); }
+
+.aiInputWrap{ position:relative; flex:1; display:flex; }
+
 .aiComposer textarea{
   width:100%;
-  flex:1;
   min-height:44px;
   max-height:140px;
   resize:none;
-  border-radius:16px;
+  border-radius:18px;
   background:#12181d;
   color:#e9eef2;
   border:1px solid #242b30;
-  padding:12px 86px 12px 14px; /* space for inside icons */
+  padding:12px 96px 12px 14px;
   outline:none;
   line-height:1.25;
 }
@@ -1129,55 +1164,20 @@
   border-color:#2f5b3b;
   box-shadow:0 0 0 2px rgba(71,181,0,.12);
 }
-.aiInsideBtn{
+
+/* Inside buttons placement */
+#aiVoiceBtn.aiInsideBtn{ position:absolute; right:52px; bottom:6px; }
+#aiChatSend.aiInsideBtn{
   position:absolute;
+  right:6px;
   bottom:6px;
-  width:40px;
-  height:40px;
-  padding:0;
-  border-radius:12px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
+  background:linear-gradient(180deg, rgba(71,181,0,0.92), rgba(38,104,0,0.92));
+  border-color:rgba(71,181,0,0.40);
+  box-shadow:0 12px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.16);
 }
-#aiVoiceBtn.aiInsideBtn{ right:48px; }
-#aiChatSend.aiInsideBtn{ right:6px; }
+#aiChatSend.aiInsideBtn:hover{ filter:saturate(1.05) brightness(1.05); }
 
-/* ===== PATCH v2026-01-01: AI sticky input + iOS flex fix ===== */
-.section#aiAssist.active{
-  display:flex;
-  flex-direction:column;
-  height:calc(100dvh - 130px);
-  padding-bottom:calc(16px + env(safe-area-inset-bottom));
-  box-sizing:border-box;
-}
-@supports not (height: 100dvh){
-  .section#aiAssist.active{ height:calc(100vh - 130px); }
-}
-.section#aiAssist .aiChatShell{
-  flex:1 1 auto;
-  min-height:0;
-}
-.section#aiAssist .aiChatThread{
-  flex:1 1 auto;
-  min-height:0 !important; /* critical for iOS flex overflow */
-  overflow:auto;
-  -webkit-overflow-scrolling:touch;
-}
-.section#aiAssist .aiComposer{
-  position:sticky;
-  bottom:0;
-  z-index:5;
-  background:var(--card);
-  padding-bottom:calc(12px + env(safe-area-inset-bottom));
-  align-items:center;
-}
 
-.aiSendBtn{
-  min-width:40px;
-  height:40px;
-  border-radius:12px;
-}
 /* ===== PATCH v2025-12-30: Analytics donut palette + hover ===== */
 .donutSeg{ transition:opacity .12s ease, stroke-width .12s ease; }
 .donutSeg:hover{ opacity:.92; stroke-width:4.2; }
