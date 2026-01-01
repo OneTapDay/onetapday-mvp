@@ -21,7 +21,7 @@
     const p = safeProfile(profile);
     const niche = p.niche ? ` (${p.niche})` : '';
     const goal = p.goal ? `, цель: ${p.goal}` : '';
-    return `Привет! Я AI‑бухгалтер OneTapDay${niche}${goal}.\n` +
+    return `Привет! Я AI‑консультант OneTapDay${niche}${goal}.\n` +
            `Я работаю по твоим данным и могу:\n` +
            `• закрыть «контроль дня» (что важно сегодня)\n` +
            `• найти «Без категории» (и + и −)\n` +
