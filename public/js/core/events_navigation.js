@@ -962,18 +962,19 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     byId('reportsBills')?.addEventListener('click', ()=> byId('exportBillsCSV')?.click());
     byId('reportsBook')?.addEventListener('click', ()=> byId('exportBook')?.click());
 
-    // AI profile + chat UI (локально, без облачной магии)
+    // AI profile + chat UI (с сохранением на сервере для синхронизации между устройствами)
 const AI_PROFILE_KEY = 'otd_ai_profile';
 const AI_CHATS_META_KEY = 'otd_ai_chats_meta_v1';
 const AI_CHAT_ACTIVE_KEY = 'otd_ai_chat_active_v1';
 const AI_CHAT_PREFIX = 'otd_ai_chat_msgs_';
 const LEGACY_AI_CHAT_KEY = 'otd_ai_chat_v1';
+const AI_CLOUD_APPLIED_TS_KEY = 'otd_ai_cloud_applied_ts_v1';
 
 const escHtml = (s)=>String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const loadJSON = (k, fallback)=>{
   try{ const raw = localStorage.getItem(k); return raw ? JSON.parse(raw) : fallback; }catch(e){ return fallback; }
 };
-const saveJSON = (k, v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+const saveJSON = (k, v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} try{ __aiScheduleCloudPush(); }catch(_e){} };
 
 const tSafe = (key, fallback)=>{
   try{
@@ -1047,7 +1048,7 @@ const getChatsMeta = ()=>{
 };
 const saveChatsMeta = (arr)=> saveJSON(AI_CHATS_META_KEY, arr);
 const getActiveChatId = ()=> localStorage.getItem(AI_CHAT_ACTIVE_KEY) || '';
-const setActiveChatId = (id)=>{ try{ localStorage.setItem(AI_CHAT_ACTIVE_KEY, id); }catch(e){} };
+const setActiveChatId = (id)=>{ try{ localStorage.setItem(AI_CHAT_ACTIVE_KEY, id); }catch(e){} try{ __aiScheduleCloudPush(); }catch(_e){} };
 const chatKey = (id)=> AI_CHAT_PREFIX + id;
 const loadChat = (id)=> loadJSON(chatKey(id), []);
 const saveChat = (id, arr)=> saveJSON(chatKey(id), arr);
@@ -1079,6 +1080,174 @@ const ensureDefaultChat = ()=>{
   }
   if(!getActiveChatId() && meta[0]?.id) setActiveChatId(meta[0].id);
 };
+
+//
+// AI Cloud Sync (server-side storage)
+// Goal: same AI chat history + titles + AI profile across devices.
+// Storage is handled by backend (/api/ai/state) so we don't rely on localStorage and don't expose DB writes in the browser.
+//
+let __aiCloudInited = false;
+let __aiCloudPulling = false;
+let __aiCloudPushing = false;
+let __aiCloudPushTimer = null;
+
+function __aiEmail(){
+  try{ return String(localStorage.getItem(USER_KEY)||'').trim().toLowerCase(); }catch(_){ return ''; }
+}
+function __aiGetAppliedTs(){
+  try{ return parseInt(String(localStorage.getItem(AI_CLOUD_APPLIED_TS_KEY)||'0'),10) || 0; }catch(_){ return 0; }
+}
+function __aiSetAppliedTs(ts){
+  try{ localStorage.setItem(AI_CLOUD_APPLIED_TS_KEY, String(ts||0)); }catch(_){}
+}
+
+function __aiBuildLocalState(){
+  ensureDefaultChat();
+  const meta = getChatsMeta().slice(0, 25);
+  const chats = {};
+  for (const m of meta){
+    if(!m || !m.id) continue;
+    const arr = loadChat(m.id);
+    chats[m.id] = (Array.isArray(arr) ? arr.slice(-200) : []);
+  }
+  return {
+    v: 1,
+    updatedAt: Date.now(),
+    profile: getProfile(),
+    chatsMeta: meta,
+    activeChatId: getActiveChatId(),
+    chats
+  };
+}
+
+function __aiApplyRemoteState(st){
+  if(!st || typeof st !== 'object') return;
+  // Apply profile
+  try{
+    if(st.profile && typeof st.profile === 'object'){
+      localStorage.setItem(AI_PROFILE_KEY, JSON.stringify(st.profile));
+    }
+  }catch(_){}
+  // Apply meta
+  try{
+    if(Array.isArray(st.chatsMeta)){
+      localStorage.setItem(AI_CHATS_META_KEY, JSON.stringify(st.chatsMeta.slice(0,25)));
+    }
+  }catch(_){}
+  // Apply active chat
+  try{
+    if(st.activeChatId){
+      localStorage.setItem(AI_CHAT_ACTIVE_KEY, String(st.activeChatId));
+    }
+  }catch(_){}
+  // Apply chats
+  try{
+    if(st.chats && typeof st.chats === 'object'){
+      for(const [id, arr] of Object.entries(st.chats)){
+        if(!id) continue;
+        const msgs = Array.isArray(arr) ? arr.slice(-200) : [];
+        localStorage.setItem(chatKey(id), JSON.stringify(msgs));
+      }
+    }
+  }catch(_){}
+}
+
+async function __aiPullFromServer(force){
+  const email = __aiEmail();
+  if(!email) return;
+  if(__aiCloudPulling) return;
+  __aiCloudPulling = true;
+
+  try{
+    const r = await fetch('/api/ai/state', { method:'GET', credentials:'same-origin' });
+    if(!r.ok) { __aiCloudPulling=false; return; }
+    const j = await r.json().catch(()=>null);
+    if(!j || !j.success) { __aiCloudPulling=false; return; }
+    const st = j.state;
+
+    if(!st) { __aiCloudPulling=false; return; }
+
+    const rTs = Number(st.updatedAt || 0) || 0;
+    const lTs = __aiGetAppliedTs();
+    if(!force && rTs && rTs <= lTs) { __aiCloudPulling=false; return; }
+
+    __aiApplyRemoteState(st);
+    __aiSetAppliedTs(rTs || Date.now());
+
+    // refresh UI if AI panel is present
+    try{ applyProfileToUI(); }catch(_){}
+    try{ renderChatList(); }catch(_){}
+    try{ renderChat(); }catch(_){}
+  }catch(_e){
+  }finally{
+    __aiCloudPulling = false;
+  }
+}
+
+async function __aiPushToServerNow(){
+  const email = __aiEmail();
+  if(!email) return;
+  if(__aiCloudPushing) return;
+  __aiCloudPushing = true;
+
+  try{
+    const st = __aiBuildLocalState();
+    const r = await fetch('/api/ai/state', {
+      method:'POST',
+      credentials:'same-origin',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ state: st })
+    });
+
+    // If conflict (newer state on server), pull and apply server version.
+    if(r.status === 409){
+      const j = await r.json().catch(()=>null);
+      if(j && j.state){
+        __aiApplyRemoteState(j.state);
+        __aiSetAppliedTs(Number(j.serverUpdatedAt || j.state.updatedAt || Date.now()) || Date.now());
+        try{ renderChatList(); renderChat(); }catch(_){}
+      }
+      return;
+    }
+
+    const j = await r.json().catch(()=>null);
+    if(j && j.success && j.state){
+      __aiSetAppliedTs(Number(j.state.updatedAt || Date.now()) || Date.now());
+    }
+  }catch(_e){
+  }finally{
+    __aiCloudPushing = false;
+  }
+}
+
+// called automatically after any local AI state change (debounced)
+function __aiScheduleCloudPush(){
+  if(__aiCloudPushTimer) clearTimeout(__aiCloudPushTimer);
+  __aiCloudPushTimer = setTimeout(()=>{ __aiPushToServerNow(); }, 1200);
+}
+
+function __aiInitCloudSync(){
+  if(__aiCloudInited) return;
+  const email = __aiEmail();
+  if(!email){
+    setTimeout(__aiInitCloudSync, 1000);
+    return;
+  }
+  __aiCloudInited = true;
+
+  // initial pull (server may have newer history from another device)
+  __aiPullFromServer(true);
+
+  // lightweight polling (MVP): keeps devices in sync without websockets
+  setInterval(()=>{ __aiPullFromServer(false); }, 15000);
+
+  // pull when the tab becomes active again
+  document.addEventListener('visibilitychange', ()=>{
+    if(!document.hidden) __aiPullFromServer(true);
+  });
+}
+
+
 
 const formatShortDate = (ts)=>{
   try{ const d=new Date(ts||Date.now()); return d.toISOString().slice(0,10); }catch(e){ return ''; }
@@ -1156,6 +1325,7 @@ byId('aiChatList')?.addEventListener('click', (e)=>{
 });
 
 ensureDefaultChat();
+__aiInitCloudSync();
 
 const renderChat = ()=>{
   const host = byId('aiChatLog');
@@ -1493,7 +1663,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   try{ e.target.value = ''; }catch(_){}
 });
 
-// Voice input (ChatGPT-like): live dictation → stop → review/edit → send (no auto-send)
+// Voice input (stable): record → transcribe → put text into input (no auto-send)
 (function(){
   const btn = byId('aiVoiceBtn');
   const inp = byId('aiChatInput');
@@ -1511,118 +1681,17 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     }catch(_){ return 'pl-PL'; }
   };
 
-  // UI state: 🎤 idle, ⏹ recording, … processing
   let recording = false;
-  let processing = false;
-
-  function setUI(isRec, isProc){
-    recording = !!isRec;
-    processing = !!isProc;
-    btn.classList.toggle('is-recording', recording);
-    btn.classList.toggle('is-processing', processing);
-    btn.textContent = recording ? '⏹' : (processing ? '…' : '🎤');
-  }
-
-  function focusInput(){
-    try{ inp.focus(); }catch(_){}
-  }
-
-  function joinBase(base, add){
-    const b = String(base||'').trim();
-    const a = String(add||'').trim();
-    if(!a) return b;
-    if(!b) return a;
-    return b + (b.endsWith(' ') ? '' : ' ') + a;
-  }
-
-  // ---------- Mode A: Web Speech API (live dictation) ----------
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let speechRec = null;
-  let speechBase = '';
-  let speechDraft = '';
-  let speechOp = 0;
-  let speechStoppedByUser = false;
-
-  function startSpeech(){
-    if(!SR) return false;
-    try{
-      speechOp++;
-      speechStoppedByUser = false;
-      speechBase = String(inp.value || '').trim();
-      speechDraft = '';
-      speechRec = new SR();
-      speechRec.lang = getLang();
-      speechRec.continuous = true;
-      speechRec.interimResults = true;
-      speechRec.maxAlternatives = 1;
-
-      setUI(true, false);
-      focusInput();
-
-      speechRec.onresult = (e)=>{
-        try{
-          let finalT = '';
-          let interimT = '';
-          for(let i = e.resultIndex; i < e.results.length; i++){
-            const r = e.results[i];
-            const chunk = (r && r[0] && r[0].transcript) ? String(r[0].transcript) : '';
-            if(!chunk) continue;
-            if(r.isFinal) finalT += chunk + ' ';
-            else interimT += chunk + ' ';
-          }
-          const merged = (finalT + interimT).trim();
-          speechDraft = merged;
-          inp.value = joinBase(speechBase, merged);
-        }catch(_){}
-      };
-
-      speechRec.onerror = (_e)=>{
-        // Stop UI, but don't spam chat
-        setUI(false, false);
-        speechRec = null;
-      };
-
-      speechRec.onend = ()=>{
-        // Keep whatever is in the input. No auto-send.
-        setUI(false, false);
-        speechRec = null;
-
-        // If the user pressed Stop but we got nothing, revert to base (no duplicates)
-        const v = String(inp.value || '').trim();
-        if(speechStoppedByUser && !v) inp.value = String(speechBase || '').trim();
-        focusInput();
-      };
-
-      speechRec.start();
-      return true;
-    }catch(_e){
-      speechRec = null;
-      setUI(false, false);
-      return false;
-    }
-  }
-
-  function stopSpeech(){
-    try{
-      speechStoppedByUser = true;
-      setUI(true, true); // show processing while browser finalizes
-      if(speechRec){
-        try{ speechRec.stop(); }catch(_e){ try{ speechRec.abort && speechRec.abort(); }catch(_){ } }
-      }else{
-        setUI(false, false);
-      }
-    }catch(_){
-      setUI(false, false);
-      speechRec = null;
-    }
-  }
-
-  // ---------- Mode B: MediaRecorder + server STT (fallback) ----------
   let mediaRec = null;
   let mediaStream = null;
   let chunks = [];
-  let mediaOp = 0;
-  let mediaBase = '';
+  let opId = 0; // cancel stale callbacks
+
+  function setUI(on){
+    recording = on;
+    btn.classList.toggle('is-recording', !!on);
+    btn.textContent = on ? '⏹' : '🎤';
+  }
 
   function stopTracks(){
     try{
@@ -1682,86 +1751,101 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     return true;
   }
 
-  async function startServerSTT(){
-    if(!(navigator.mediaDevices && window.MediaRecorder)) return false;
-    try{
-      mediaOp++;
-      const my = mediaOp;
-      mediaBase = String(inp.value || '').trim();
-      await startMedia();
+  async function start(){
+    if(recording) return;
+    const my = ++opId;
 
-      setUI(true, false);
-      focusInput();
+    // Prefer stable flow: record → server STT
+    if(navigator.mediaDevices && window.MediaRecorder){
+      try{
+        await startMedia();
+        setUI(true);
+        mediaRec.onstop = async ()=>{
+          const mine = my;
+          const localChunks = chunks.slice();
+          const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
+          setUI(false);
+          stopTracks();
 
-      mediaRec.onstop = async ()=>{
-        const mine = my;
-        const localChunks = chunks.slice();
-        const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
-        stopTracks();
-        setUI(false, true);
-
-        if(mine !== mediaOp) return; // stale (user started a new record)
-        try{
-          const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
-          const text = await transcribe(blob, mime);
-          if(mine !== mediaOp) return;
-
-          if(text){
-            const combined = joinBase(mediaBase, text);
-            // Avoid obvious double-append
-            if(String(inp.value||'').trim() !== combined.trim()){
-              inp.value = combined;
+          if(mine !== opId) return; // cancelled
+          try{
+            const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
+            const text = await transcribe(blob, mime);
+            if(!text) return;
+            const prev = String(inp.value || '').trim();
+            inp.value = (prev ? (prev + ' ') : '') + text;
+            try{ inp.focus(); }catch(_){}
+          }catch(e){
+            // If STT is not available, do not spam the chat. Just show a minimal error.
+            if(typeof pushMsg === 'function'){
+              pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог распознать голос. Проверь AI ключ / доступ.'));
             }
-            focusInput();
           }
-        }catch(_e){
-          if(typeof pushMsg === 'function'){
-            pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог распознать голос. Проверь AI ключ / доступ.'));
-          }
-        }finally{
-          setUI(false, false);
-        }
-      };
+        };
+        mediaRec.start();
+        return;
+      }catch(_e){
+        // fallthrough to Web Speech if available
+        stopTracks();
+        setUI(false);
+      }
+    }
 
-      mediaRec.start();
-      return true;
+    // Fallback: Web Speech API (device-dependent)
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!SR){
+      if(typeof pushMsg === 'function'){
+        pushMsg('assistant', TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере.'));
+      }
+      return;
+    }
+
+    try{
+      const rec = new SR();
+      rec.lang = getLang();
+      rec.interimResults = false;
+      rec.continuous = false;
+
+      setUI(true);
+      rec.onresult = (ev)=>{
+        try{
+          const t = ev.results && ev.results[0] && ev.results[0][0] ? ev.results[0][0].transcript : '';
+          const text = String(t || '').trim();
+          if(text){
+            const prev = String(inp.value || '').trim();
+            inp.value = (prev ? (prev + ' ') : '') + text;
+            try{ inp.focus(); }catch(_){}
+          }
+        }catch(_){}
+      };
+      rec.onerror = ()=> setUI(false);
+      rec.onend = ()=> setUI(false);
+      rec.start();
     }catch(_e){
-      stopTracks();
-      setUI(false, false);
-      return false;
+      setUI(false);
+      if(typeof pushMsg === 'function'){
+        pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог включить голосовой ввод.'));
+      }
     }
   }
 
-  function stopServerSTT(){
+  function stop(){
+    // Stop either MediaRecorder or SpeechRecognition (if running)
+    const my = ++opId;
     try{
-      setUI(true, true);
       if(mediaRec && mediaRec.state !== 'inactive'){
         mediaRec.stop();
         return;
       }
     }catch(_){}
-    setUI(false, false);
+    // If we reached here, nothing to stop
+    setUI(false);
     stopTracks();
   }
 
-  // ---------- Click handler ----------
   btn.addEventListener('click', ()=>{
-    if(recording || processing){
-      // stop current mode
-      if(speechRec) stopSpeech();
-      else stopServerSTT();
-      return;
-    }
-
-    // Prefer live dictation (ChatGPT-like)
-    const okSpeech = startSpeech();
-    if(okSpeech) return;
-
-    // Fallback to server STT
-    const okServer = startServerSTT();
-    if(!okServer && typeof pushMsg === 'function'){
-      pushMsg('assistant', TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере.'));
-    }
+    if(recording) stop();
+    else start();
   });
 })();;
 // Initial render
