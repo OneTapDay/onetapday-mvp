@@ -3,7 +3,7 @@
 <html lang="pl">
 <head>
 <meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
 <!-- App icons -->
 <link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="/icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
@@ -1491,6 +1491,32 @@
 @media (max-width: 380px){
   :root{ --otd-topbar-space: calc(env(safe-area-inset-top) + 110px); }
 }
+    /* --- iOS Safari viewport fix (top/bottom) --- */
+:root{
+  --vv-top: 0px;
+  --vv-bottom: 0px;
+}
+
+/* верхняя панель */
+.top{
+  top: calc(10px + var(--vv-top) + env(safe-area-inset-top)) !important;
+}
+
+/* нижняя панель (+ / mic / photo) */
+.q-actions{
+  bottom: calc(8px + var(--vv-bottom) + env(safe-area-inset-bottom)) !important;
+}
+
+/* чтобы список не залезал под нижнюю панель */
+.feed{
+  padding-bottom: calc(120px + var(--vv-bottom) + env(safe-area-inset-bottom)) !important;
+}
+
+/* чтобы не было “съехало вправо” на iPhone */
+.wrap{
+  padding-left: calc(12px + env(safe-area-inset-left)) !important;
+  padding-right: calc(12px + env(safe-area-inset-right)) !important;
+}
 </style>
 
   <link rel="stylesheet" href="/css/scrollbar-premium.css">
@@ -2437,6 +2463,29 @@ application/x-ofx" id="billFile" type="file"/>
     </div>
   </div>
 </div>
+<script>
+(function(){
+  const root = document.documentElement;
 
+  function updateVV(){
+    const vv = window.visualViewport;
+    if(!vv){
+      root.style.setProperty('--vv-top','0px');
+      root.style.setProperty('--vv-bottom','0px');
+      return;
+    }
+    const top = vv.offsetTop || 0;
+    const bottom = Math.max(0, (window.innerHeight - vv.height - top));
+    root.style.setProperty('--vv-top', top.toFixed(2) + 'px');
+    root.style.setProperty('--vv-bottom', bottom.toFixed(2) + 'px');
+  }
+
+  updateVV();
+  window.addEventListener('resize', updateVV);
+  window.addEventListener('orientationchange', updateVV);
+  window.visualViewport && window.visualViewport.addEventListener('resize', updateVV);
+  window.visualViewport && window.visualViewport.addEventListener('scroll', updateVV);
+})();
+</script>
 </body>
 </html>
