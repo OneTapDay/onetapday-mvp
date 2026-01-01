@@ -248,6 +248,130 @@ if (!fs.existsSync(vaultUploadsDir)) {
   try { fs.mkdirSync(vaultUploadsDir, { recursive:true }); } catch(e) { console.warn('[UPLOAD] vault mkdir failed', e && e.message); }
 }
 
+
+// AI chat state (cross-device sync)
+// Stored server-side to avoid browser-only localStorage and to avoid exposing Firebase writes from the client.
+// Default location uses Render persistent disk (/data) when available.
+const AI_STATE_DIR = process.env.AI_STATE_DIR || path.join(DATA_ROOT, 'ai_state');
+if (!fs.existsSync(AI_STATE_DIR)) {
+  try { fs.mkdirSync(AI_STATE_DIR, { recursive:true }); } catch(e) { console.warn('[AI_STATE] mkdir failed', e && e.message); }
+}
+
+function aiKeyFromEmail(email) {
+  try {
+    const e = String(email || '').trim().toLowerCase();
+    return crypto.createHash('sha256').update(e).digest('hex').slice(0, 32);
+  } catch(_e) {
+    return 'unknown';
+  }
+}
+
+function aiStateFile(email) {
+  return path.join(AI_STATE_DIR, aiKeyFromEmail(email) + '.json');
+}
+
+function sanitizeAiState(state) {
+  const s = (state && typeof state === 'object') ? state : {};
+  const out = { v: 1 };
+
+  // timestamps
+  const ts = Number(s.updatedAt || 0) || Date.now();
+  out.updatedAt = ts;
+
+  // profile (small object)
+  if (s.profile && typeof s.profile === 'object') {
+    // allow only primitive fields to avoid huge blobs
+    const p = {};
+    for (const [k, v] of Object.entries(s.profile)) {
+      if (v == null) continue;
+      const t = typeof v;
+      if (t === 'string' || t === 'number' || t === 'boolean') p[k] = v;
+      else if (Array.isArray(v)) p[k] = v.slice(0, 50).map(x => (typeof x === 'string' ? x : String(x))).slice(0, 50);
+    }
+    out.profile = p;
+  } else out.profile = {};
+
+  // chats meta
+  const meta = Array.isArray(s.chatsMeta) ? s.chatsMeta : [];
+  out.chatsMeta = meta.slice(0, 25).map(m => {
+    const mm = (m && typeof m === 'object') ? m : {};
+    return {
+      id: String(mm.id || ''),
+      title: String(mm.title || 'Чат').slice(0, 120),
+      createdAt: Number(mm.createdAt || 0) || 0,
+      updatedAt: Number(mm.updatedAt || 0) || 0
+    };
+  }).filter(m => m.id);
+
+  out.activeChatId = String(s.activeChatId || '');
+
+  // chats: keep last 200 msgs per chat, strip heavy fields
+  out.chats = {};
+  const chats = (s.chats && typeof s.chats === 'object') ? s.chats : {};
+  for (const [cid, arr] of Object.entries(chats)) {
+    if (!cid) continue;
+    const msgs = Array.isArray(arr) ? arr : [];
+    const trimmed = msgs.slice(-200).map(msg => {
+      const m = (msg && typeof msg === 'object') ? msg : {};
+      const outm = {
+        role: String(m.role || ''),
+        text: String(m.text || '').slice(0, 8000),
+        ts: Number(m.ts || 0) || 0
+      };
+      if (m._pending) outm._pending = true;
+
+      // keep attachments metadata only (no base64/dataUrl)
+      if (Array.isArray(m.attachments)) {
+        outm.attachments = m.attachments.slice(0, 10).map(a => {
+          const aa = (a && typeof a === 'object') ? a : {};
+          const o = {
+            name: aa.name ? String(aa.name).slice(0, 200) : undefined,
+            type: aa.type ? String(aa.type).slice(0, 120) : undefined,
+            size: (aa.size != null) ? Number(aa.size) : undefined,
+            url: aa.url ? String(aa.url).slice(0, 500) : undefined
+          };
+          // drop undefined
+          for (const k of Object.keys(o)) if (o[k] === undefined || Number.isNaN(o[k])) delete o[k];
+          return o;
+        });
+      }
+      return outm;
+    });
+    out.chats[String(cid)] = trimmed;
+  }
+
+  // ensure active chat exists
+  if (out.activeChatId && !out.chats[out.activeChatId]) {
+    out.activeChatId = out.chatsMeta[0] ? out.chatsMeta[0].id : '';
+  }
+
+  return out;
+}
+
+function readAiState(email) {
+  try {
+    const fp = aiStateFile(email);
+    if (!fs.existsSync(fp)) return null;
+    const raw = fs.readFileSync(fp, 'utf8');
+    const parsed = JSON.parse(raw);
+    return sanitizeAiState(parsed);
+  } catch(e) {
+    return null;
+  }
+}
+
+function writeAiState(email, state) {
+  const fp = aiStateFile(email);
+  const safe = sanitizeAiState(state);
+  try {
+    fs.writeFileSync(fp, JSON.stringify(safe));
+  } catch(e) {
+    console.warn('[AI_STATE] write failed', e && e.message);
+  }
+  return safe;
+}
+
+
 // volatile sessions map kept for backward compatibility with old random tokens
 const sessions = {}; // token -> email
 
@@ -2588,19 +2712,11 @@ function _aiSystemPrompt(){
     'If the user attached images (receipts/invoices), you may also see them as images in the last user message. Extract key fields (seller, date, amount, VAT, currency, due date) and answer in a clear table + next steps.',
     'Always respond in the SAME language as the user.',
     'Be concise and actionable. Prefer short checklists, steps, and concrete numbers from APP_CONTEXT.',
-    'Use USER_PROFILE and APP_CONTEXT (JSON) to give personalized answers. Base your numbers ONLY on APP_CONTEXT.',
-    'If APP_CONTEXT is missing or APP_CONTEXT.counts.tx/bills/kasa are all 0, say that there is not enough data yet and suggest how to add/import data in the app.',
-    'When the user asks for a time window (e.g., last 30 days): use APP_CONTEXT.summaries.tx.last30/last90. If last30 has zero activity but last90 has data, clearly say "no operations in last 30 days" and then provide insights for last 90 days (and explain that you are using last 90).',
-    'When asked "where do I spend most": use topCategories and topCounterparties from APP_CONTEXT. If categories are missing, point out that many transactions are "Без категории" and advise categorization.',
     '',
     'Finance help rules:',
-    '- Use APP_CONTEXT.summaries.tx (bank/card), APP_CONTEXT.summaries.kasa (cash), and APP_CONTEXT.summaries.total (combined) for last30/last90 totals. Always separate bank vs cash when presenting numbers.',
+    '- Use APP_CONTEXT.summaries first (top categories/merchants, last30/last90, overdue bills, cash summary).',
     '- If incomeTarget is set, compute the gap vs recent net and propose a weekly plan.',
     '- Point out: biggest spend leaks, suspicious recurring spends, overdue/due bills, and 1–3 highest‑impact actions.',
-    '- Never invent categories/merchants: only mention what exists in topCategories/topCounterparties/recurring or explicit user text. If data is missing, say so.',
-    '- If many expenses are uncategorized ("Bez kategorii" / "Без категории"), highlight it and recommend categorization.',
-    '- If the user asks for advice without a clear goal, propose 3 tracks: save, invest, or grow income. Give 1–2 data-backed actions for each, then ask which track is the priority.',
-    '',
     '',
     'Invoice / Faktura helper:',
     "- If the user asks to create an invoice/faktura PDF, collect missing required fields first (seller, buyer, dates, items, VAT).",
@@ -2988,6 +3104,46 @@ app.post('/api/ai/cash/parse', async (req, res) => {
     });
   }
 });
+
+
+// AI chat state sync (cross-device).
+// Client stores locally for speed, server keeps an authoritative copy for other devices.
+app.get('/api/ai/state', (req, res) => {
+  const user = getUserBySession(req);
+  if (!user) return res.status(401).json({ success:false, error:'Not authenticated' });
+
+  const email = String(user.email || '').toLowerCase();
+  const st = readAiState(email);
+  // Return null if no state yet to avoid overwriting local state unnecessarily
+  return res.json({ success:true, state: st });
+});
+
+app.post('/api/ai/state', (req, res) => {
+  const user = getUserBySession(req);
+  if (!user) return res.status(401).json({ success:false, error:'Not authenticated' });
+
+  const email = String(user.email || '').toLowerCase();
+  const body = req.body || {};
+  const incoming = (body && body.state && typeof body.state === 'object') ? body.state : body;
+
+  if (!incoming || typeof incoming !== 'object') {
+    return res.status(400).json({ success:false, error:'Missing state' });
+  }
+
+  const force = !!body.force;
+  const cur = readAiState(email);
+  const inTs = Number(incoming.updatedAt || 0) || 0;
+  const curTs = cur ? (Number(cur.updatedAt || 0) || 0) : 0;
+
+  if (!force && cur && curTs > 0 && curTs > inTs) {
+    // Prevent overwriting a newer state coming from another device.
+    return res.status(409).json({ success:false, conflict:true, state:cur, serverUpdatedAt:curTs });
+  }
+
+  const saved = writeAiState(email, incoming);
+  return res.json({ success:true, state:saved });
+});
+
 
 
 app.post('/api/ai/chat', async (req, res) => {
