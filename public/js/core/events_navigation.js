@@ -1347,6 +1347,68 @@ function __otdAiGetReadyAttachments(){
     .map(a=>({ fileId:a.fileId || '', fileUrl:a.fileUrl || '', fileName:a.fileName || 'file', fileMime:a.fileMime || '' }));
 }
 // --- end attachments ---
+
+// --- AI assistant actions (download PDF, etc.) ---
+function __otdAiLang(){
+  try{ return String(localStorage.getItem('otd_lang')||'pl').toLowerCase().trim(); }catch(_){ return 'pl'; }
+}
+function __otdAiPdfStartedMsg(fname){
+  const lang = __otdAiLang();
+  if(lang==='pl') return `📄 PDF: ${fname} (pobieranie rozpoczęte)`;
+  if(lang==='en') return `📄 PDF: ${fname} (download started)`;
+  if(lang==='uk') return `📄 PDF: ${fname} (завантаження почалося)`;
+  return `📄 PDF: ${fname} (скачивание началось)`;
+}
+async function __otdAiDownloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'file';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(_e){} }, 30000);
+}
+async function __otdAiFetchInvoicePdf(invoice, filename){
+  const r = await fetch('/api/pdf/invoice', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(invoice||{})
+  });
+  if(!r.ok){
+    let msg='';
+    try{ const j=await r.json().catch(()=>null); msg = j && (j.error||j.message) ? String(j.error||j.message) : ''; }catch(_e){}
+    throw new Error(msg || ('HTTP ' + r.status));
+  }
+  const blob = await r.blob();
+  await __otdAiDownloadBlob(blob, filename || 'Faktura.pdf');
+}
+function __otdAiExtractJsonAction(text){
+  const s = String(text||'');
+  const m = s.match(/```json\s*([\s\S]*?)```/i);
+  if(!m) return { cleaned:s, action:null };
+  const raw = String(m[1]||'').trim();
+  let obj=null;
+  try{ obj = JSON.parse(raw); }catch(_e){ obj=null; }
+  const cleaned = s.replace(m[0], '').trim();
+  return { cleaned, action: obj };
+}
+async function __otdAiProcessActions(ans){
+  let out = String(ans||'').trim();
+  try{
+    const ext = __otdAiExtractJsonAction(out);
+    out = ext.cleaned;
+    const act = ext.action;
+    if(act && act.otd_action === 'invoice_pdf' && act.invoice){
+      const fname = String(act.filename || 'Faktura.pdf').trim() || 'Faktura.pdf';
+      try{ await __otdAiFetchInvoicePdf(act.invoice, fname); }catch(_e){}
+      out = (out ? (out + "\n\n") : "") + __otdAiPdfStartedMsg(fname);
+    }
+  }catch(_e){}
+  return out || String(ans||'');
+}
+
+
 const sendAiChat = async ()=>{
   const inp = byId('aiChatInput');
   if(!inp) return;
@@ -1380,6 +1442,9 @@ const sendAiChat = async ()=>{
     }else{
       ans = 'AI модуль не подключен. Проверь, что загружается /js/features/ai/ai-client.js.';
     }
+
+    // handle special AI actions (e.g., invoice PDF)
+    ans = await __otdAiProcessActions(ans);
 
     const msgs = loadChat(activeId);
     for(let i=msgs.length-1;i>=0;i--){
