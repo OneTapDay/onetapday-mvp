@@ -110,13 +110,14 @@ async function syncUserStatus(){
         const l = String(user.lang).toLowerCase().trim();
         if (l) {
           localStorage.setItem('otd_lang', l);
-          // align cash mic language with UI
-          localStorage.setItem('speechLang', (l==='ru')?'ru-RU':(l==='en')?'en-US':(l==='uk')?'uk-UA':'pl-PL');
+          // align cash mic language with UI, but DO NOT overwrite manual mic settings
+          const sp = (l==='ru')?'ru-RU':(l==='en')?'en-US':(l==='uk')?'uk-UA':'pl-PL';
+          localStorage.setItem('speechLocale', sp);
         }
       } else if (!localStorage.getItem('otd_lang')) {
         // fallback only if server doesn't know
         localStorage.setItem('otd_lang', 'pl');
-        localStorage.setItem('speechLang', 'pl-PL');
+        localStorage.setItem('speechLocale', 'pl-PL');
       }
     }catch(e){}
 
@@ -815,9 +816,10 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     try{ document.documentElement.setAttribute('lang', lang); }catch(e){}
     try{ localStorage.setItem('otd_lang', lang); }catch(e){}
     // Keep cash mic language aligned with UI language (requested behavior)
+    // IMPORTANT: we store it as speechLocale to avoid breaking other code that may use speechLang differently.
     try{
       const sp = _otdSpeechFromUiLang(lang);
-      localStorage.setItem('speechLang', sp);
+      localStorage.setItem('speechLocale', sp);
       const sel = document.getElementById('speechLang');
       if (sel) sel.value = sp;
     }catch(e){}
@@ -1724,12 +1726,22 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   if(btn.dataset && btn.dataset.voiceBound === '1') return;
   try{ btn.dataset.voiceBound = '1'; }catch(_){}
 
-  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
+  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA', ua:'uk-UA' };
   const getLang = ()=>{
     try{
+      // 1) explicit cache for speech locale (set from UI)
+      const cached = String(localStorage.getItem('speechLocale') || localStorage.getItem('speechLang') || '').trim();
+      if (cached) {
+        if (cached.includes('-')) return cached;
+        const k2 = cached.toLowerCase();
+        return langMap[k2] || 'pl-PL';
+      }
+      // 2) UI language
       const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
       return langMap[k] || 'pl-PL';
-    }catch(_){ return 'pl-PL'; }
+    }catch(_){
+      return 'pl-PL';
+    }
   };
 
   let recording = false;
@@ -2389,15 +2401,27 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     // prefer explicit selector if present (cash sheet)
     try{
       const sel = $id('speechLang');
-      const v = sel && sel.value ? String(sel.value) : '';
+      const v = sel && sel.value ? String(sel.value).trim() : '';
       if(v){
         try{ localStorage.setItem('speechLang', v); }catch(_){}
+        try{ localStorage.setItem('speechLocale', v); }catch(_){}
         return v;
       }
     }catch(_){}
-    return localStorage.getItem('speechLang')
-      || localStorage.getItem('otd_lang')
-      || 'pl-PL';
+    try{
+      const cached = String(localStorage.getItem('speechLocale') || localStorage.getItem('speechLang') || '').trim();
+      if(cached){
+        if(cached.includes('-')) return cached;
+        const m = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA', ua:'uk-UA' };
+        return m[cached.toLowerCase()] || 'pl-PL';
+      }
+    }catch(_){}
+    try{
+      const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
+      const m = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA', ua:'uk-UA' };
+      return m[k] || 'pl-PL';
+    }catch(_){}
+    return 'pl-PL';
   }
 
   function showCashSheet(kind){
