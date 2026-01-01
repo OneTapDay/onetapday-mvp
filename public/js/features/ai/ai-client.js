@@ -17,6 +17,15 @@
     try{ return raw ? JSON.parse(raw) : fallback; }catch(_){ return fallback; }
   }
 
+  function readJSON(baseKey, fallback){
+    try{
+      if(typeof window !== 'undefined' && typeof window._otdGetJSON === 'function'){
+        return window._otdGetJSON(baseKey, fallback);
+      }
+    }catch(_){/* ignore */}
+    return safeJsonParse(localStorage.getItem(baseKey), fallback);
+  }
+
   function toNum(x){
     if(x==null) return 0;
     if(typeof x === 'number' && isFinite(x)) return x;
@@ -284,11 +293,11 @@
   async function buildAppContext(ctxArg){
     const lang = getLang();
 
-    const txArr = safeJsonParse(localStorage.getItem('tx_manual_import'), []);
-    const billsArr = safeJsonParse(localStorage.getItem('bills_manual_import'), []);
-    const kasaArr = safeJsonParse(localStorage.getItem('kasa'), []);
-    const accMeta = safeJsonParse(localStorage.getItem('accMeta'), {});
-    const spCats = safeJsonParse(localStorage.getItem('otd_sp_cats'), null);
+    const txArr = readJSON('tx_manual_import', []);
+    const billsArr = readJSON('bills_manual_import', []);
+    const kasaArr = readJSON('kasa', []);
+    const accMeta = readJSON('accMeta', {});
+    const spCats = readJSON('otd_sp_cats', null);
 
     const settingsKeys = [
       'autoCash','cashPLN','rateEUR','rateUSD','otd_analytics_days','speechLang','intervalMin','penaltyPct','blacklist'
