@@ -1088,94 +1088,108 @@
     .planCard .btn{width:100%}
 
 
-/* ===== PATCH v2026-01-01: AI chat fixed composer + only thread scrolls ===== */
-#aiAssist.active{ margin-top:10px; }
+/* ===== PATCH v2026-01-01: AI chat layout (pinned composer + only thread scrolls) ===== */
+#aiAssist.section.active{ margin-top:10px; }
 
-/* Make the AI card fill the visible viewport (mobile-friendly). */
-#aiAssist.active .aiChatShell{
-  height: calc(100dvh - 110px);
-  max-height: calc(100dvh - 110px);
+/* AI chat card: flex column + viewport-friendly height so the PAGE doesn't scroll */
+#aiAssist.section.active .aiChatShell{
   display:flex;
   flex-direction:column;
   overflow:hidden;
-}
-@supports not (height: 100dvh){
-  #aiAssist.active .aiChatShell{ height: calc(100vh - 110px); max-height: calc(100vh - 110px); }
+
+  /* Fill the visible viewport, but don't become a skyscraper on desktop */
+  height: calc(100dvh - 150px);
+  max-height: 760px;
+  min-height: 480px;
 }
 
-#aiAssist.active .aiChatHeader{ flex:0 0 auto; }
+/* Header stays fixed inside the card */
+#aiAssist .aiChatHeader{ flex:0 0 auto; }
 
-/* Only messages scroll */
-#aiAssist.active .aiChatThread{
+/* Only the messages list scrolls */
+#aiAssist .aiChatThread{
   flex:1 1 auto;
   min-height:0;
   overflow:auto;
-  overscroll-behavior:contain;
+  max-height:none;
   -webkit-overflow-scrolling:touch;
-  padding-bottom:12px;
-}
+  padding:12px 12px 10px;
 
-/* Composer stays pinned at the bottom of the card */
-#aiAssist.active .aiComposer{
-  flex:0 0 auto;
-  position:sticky;
-  bottom:0;
-  z-index:5;
-  padding:10px 12px calc(12px + env(safe-area-inset-bottom));
-  border-top:1px solid #22282c;
-  background:linear-gradient(180deg, rgba(21,24,26,0.65), rgba(21,24,26,0.98));
-  backdrop-filter:blur(10px);
-  align-items:center;
-}
-
-/* Clean, consistent buttons */
-.aiComposer .aiToolBtn,
-.aiComposer .aiInsideBtn{
-  width:42px;
-  height:42px;
-  padding:0;
-  border-radius:14px;
-  border:1px solid #242b30;
-  background:rgba(0,0,0,0.18);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.08);
   display:flex;
-  align-items:center;
-  justify-content:center;
+  flex-direction:column;
+  gap:10px;
 }
-.aiComposer .aiToolBtn:active,
-.aiComposer .aiInsideBtn:active{ transform:scale(0.98); }
 
-.aiInputWrap{ position:relative; flex:1; display:flex; }
+/* Attachments row sits above composer */
+#aiAssist .aiAttachRow{ flex:0 0 auto; }
 
-.aiComposer textarea{
-  width:100%;
+/* Composer pinned to bottom via flex (NOT sticky) */
+#aiAssist .aiComposer{
+  flex:0 0 auto;
+  margin-top:auto;
+
+  display:flex;
+  align-items:flex-end;
+  gap:10px;
+
+  padding:12px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+
+  border-top:1px solid rgba(255,255,255,0.08);
+  background:rgba(15,18,20,0.92);
+  backdrop-filter:blur(10px);
+}
+
+/* Lay out textarea + buttons without overlap */
+#aiAssist .aiComposer .aiInputWrap{
+  flex:1 1 auto;
+  display:flex;
+  align-items:flex-end;
+  gap:10px;
+  min-width:0;
+}
+
+#aiAssist .aiComposer #aiChatInput{
+  flex:1 1 auto;
   min-height:44px;
   max-height:140px;
   resize:none;
-  border-radius:18px;
-  background:#12181d;
-  color:#e9eef2;
-  border:1px solid #242b30;
-  padding:12px 96px 12px 14px;
-  outline:none;
-  line-height:1.25;
-}
-.aiComposer textarea:focus{
-  border-color:#2f5b3b;
-  box-shadow:0 0 0 2px rgba(71,181,0,.12);
+
+  border-radius:16px;
+  padding:12px 14px;
+  box-sizing:border-box;
 }
 
-/* Inside buttons placement */
-#aiVoiceBtn.aiInsideBtn{ position:absolute; right:52px; bottom:6px; }
-#aiChatSend.aiInsideBtn{
-  position:absolute;
-  right:6px;
-  bottom:6px;
-  background:linear-gradient(180deg, rgba(71,181,0,0.92), rgba(38,104,0,0.92));
-  border-color:rgba(71,181,0,0.40);
-  box-shadow:0 12px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.16);
+/* Buttons: consistent size, no absolute positioning */
+#aiAssist .aiComposer .aiToolBtn,
+#aiAssist .aiComposer .aiInsideBtn{
+  width:44px;
+  height:44px;
+  min-width:44px;
+  padding:0;
+  border-radius:14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  position:static !important;
+  transform:none !important;
 }
-#aiChatSend.aiInsideBtn:hover{ filter:saturate(1.05) brightness(1.05); }
+
+#aiAssist .aiComposer #aiChatSend{
+  width:54px;
+  min-width:54px;
+}
+
+/* Mobile: use full height, keep it tight */
+@media (max-width: 560px){
+  #aiAssist.section.active{ margin-top:8px; }
+  #aiAssist.section.active .aiChatShell{
+    max-height:none;
+    height: calc(100dvh - 130px);
+    min-height: 420px;
+  }
+}
 
 
 /* ===== PATCH v2025-12-30: Analytics donut palette + hover ===== */
