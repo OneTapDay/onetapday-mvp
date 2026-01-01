@@ -1390,12 +1390,12 @@ const renderChat = ()=>{
 
   // Seed with greeting once (per chat)
   if(msgs.length === 0){
-        let greet = tSafe('ai.chat_intro', 'Привет! Я AI‑бухгалтер OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?');
+        let greet = tSafe('ai.chat_intro', 'Привет! Я AI‑консультант OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?');
     // If i18n returns the key itself (common "missing translation" behavior), fallback to a real greeting.
     if(!greet || greet === 'ai.chat_intro'){
       greet = (window.OTD_AI && typeof window.OTD_AI.greeting==='function')
         ? window.OTD_AI.greeting(getProfile())
-        : 'Привет! Я AI‑бухгалтер OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?';
+        : 'Привет! Я AI‑консультант OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?';
     }
 
     msgs.push({ role:'assistant', text: greet, ts: Date.now() });
