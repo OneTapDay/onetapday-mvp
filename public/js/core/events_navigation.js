@@ -2254,7 +2254,25 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     const items = await aiParseCash(t);
     if(items && items.length){
       if(items.length === 1){
-        prefillSingle(items[0], t);
+        const it = items[0] || {};
+        try{
+          const _k = String(it && it.kind || '').toLowerCase();
+          const kind = (_k === 'in' || _k.includes('przyj') || _k.includes('przych') || _k.includes('income') || _k.includes('deposit') || _k === 'przyjęcie' || _k === 'przyjecie') ? 'przyjęcie' : 'wydanie';
+          const amt = Math.abs(Number(it.amount));
+          const note = String(it.note || '').trim() || t;
+          const cat  = String(it.categoryId || '').trim();
+
+          // Auto-save single operation (no manual confirmation needed)
+          if(typeof addKasa === 'function' && isFinite(amt) && amt !== 0){
+            addKasa(kind, amt, note, 'voice-ai', cat);
+            try{ if(typeof render === 'function') render(); }catch(_){}
+            setStatus('✅ Zapisano z głosu', false);
+          }else{
+            prefillSingle(it, t);
+          }
+        }catch(_e){
+          prefillSingle(it, t);
+        }
         return;
       }
 
