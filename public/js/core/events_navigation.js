@@ -104,6 +104,22 @@ async function syncUserStatus(){
     const user = data && data.user;
     if (!user) return;
 
+    // --- LANG: server is the source-of-truth ---
+    try{
+      if (user.lang){
+        const l = String(user.lang).toLowerCase().trim();
+        if (l) {
+          localStorage.setItem('otd_lang', l);
+          // align cash mic language with UI
+          localStorage.setItem('speechLang', (l==='ru')?'ru-RU':(l==='en')?'en-US':(l==='uk')?'uk-UA':'pl-PL');
+        }
+      } else if (!localStorage.getItem('otd_lang')) {
+        // fallback only if server doesn't know
+        localStorage.setItem('otd_lang', 'pl');
+        localStorage.setItem('speechLang', 'pl-PL');
+      }
+    }catch(e){}
+
     // Auto-resync access (Stripe → server → client) once per tab if we look locked.
     // Goal: NO manual buttons. If user paid, access should just unlock.
     try {
@@ -780,12 +796,47 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   // Синхронизируем статус пользователя с сервером (для автоматически активированного демо)
   await syncUserStatus();
   
-  // Lang bar
+  // Lang bar (persisted per-user on the server; localStorage is just a cache)
+  function _otdNormUiLang(l){
+    const v = String(l||'').toLowerCase().trim();
+    if (v==='pl'||v==='en'||v==='ru'||v==='uk') return v;
+    return 'pl';
+  }
+  function _otdSpeechFromUiLang(ui){
+    switch(_otdNormUiLang(ui)){
+      case 'ru': return 'ru-RU';
+      case 'en': return 'en-US';
+      case 'uk': return 'uk-UA';
+      default: return 'pl-PL';
+    }
+  }
+  function _otdApplyLangUI(uiLang){
+    const lang = _otdNormUiLang(uiLang);
+    try{ document.documentElement.setAttribute('lang', lang); }catch(e){}
+    try{ localStorage.setItem('otd_lang', lang); }catch(e){}
+    // Keep cash mic language aligned with UI language (requested behavior)
+    try{
+      const sp = _otdSpeechFromUiLang(lang);
+      localStorage.setItem('speechLang', sp);
+      const sel = document.getElementById('speechLang');
+      if (sel) sel.value = sp;
+    }catch(e){}
+    // Visual state of buttons
+    try{
+      document.querySelectorAll('#langBarMain button').forEach(b=>{
+        b.classList.toggle('on', (b.dataset.lang||'')===lang);
+      });
+    }catch(e){}
+    // Load translations (i18n engine will also persist best-effort to /api/user/lang)
+    try{ applyLang(lang); }catch(e){}
+  }
+
   document.querySelectorAll('#langBarMain button').forEach(b=>{
-    b.addEventListener('click',()=> applyLang(b.dataset.lang));
+    b.addEventListener('click',()=> _otdApplyLangUI(b.dataset.lang));
   });
-  applyLang(localStorage.getItem('otd_lang')||'pl');
-  initTheme();
+  _otdApplyLangUI(localStorage.getItem('otd_lang')||'pl');
+
+initTheme();
   initHelper();
   initSpendingUI();
   initTrendInteractions();
