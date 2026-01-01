@@ -546,9 +546,9 @@
 .q-act.q-main{width:58px;height:58px;background:#0b0e10;color:#ffffff;font-size:28px;font-weight:900;border:1px solid rgba(71,181,0,0.35);box-shadow:0 16px 40px rgba(0,0,0,0.55)}
 .q-ico{font-size:18px}
 
-/* Bottom sheet */
-.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:flex-end;justify-content:center}
-.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px 22px 0 0;padding:10px 14px 16px;box-shadow:0 -22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
+/* Cash sheet (centered modal) */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px}
+.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px;padding:10px 14px 16px;box-shadow:0 22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
 .sheet-handle{width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,0.18);margin:6px auto 10px}
 .sheet-top{display:flex;align-items:center;justify-content:space-between}
 .sheet-title{font-weight:900}
@@ -564,7 +564,7 @@
 .sheet-row .btn{flex:1;min-width:120px}
 .sheet-adv{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
 .speechSel{flex:0 0 auto}
-.micStatus{font-size:12px;color:var(--muted);flex:1;min-width:120px}
+.micStatus{font-size:12px;color:var(--muted);flex:0 1 auto;min-width:0;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);padding:6px 10px;border-radius:999px}
 
 /* Ensure cash section doesn't sit under fixed action bar */
 .section#kasa{padding-bottom:120px}
@@ -989,9 +989,9 @@
 .q-act.q-main{width:58px;height:58px;background:#0b0e10;color:#ffffff;font-size:28px;font-weight:900;border:1px solid rgba(71,181,0,0.35);box-shadow:0 16px 40px rgba(0,0,0,0.55)}
 .q-ico{font-size:18px}
 
-/* Bottom sheet */
-.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:flex-end;justify-content:center}
-.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px 22px 0 0;padding:10px 14px 16px;box-shadow:0 -22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
+/* Cash sheet (centered modal) */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(6px);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px}
+.sheet{width:min(520px,100%);background:#0f1214;color:var(--text);border-radius:22px;padding:10px 14px 16px;box-shadow:0 22px 55px rgba(0,0,0,0.70);border:1px solid rgba(255,255,255,0.12);max-height:86vh;overflow:auto;backdrop-filter:blur(10px)}
 .sheet-handle{width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,0.18);margin:6px auto 10px}
 .sheet-top{display:flex;align-items:center;justify-content:space-between}
 .sheet-title{font-weight:900}
@@ -1007,7 +1007,7 @@
 .sheet-row .btn{flex:1;min-width:120px}
 .sheet-adv{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
 .speechSel{flex:0 0 auto}
-.micStatus{font-size:12px;color:var(--muted);flex:1;min-width:120px}
+.micStatus{font-size:12px;color:var(--muted);flex:0 1 auto;min-width:0;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);padding:6px 10px;border-radius:999px}
 
 /* Ensure cash section doesn't sit under fixed action bar */
 .section#kasa{padding-bottom:120px}
