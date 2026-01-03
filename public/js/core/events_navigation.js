@@ -283,11 +283,11 @@ async function syncUserStatus(){
                 <div class="card" style="padding:14px;border-radius:16px;width:100%;max-height:calc(100vh - 32px);display:flex;flex-direction:column">
                   <div class="row between" style="gap:10px;align-items:center;flex-wrap:wrap">
                     <div>
-                      <div style="font-weight:900;font-size:16px">${TT('documents.req_title', null, 'Запросы от бухгалтера')}</div>
-                      <div class="muted small" style="margin-top:2px">${TT('documents.req_desc', null, 'Прикрепляй файлы к конкретному запросу.')}</div>
+                      <div style="font-weight:900;font-size:16px" data-i18n="documents.req_title">Accountant requests</div>
+                      <div class="muted small" style="margin-top:2px" data-i18n="documents.req_desc">Attach files to a specific request.</div>
                     </div>
                     <div class="row" style="gap:8px;align-items:center">
-                      <button id="clientRequestsClose" class="btn secondary" type="button">${TT('buttons.close', null, 'Закрыть')}</button>
+                      <button id="clientRequestsClose" class="btn secondary" type="button" data-i18n="buttons.close">Close</button>
                     </div>
                   </div>
                   <div id="clientReqList" style="margin-top:12px;overflow:auto;flex:1;min-height:180px;padding-right:6px"></div>
