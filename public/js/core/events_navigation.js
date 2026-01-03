@@ -1834,7 +1834,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   try{ e.target.value = ''; }catch(_){}
 });
 
-// Voice input (LIVE, ChatGPT-style): speak → see live transcription → review → send
+// Voice input (LIVE, ChatGPT-style): speak → see live transcription → edit in input → send
 // Primary: Web Speech API (SpeechRecognition/webkitSpeechRecognition) with interimResults=true
 // Fallback: record → server STT (/api/ai/transcribe) for browsers without Web Speech
 (function(){
@@ -2114,17 +2114,15 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     setUI(false);
     stopTracks();
 
-    // Show review modal (confirm/edit) before sending
-    try{
-      const draft = String(inp.value || '').trim();
-      if(draft){
-        setTimeout(()=>{  }
+  }
+
+
 
 btn.addEventListener('click', ()=>{
     if(recording) stop();
     else start();
   });
-})();;
+})();
 // Initial render
 renderChat();
 
