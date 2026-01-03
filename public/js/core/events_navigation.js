@@ -1437,10 +1437,25 @@ const pushMsg = (role, text)=>{
   renderChat();
 };
 
+// push chat message with attachments
+const pushMsgWithAtt = (role, text, attachments)=>{
+  ensureDefaultChat();
+  const activeId = getActiveChatId();
+  const msgs = loadChat(activeId);
+  msgs.push({ role, text, ts: Date.now(), attachments: Array.isArray(attachments) ? attachments : [] });
+  saveChat(activeId, msgs);
+  touchChatMeta(activeId);
+  renderChat();
+};
+
 
 // --- AI chat attachments + voice (MVP: no OCR/AI required) ---
 let __otdAiPendingAtt = [];
 const __otdAiInboxKey = 'otd_ai_inbox_folder_id';
+
+// last generated PDF temp reference (download link + optional save)
+let __otdAiLastTempPdf = null; // { tempId, fileUrl, fileName, kind }
+let __otdAiAwaitingFolderForTemp = null; // { tempId, fileName }
 
 const __otdAiNowMonth = ()=>{
   try{ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }catch(_){ return ''; }
@@ -1684,28 +1699,141 @@ function __otdAiStripDevTalk(text){
 
 function __otdAiPdfReadyMsg(fname){
   const lang = __otdAiLang();
-  if(lang==='pl') return `📄 PDF: ${fname} (gotowe, zapisane w „Moje dokumenty”)`;
-  if(lang==='en') return `📄 PDF: ${fname} (ready, saved to “My documents”)`;
-  if(lang==='uk') return `📄 PDF: ${fname} (готово, збережено в «Мої документи»)`;
-  return `📄 PDF: ${fname} (готово, сохранено в «Мои документы»)`;
+  if(lang==='pl') return `📄 PDF: ${fname} (gotowe). Aby zapisać w „Moje dokumenty”: napisz „zapisz” lub „zapisz do folderu <nazwa>”.`;
+  if(lang==='en') return `📄 PDF: ${fname} (ready). To save to “My documents”: type “save” or “save to folder <name>”.`;
+  if(lang==='uk') return `📄 PDF: ${fname} (готово). Щоб зберегти в «Мої документи»: напиши «збережи» або «збережи в папку <назва>».`;
+  return `📄 PDF: ${fname} (готово). Чтобы сохранить в «Мои документы»: напиши «сохрани» или «сохрани в папку <название>».`;
 }
 
-async function __otdAiGeneratePdfAndStore(endpoint, payload, filename){
-  const blob = await __otdAiFetchPdfBlob(endpoint, payload);
+function __otdAiBlobToDataUrl(blob){
+  return new Promise((resolve, reject)=>{
+    try{
+      const fr = new FileReader();
+      fr.onload = ()=>resolve(String(fr.result||''));
+      fr.onerror = ()=>reject(new Error('FileReader failed'));
+      fr.readAsDataURL(blob);
+    }catch(e){ reject(e); }
+  });
+}
 
-  // Store in Docs (AI Inbox) so user can download again later (and repeatedly)
+async function __otdAiUploadTempPdf(blob, filename){
+  const safeName = String(filename || 'document.pdf').trim() || 'document.pdf';
+  const dataUrl = await __otdAiBlobToDataUrl(blob);
+  const r = await fetch('/api/ai/temp/upload', {
+    method:'POST',
+    credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ fileName: safeName, dataUrl })
+  });
+  const j = await r.json().catch(()=>null);
+  if(!j || !j.success || !j.temp) throw new Error((j && j.error) ? j.error : 'temp upload failed');
+  return j.temp;
+}
+
+async function __otdAiGeneratePdfTemp(endpoint, payload, filename){
+  const blob = await __otdAiFetchPdfBlob(endpoint, payload);
   try{
-    const safeName = String(filename || 'document.pdf').trim() || 'document.pdf';
-    const file = new File([blob], safeName, { type:'application/pdf' });
-    const up = await __otdAiUploadFileToDocs(file);
-    if(up && up.ok && up.file) return up.file;
+    const temp = await __otdAiUploadTempPdf(blob, filename);
+    return temp;
   }catch(_e){}
 
   // Fallback: try direct download (may be blocked on iOS/PWA without user gesture)
-  try{
-    await __otdAiDownloadBlob(blob, String(filename || 'document.pdf'));
-  }catch(_e){}
+  try{ await __otdAiDownloadBlob(blob, String(filename || 'document.pdf')); }catch(_e){}
   return null;
+}
+
+// ===== Local commands: save last generated PDF to My documents (user-controlled) =====
+function __otdAiNormText(s){
+  return String(s||'').trim().toLowerCase();
+}
+function __otdAiTrimQuotes(s){
+  let t = String(s||'').trim();
+  t = t.replace(/^['"«»„“]+/, '').replace(/['"«»„“]+$/, '');
+  return t.trim();
+}
+
+function __otdAiLooksLikeSaveCmd(text){
+  const t = __otdAiNormText(text);
+  if(!t) return false;
+  // RU/UK
+  if(t.startsWith('сохрани') || t.startsWith('сохранить') || t.includes('в мои документы')) return true;
+  if(t.startsWith('збережи') || t.startsWith('зберегти') || t.includes('у мої документи')) return true;
+  // PL
+  if(t.startsWith('zapisz')) return true;
+  // EN
+  if(t.startsWith('save')) return true;
+  return false;
+}
+
+function __otdAiParseFolderNameFromSave(text){
+  const raw = String(text||'').trim();
+  const t = raw.toLowerCase();
+  // RU
+  let m = raw.match(/в\s*папк[ауе]?\s*[:\-]?\s*(.+)$/i);
+  if(m && m[1]) return __otdAiTrimQuotes(m[1]);
+  // UK
+  m = raw.match(/у\s*папк[ауе]?\s*[:\-]?\s*(.+)$/i);
+  if(m && m[1]) return __otdAiTrimQuotes(m[1]);
+  // PL
+  m = raw.match(/do\s*folderu\s*[:\-]?\s*(.+)$/i);
+  if(m && m[1]) return __otdAiTrimQuotes(m[1]);
+  // EN
+  m = raw.match(/to\s*folder\s*[:\-]?\s*(.+)$/i);
+  if(m && m[1]) return __otdAiTrimQuotes(m[1]);
+  return '';
+}
+
+async function __otdAiFindOrCreateFolderIdByName(folderName){
+  const name = __otdAiTrimQuotes(String(folderName||'').trim()).slice(0, 60);
+  if(!name) throw new Error('Folder name is empty');
+
+  const st = await fetch('/api/docs/state', { credentials:'include' });
+  const js = await st.json().catch(()=>null);
+  if(!js || !js.success) throw new Error((js && js.error) ? js.error : 'docs state failed');
+  const folders = Array.isArray(js.folders) ? js.folders : [];
+  const target = name.toLowerCase();
+  const found = folders.find(f => String(f.name||'').trim().toLowerCase() === target);
+  if(found && found.id) return String(found.id);
+
+  const cr = await fetch('/api/docs/folders/create', {
+    method:'POST',
+    credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name })
+  });
+  const cj = await cr.json().catch(()=>null);
+  if(!cj || !cj.success || !cj.folderId) throw new Error((cj && cj.error) ? cj.error : 'folder create failed');
+  return String(cj.folderId);
+}
+
+async function __otdAiSaveTempPdfToDocs(tempId, folderName){
+  const lang = __otdAiLang();
+  const tId = String(tempId||'').trim();
+  if(!tId) throw new Error('Missing tempId');
+
+  const folderId = await __otdAiFindOrCreateFolderIdByName(folderName);
+  const r = await fetch(`/api/ai/temp/file/${encodeURIComponent(tId)}/save`, {
+    method:'POST',
+    credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ folderId })
+  });
+  const j = await r.json().catch(()=>null);
+  if(!j || !j.success || !j.file) throw new Error((j && j.error) ? j.error : 'save failed');
+
+  const f = j.file;
+  const fname = String(f.fileName || '').trim() || (lang==='pl' ? 'Dokument.pdf' : 'Документ.pdf');
+  const okMsg = (lang==='pl')
+    ? `✅ Zapisano w „Moje dokumenty” → ${folderName}`
+    : (lang==='en')
+      ? `✅ Saved to “My documents” → ${folderName}`
+      : (lang==='uk')
+        ? `✅ Збережено в «Мої документи» → ${folderName}`
+        : `✅ Сохранено в «Мои документы» → ${folderName}`;
+
+  pushMsgWithAtt('assistant', okMsg, [{ fileUrl: f.fileUrl || '', fileName: fname, fileMime: f.fileMime || 'application/pdf' }]);
+  __otdAiLastTempPdf = null;
+  __otdAiAwaitingFolderForTemp = null;
 }
 
 async function __otdAiProcessActions(ans){
@@ -1722,13 +1850,17 @@ async function __otdAiProcessActions(ans){
       const fname = String((act && act.filename) ? act.filename : defName).trim() || defName;
       let fileRec = null;
       try{
-        fileRec = await __otdAiGeneratePdfAndStore(endpoint, payload, fname);
+        fileRec = await __otdAiGeneratePdfTemp(endpoint, payload, fname);
       }catch(_e){
         fileRec = null;
       }
 
       if(fileRec && fileRec.fileUrl){
-        extraAtt.push({ fileId: fileRec.id || '', fileUrl: fileRec.fileUrl || '', fileName: fileRec.fileName || fname, fileMime: fileRec.fileMime || 'application/pdf' });
+        extraAtt.push({ tempId: fileRec.id || '', fileUrl: fileRec.fileUrl || '', fileName: fileRec.fileName || fname, fileMime: fileRec.fileMime || 'application/pdf', _temp:true });
+        // remember last generated temp PDF so user can say "save" later
+        __otdAiLastTempPdf = { tempId: fileRec.id || '', fileUrl: fileRec.fileUrl || '', fileName: fileRec.fileName || fname, kind };
+        __otdAiAwaitingFolderForTemp = null;
+
         out = (out ? (out + "\n\n") : "") + __otdAiPdfReadyMsg(fname);
       }else{
         out = (out ? (out + "\n\n") : "") + __otdAiPdfStartedMsg(fname);
@@ -1758,6 +1890,65 @@ const sendAiChat = async ()=>{
   }
   const attsReady = __otdAiGetReadyAttachments();
   inp.value = '';
+
+  // Local save flow for generated PDF (no AI call)
+  const lang = __otdAiLang();
+  const isFolderReply = !!(__otdAiAwaitingFolderForTemp && __otdAiAwaitingFolderForTemp.tempId && q);
+  const isSaveCmd = (!!q && !hasAtt && __otdAiLooksLikeSaveCmd(q));
+  if(isFolderReply || isSaveCmd){
+    ensureDefaultChat();
+    const activeId = getActiveChatId();
+    const msgs = loadChat(activeId);
+    msgs.push({ role:'user', text:q, ts: Date.now(), attachments: attsReady });
+    saveChat(activeId, msgs);
+    touchChatMeta(activeId);
+    renderChat();
+    __otdAiPendingAtt = [];
+    __otdAiRenderAttachRow();
+
+    try{
+      if(isFolderReply){
+        const folderName = q;
+        const tId = __otdAiAwaitingFolderForTemp.tempId;
+        await __otdAiSaveTempPdfToDocs(tId, folderName);
+        return;
+      }
+
+      // save command
+      if(!(__otdAiLastTempPdf && __otdAiLastTempPdf.tempId)){
+        const msg = (lang==='pl')
+          ? 'Nie mam teraz żadnego nowego PDF do zapisania. Najpierw wygeneruj dokument.'
+          : (lang==='en')
+            ? 'No new PDF to save. Generate a document first.'
+            : (lang==='uk')
+              ? 'Немає нового PDF для збереження. Спочатку згенеруй документ.'
+              : 'Нет нового PDF для сохранения. Сначала сгенерируй документ.';
+        pushMsg('assistant', msg);
+        return;
+      }
+
+      const folder = __otdAiParseFolderNameFromSave(q);
+      if(!folder){
+        __otdAiAwaitingFolderForTemp = { tempId: __otdAiLastTempPdf.tempId, fileName: __otdAiLastTempPdf.fileName || '' };
+        const ask = (lang==='pl')
+          ? 'Do jakiego folderu zapisać? Napisz nazwę folderu.'
+          : (lang==='en')
+            ? 'Which folder should I save it to? Type the folder name.'
+            : (lang==='uk')
+              ? 'У яку папку зберегти? Напиши назву папки.'
+              : 'В какую папку сохранить? Напиши название папки.';
+        pushMsg('assistant', ask);
+        return;
+      }
+      await __otdAiSaveTempPdfToDocs(__otdAiLastTempPdf.tempId, folder);
+      return;
+    }catch(e){
+      const err = (e && e.message) ? e.message : 'ошибка';
+      const msg = (lang==='pl') ? ('Nie udało się zapisać: ' + err) : ('Не удалось сохранить: ' + err);
+      pushMsg('assistant', msg);
+      return;
+    }
+  }
 
   // Write user message and a pending assistant bubble into the active chat
   ensureDefaultChat();

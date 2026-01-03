@@ -62,6 +62,9 @@ const REQUESTS_FILE = process.env.REQUESTS_FILE || path.join(__dirname, 'request
 const NOTIFICATIONS_FILE = process.env.NOTIFICATIONS_FILE || (fs.existsSync('/data') ? '/data/notifications.json' : path.join(__dirname, 'notifications.json'));
 const DOCUMENTS_FILE = process.env.DOCUMENTS_FILE || (fs.existsSync('/data') ? path.join('/data','documents.json') : path.join(__dirname,'documents.json'));
 
+// Temporary AI-generated files (NOT visible in "My documents" until user explicitly saves)
+const AI_TEMP_FILE = process.env.AI_TEMP_FILE || (fs.existsSync('/data') ? path.join('/data','ai_temp.json') : path.join(__dirname,'ai_temp.json'));
+
 function loadJsonFile(file, fallback){
   try {
     if (!fs.existsSync(file)) return fallback;
@@ -84,6 +87,7 @@ const invitesStore = loadJsonFile(INVITES_FILE, { links: {} });   // key: "acc::
 const requestsStore = loadJsonFile(REQUESTS_FILE, { items: {} }); // key: requestId
 const notificationsStore = loadJsonFile(NOTIFICATIONS_FILE, { items: {} }); // key: notificationId
 const documentsStore = loadJsonFile(DOCUMENTS_FILE, { users: {}, files: {} }); // Document vault
+const aiTempStore = loadJsonFile(AI_TEMP_FILE, { items: {} }); // Temporary AI files (not in docs)
 function linkKey(accEmail, clientEmail){ return `${accEmail}::${clientEmail}`; }
 
 function notifId(){ return 'n_' + crypto.randomBytes(8).toString('hex'); }
@@ -253,6 +257,12 @@ if (!fs.existsSync(secureUploadsDir)) {
 const vaultUploadsDir = process.env.VAULT_UPLOADS_DIR || path.join(DATA_ROOT, 'vault_uploads');
 if (!fs.existsSync(vaultUploadsDir)) {
   try { fs.mkdirSync(vaultUploadsDir, { recursive:true }); } catch(e) { console.warn('[UPLOAD] vault mkdir failed', e && e.message); }
+}
+
+// Temporary AI-generated files (kept on disk so the download link works multiple times)
+const aiTempUploadsDir = process.env.AI_TEMP_UPLOADS_DIR || path.join(vaultUploadsDir, 'ai_temp');
+if (!fs.existsSync(aiTempUploadsDir)) {
+  try { fs.mkdirSync(aiTempUploadsDir, { recursive:true }); } catch(e) { console.warn('[AI_TEMP] mkdir failed', e && e.message); }
 }
 
 
@@ -1368,6 +1378,151 @@ app.post('/api/docs/upload', (req, res)=>{
   saveJsonFile(DOCUMENTS_FILE, documentsStore);
 
   return res.json({ success:true, file: rec });
+});
+
+
+// ===== AI TEMP FILES (generated PDFs etc.) =====
+function aiTempId(){ return 'ai_tmp_' + crypto.randomBytes(8).toString('hex'); }
+
+function sanitizeBaseFileName(name){
+  const raw = String(name || 'document').trim();
+  const cleaned = raw.replace(/[\\/]/g,'_').replace(/[^a-z0-9_\-\.]/gi,'_').slice(0, 80) || 'document';
+  // keep at most one extension
+  const ext = String(path.extname(cleaned) || '').toLowerCase();
+  const base = cleaned.replace(/\.[^.]+$/,'') || 'document';
+  return { base, ext };
+}
+
+// Upload a temporary file (stored on disk, not added to My documents)
+app.post('/api/ai/temp/upload', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const fileNameIn = String((req.body && req.body.fileName) || 'document.pdf').trim();
+  const dataUrl = String((req.body && req.body.dataUrl) || '');
+
+  if (!dataUrl.startsWith('data:') || dataUrl.indexOf('base64,') < 0) return res.status(400).json({ success:false, error:'Invalid dataUrl' });
+  const head = dataUrl.slice(0, dataUrl.indexOf('base64,'));
+  const mimeMatch = head.match(/^data:([^;]+);/i);
+  const mime = (mimeMatch && mimeMatch[1]) ? String(mimeMatch[1]).toLowerCase() : '';
+  const ALLOW = ['application/pdf'];
+  if (!ALLOW.includes(mime)) return res.status(415).json({ success:false, error:'Unsupported file type' });
+
+  const b64 = dataUrl.slice(dataUrl.indexOf('base64,')+7);
+  let buf;
+  try { buf = Buffer.from(b64, 'base64'); } catch(e){ return res.status(400).json({ success:false, error:'Bad base64' }); }
+  const MAX = 10 * 1024 * 1024;
+  if (buf.length > MAX) return res.status(413).json({ success:false, error:'File too large (max 10MB)' });
+
+  const { base, ext } = sanitizeBaseFileName(fileNameIn);
+  const forcedExt = '.pdf';
+  const tid = aiTempId();
+  const storedName = `${tid}_${base}${forcedExt}`;
+  const absPath = path.join(aiTempUploadsDir, storedName);
+  try { fs.writeFileSync(absPath, buf); } catch(e){ return res.status(500).json({ success:false, error:'Failed to save file' }); }
+
+  const relPath = path.relative(DATA_ROOT, absPath).replace(/\\/g,'/');
+  const now = new Date().toISOString();
+  aiTempStore.items = aiTempStore.items || {};
+  aiTempStore.items[tid] = {
+    id: tid,
+    ownerEmail: email,
+    fileName: base + forcedExt,
+    fileMime: mime,
+    fileSize: buf.length,
+    filePath: relPath,
+    createdAt: now
+  };
+  saveJsonFile(AI_TEMP_FILE, aiTempStore);
+  return res.json({ success:true, temp:{ id: tid, fileUrl: `/api/ai/temp/file/${tid}`, fileName: base + forcedExt, fileMime: mime, fileSize: buf.length } });
+});
+
+// Download a temporary file (requires auth)
+app.get('/api/ai/temp/file/:tempId', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const tempId = String(req.params.tempId || '').trim();
+  const rec = aiTempStore.items && aiTempStore.items[tempId];
+  if (!rec) return res.status(404).send('Not found');
+  if (normalizeEmail(rec.ownerEmail || '') !== email) return res.status(403).send('Forbidden');
+
+  const abs = path.isAbsolute(rec.filePath) ? rec.filePath : path.join(DATA_ROOT, rec.filePath);
+  if (!fs.existsSync(abs)) return res.status(404).send('Not found');
+
+  res.setHeader('Content-Type', rec.fileMime || 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${String(rec.fileName || 'document.pdf').replace(/"/g,'') }"`);
+  try {
+    return fs.createReadStream(abs).pipe(res);
+  } catch(e){
+    return res.status(500).send('Failed');
+  }
+});
+
+// Save a temp file into "My documents" (client chooses folder)
+app.post('/api/ai/temp/file/:tempId/save', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+  const email = normalizeEmail(u.email || '');
+  const tempId = String(req.params.tempId || '').trim();
+  const folderId = String((req.body && req.body.folderId) || '').trim();
+  if (!folderId) return res.status(400).json({ success:false, error:'Missing folderId' });
+
+  const rec = aiTempStore.items && aiTempStore.items[tempId];
+  if (!rec) return res.status(404).json({ success:false, error:'Temp file not found' });
+  if (normalizeEmail(rec.ownerEmail || '') !== email) return res.status(403).json({ success:false, error:'Forbidden' });
+
+  const ud = ensureUserDocs(email);
+  if (!ud.folders || !ud.folders[folderId]) return res.status(404).json({ success:false, error:'Folder not found' });
+
+  const absOld = path.isAbsolute(rec.filePath) ? rec.filePath : path.join(DATA_ROOT, rec.filePath);
+  if (!fs.existsSync(absOld)) return res.status(404).json({ success:false, error:'Temp file missing' });
+
+  const { base } = sanitizeBaseFileName(rec.fileName || 'document.pdf');
+  const fileId = docFileId();
+  const storedName = `${fileId}_${base}.pdf`;
+  const absNew = path.join(vaultUploadsDir, storedName);
+  try {
+    fs.renameSync(absOld, absNew);
+  } catch(e){
+    try {
+      fs.copyFileSync(absOld, absNew);
+      fs.unlinkSync(absOld);
+    } catch(e2){
+      return res.status(500).json({ success:false, error:'Failed to move file' });
+    }
+  }
+
+  const relPath = path.relative(DATA_ROOT, absNew).replace(/\\/g,'/');
+  const now = new Date().toISOString();
+  const stat = fs.statSync(absNew);
+  const docRec = {
+    id: fileId,
+    ownerEmail: email,
+    folderId,
+    fileName: base + '.pdf',
+    fileMime: 'application/pdf',
+    fileSize: stat.size,
+    filePath: relPath,
+    fileUrl: `/api/docs/file/${fileId}`,
+    uploadedAt: now,
+    month: (ud.folders[folderId] && ud.folders[folderId].meta && ud.folders[folderId].meta.month) ? ud.folders[folderId].meta.month : '',
+    category: (ud.folders[folderId] && ud.folders[folderId].meta && ud.folders[folderId].meta.category) ? ud.folders[folderId].meta.category : ''
+  };
+
+  documentsStore.files = documentsStore.files || {};
+  documentsStore.files[fileId] = docRec;
+  ud.fileIds = ud.fileIds || [];
+  ud.fileIds.push(fileId);
+  saveJsonFile(DOCUMENTS_FILE, documentsStore);
+
+  // remove temp record
+  try {
+    delete aiTempStore.items[tempId];
+    saveJsonFile(AI_TEMP_FILE, aiTempStore);
+  } catch(_e){}
+
+  return res.json({ success:true, file: docRec });
 });
 
 // ===== Vault file operations (client only) =====
