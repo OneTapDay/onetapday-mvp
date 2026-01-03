@@ -21,6 +21,13 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { execFileSync } = require('child_process');
+
+// PDF generation (Fakturownia-like templates, PL-only)
+let PDFDocument = null;
+try { PDFDocument = require('pdfkit'); } catch (e) { PDFDocument = null; }
+const OTD_PDF_FONT_REG = path.join(__dirname, 'server', 'assets', 'fonts', 'DejaVuSans.ttf');
+const OTD_PDF_FONT_BOLD = path.join(__dirname, 'server', 'assets', 'fonts', 'DejaVuSans-Bold.ttf');
+
 // простое in-memory хранилище по email
 const appStateStore = {};
 
@@ -2718,30 +2725,16 @@ function _aiSystemPrompt(){
     '- If incomeTarget is set, compute the gap vs recent net and propose a weekly plan.',
     '- Point out: biggest spend leaks, suspicious recurring spends, overdue/due bills, and 1–3 highest‑impact actions.',
     '',
-    'Invoice / Faktura helper:',
-    "- If the user asks to create an invoice/faktura PDF, collect missing required fields first (seller, buyer, dates, items, VAT).",
-    "- When you have enough data, output ONLY the code block below (no extra text, no explanations, no mention of JSON, no extra keys).",
-    '```json',
-    '{ "otd_action":"invoice_pdf", "filename":"Faktura.pdf", "invoice": {',
-    '  "number":"FV/1/2026", "issueDate":"2026-01-01", "saleDate":"2026-01-01", "dueDate":"2026-01-08", "currency":"PLN",',
-    '  "seller": {"name":"","nip":"","address":""},',
-    '  "buyer":  {"name":"","nip":"","address":""},',
-    '  "items":[{"name":"Usługa","qty":1,"unit":"szt","net":0,"vatRate":23}],',
-    '  "notes":""',
-    '} }',
-    '```',
+    'Faktura VAT (PL) helper:',
+    "- If the user asks to create a faktura VAT PDF, collect missing required fields first (sprzedawca, nabywca, daty, pozycje, VAT).",
+    "- When you have enough data: write 1 short human sentence, then on a new line append ONE object EXACTLY like below. Do not use ``` and do not explain it.",
+    '{ "otd_action":"invoice_pdf", "filename":"Faktura.pdf", "invoice": { "number":"FV/1/2026", "issueDate":"2026-01-01", "saleDate":"2026-01-01", "dueDate":"2026-01-08", "currency":"PLN", "paymentMethod":"przelew", "bankAccount":"", "seller":{"name":"","nip":"","address":""}, "buyer":{"name":"","nip":"","address":""}, "items":[{"name":"Usługa","qty":1,"unit":"szt","net":0,"vatRate":23}], "notes":"" } }',
     '',
-    'Inventory / Inwentaryzacja / Инвентаризация helper:',
-    "- If the user asks to create an inventory / stock list PDF (inwentaryzacja / инвентаризация), do NOT use invoice fields (buyer/VAT).",
-    "- Collect required fields first: owner/company (name + optional NIP + address), inventory date, and items (name, qty, unit; optional unitCost).",
-    "- When you have enough data, output ONLY the code block below (no extra text, no explanations, no mention of JSON, no extra keys).",
-    '```json',
-    '{ "otd_action":"inventory_pdf", "filename":"Inwentaryzacja.pdf", "inventory": {',
-    '  "title":"Inwentaryzacja", "date":"2026-01-03", "owner":{"name":"","nip":"","address":""},',
-    '  "items":[{"name":"Towar","qty":1,"unit":"szt","unitCost":0}], "notes":""',
-    '} }',
-    '```',
-    "- Do not write anything outside the code block. The app will generate and attach the PDF automatically.",
+    'Inwentaryzacja (PL) helper:',
+    "- If the user asks to create an inwentaryzacja / inventory PDF, do NOT use buyer/VAT fields.",
+    "- Collect required fields: owner/company (name + optional NIP + address), date, items (name, qty, unit; optional unitCost).",
+    "- When you have enough data: write 1 short human sentence, then on a new line append ONE object EXACTLY like below. Do not use ``` and do not explain it.",
+    '{ "otd_action":"inventory_pdf", "filename":"Inwentaryzacja.pdf", "inventory": { "title":"Inwentaryzacja", "date":"2026-01-03", "owner":{"name":"","nip":"","address":""}, "items":[{"name":"Towar","qty":1,"unit":"szt","unitCost":0}], "notes":"" } }',
     '',
     'Do NOT claim you executed payments, filed taxes, or sent invoices. You can only guide and generate templates.'
   ].join('\n');
@@ -3375,40 +3368,160 @@ function _formatMoney2(x){
   return (Math.round(n * 100) / 100).toFixed(2);
 }
 
-function _invoiceToLines(inv){
+function _formatMoneyPL(x){
+  const n = Number(x || 0) || 0;
+  const fixed = (Math.round(n * 100) / 100).toFixed(2);
+  const parts = fixed.split('.');
+  const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  const frac = parts[1] || '00';
+  return intPart + ',' + frac;
+}
+
+function _plForm(n, one, few, many){
+  const nAbs = Math.abs(Number(n || 0));
+  const mod100 = nAbs % 100;
+  const mod10 = nAbs % 10;
+  if(mod100 >= 12 && mod100 <= 14) return many;
+  if(mod10 === 1) return one;
+  if(mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
+function _plTripletToWords(n){
+  const units = ['','jeden','dwa','trzy','cztery','pięć','sześć','siedem','osiem','dziewięć'];
+  const teens = ['dziesięć','jedenaście','dwanaście','trzynaście','czternaście','piętnaście','szesnaście','siedemnaście','osiemnaście','dziewiętnaście'];
+  const tens = ['','dziesięć','dwadzieścia','trzydzieści','czterdzieści','pięćdziesiąt','sześćdziesiąt','siedemdziesiąt','osiemdziesiąt','dziewięćdziesiąt'];
+  const hundreds = ['','sto','dwieście','trzysta','czterysta','pięćset','sześćset','siedemset','osiemset','dziewięćset'];
+
+  const x = Number(n || 0) || 0;
+  const h = Math.floor(x / 100);
+  const t = Math.floor((x % 100) / 10);
+  const u = x % 10;
+
+  const out = [];
+  if(h) out.push(hundreds[h]);
+  if(t === 1){
+    out.push(teens[u]);
+  }else{
+    if(t) out.push(tens[t]);
+    if(u) out.push(units[u]);
+  }
+  return out.join(' ').trim();
+}
+
+function _plIntToWords(n){
+  const x = Math.floor(Math.abs(Number(n || 0)) || 0);
+  if(x === 0) return 'zero';
+
+  const groups = [
+    { one:'', few:'', many:'' }, // units
+    { one:'tysiąc', few:'tysiące', many:'tysięcy' },
+    { one:'milion', few:'miliony', many:'milionów' },
+    { one:'miliard', few:'miliardy', many:'miliardów' }
+  ];
+
+  let rest = x;
+  let gi = 0;
+  const parts = [];
+  while(rest > 0 && gi < groups.length){
+    const trip = rest % 1000;
+    if(trip){
+      const w = _plTripletToWords(trip);
+      const g = groups[gi];
+      if(gi === 0){
+        parts.unshift(w);
+      }else{
+        const form = _plForm(trip, g.one, g.few, g.many);
+        // 1 thousand => "tysiąc" (without "jeden")
+        if(trip === 1){
+          parts.unshift(form);
+        }else{
+          parts.unshift((w + ' ' + form).trim());
+        }
+      }
+    }
+    rest = Math.floor(rest / 1000);
+    gi += 1;
+  }
+  return parts.join(' ').trim();
+}
+
+function _plAmountToWordsPLN(amount){
+  const n = Number(amount || 0) || 0;
+  const zl = Math.floor(Math.abs(n));
+  const gr = Math.round((Math.abs(n) - zl) * 100) % 100;
+  const zlWords = _plIntToWords(zl);
+  const zlUnit = _plForm(zl, 'złoty', 'złote', 'złotych');
+  const gr2 = String(gr).padStart(2,'0');
+  return `${zlWords} ${zlUnit} ${gr2}/100`;
+}
+
+function _pdfkitToBuffer(buildFn){
+  return new Promise((resolve, reject)=>{
+    try{
+      const doc = new PDFDocument({ size: 'A4', margin: 40 });
+      const chunks = [];
+      doc.on('data', (c)=> chunks.push(c));
+      doc.on('end', ()=> resolve(Buffer.concat(chunks)));
+
+      // fonts (UTF-8 / Polish diacritics)
+      try{
+        if(fs.existsSync(OTD_PDF_FONT_REG)) doc.registerFont('OTD_REG', OTD_PDF_FONT_REG);
+        if(fs.existsSync(OTD_PDF_FONT_BOLD)) doc.registerFont('OTD_BOLD', OTD_PDF_FONT_BOLD);
+        if(doc._fontFamilies && doc._fontFamilies.OTD_REG) doc.font('OTD_REG');
+      }catch(_e){}
+
+      buildFn(doc);
+      doc.end();
+    }catch(e){
+      reject(e);
+    }
+  });
+}
+
+function _pdfFont(doc, bold){
+  try{
+    if(bold && doc._fontFamilies && doc._fontFamilies.OTD_BOLD) return doc.font('OTD_BOLD');
+    if(doc._fontFamilies && doc._fontFamilies.OTD_REG) return doc.font('OTD_REG');
+  }catch(_e){}
+  // fallback to base fonts
+  return doc.font(bold ? 'Helvetica-Bold' : 'Helvetica');
+}
+
+function _invoiceToLinesPL(inv){
   const invoice = inv && typeof inv === 'object' ? inv : {};
   const seller = invoice.seller && typeof invoice.seller === 'object' ? invoice.seller : {};
   const buyer  = invoice.buyer  && typeof invoice.buyer  === 'object' ? invoice.buyer  : {};
   const items  = Array.isArray(invoice.items) ? invoice.items : [];
-
   const currency = String(invoice.currency || 'PLN').toUpperCase();
+
   const lines = [];
-  lines.push('FAKTURA / INVOICE');
+  lines.push('FAKTURA VAT');
   lines.push('Nr: ' + (invoice.number || '—'));
-  lines.push('Data wystawienia / Issue date: ' + (invoice.issueDate || '—'));
-  lines.push('Data sprzedaży / Sale date: ' + (invoice.saleDate || invoice.issueDate || '—'));
-  lines.push('Termin płatności / Due date: ' + (invoice.dueDate || '—'));
-  lines.push('Waluta / Currency: ' + currency);
+  lines.push('Data wystawienia: ' + (invoice.issueDate || '—'));
+  lines.push('Data sprzedaży: ' + (invoice.saleDate || invoice.issueDate || '—'));
+  lines.push('Termin płatności: ' + (invoice.dueDate || '—'));
+  lines.push('Waluta: ' + currency);
   lines.push('');
-  lines.push('SPRZEDAWCA / SELLER:');
+  lines.push('SPRZEDAWCA:');
   lines.push('  ' + (seller.name || '—'));
   if(seller.nip) lines.push('  NIP: ' + seller.nip);
   if(seller.address) lines.push('  ' + seller.address);
   lines.push('');
-  lines.push('NABYWCA / BUYER:');
+  lines.push('NABYWCA:');
   lines.push('  ' + (buyer.name || '—'));
   if(buyer.nip) lines.push('  NIP: ' + buyer.nip);
   if(buyer.address) lines.push('  ' + buyer.address);
   lines.push('');
-  lines.push('POZYCJE / ITEMS:');
+  lines.push('POZYCJE:');
   let totalNet = 0, totalVat = 0, totalGross = 0;
 
   if(items.length === 0){
-    lines.push('  (brak pozycji / no items)');
+    lines.push('  (brak pozycji)');
   }else{
     let idx = 1;
-    for(const it of items.slice(0, 20)){
-      const name = String(it.name || it.title || 'Item');
+    for(const it of items.slice(0, 40)){
+      const name = String(it.name || it.title || 'Pozycja');
       const qty = Number(it.qty || 1) || 1;
       const unit = String(it.unit || 'szt');
       const net = Number(it.net || it.priceNet || 0) || 0;
@@ -3422,22 +3535,22 @@ function _invoiceToLines(inv){
       totalVat += lineVat;
       totalGross += lineGross;
 
-      lines.push(`  ${idx}. ${name} | ${qty} ${unit} | NET ${_formatMoney2(net)} | VAT ${vatRate}%`);
-      lines.push(`     Line: NET ${_formatMoney2(lineNet)}  VAT ${_formatMoney2(lineVat)}  GROSS ${_formatMoney2(lineGross)} ${currency}`);
+      lines.push(`  ${idx}. ${name} | ${qty} ${unit} | netto ${_formatMoney2(net)} | VAT ${vatRate}%`);
+      lines.push(`     netto ${_formatMoney2(lineNet)}  VAT ${_formatMoney2(lineVat)}  brutto ${_formatMoney2(lineGross)} ${currency}`);
       idx += 1;
     }
   }
 
   lines.push('');
-  lines.push(`SUMA / TOTAL: NET ${_formatMoney2(totalNet)}  VAT ${_formatMoney2(totalVat)}  GROSS ${_formatMoney2(totalGross)} ${currency}`);
+  lines.push(`RAZEM: netto ${_formatMoney2(totalNet)}  VAT ${_formatMoney2(totalVat)}  brutto ${_formatMoney2(totalGross)} ${currency}`);
   if(invoice.notes){
     lines.push('');
-    lines.push('Uwagi / Notes: ' + String(invoice.notes).slice(0, 180));
+    lines.push('Uwagi: ' + String(invoice.notes).slice(0, 180));
   }
   return lines;
 }
 
-function _inventoryToLines(inv){
+function _inventoryToLinesPL(inv){
   const inventory = inv && typeof inv === 'object' ? inv : {};
   const owner = inventory.owner && typeof inventory.owner === 'object' ? inventory.owner : {};
   const items = Array.isArray(inventory.items) ? inventory.items : [];
@@ -3449,13 +3562,13 @@ function _inventoryToLines(inv){
   const lines = [];
   lines.push(title.toUpperCase());
   lines.push('');
-  if(date) lines.push(`DATE: ${date}`);
-  if(owner.name) lines.push(`OWNER: ${String(owner.name).slice(0, 140)}`);
+  if(date) lines.push(`Data: ${date}`);
+  if(owner.name) lines.push(`Podmiot: ${String(owner.name).slice(0, 140)}`);
   if(owner.nip) lines.push(`NIP: ${String(owner.nip).slice(0, 60)}`);
-  if(owner.address) lines.push(`ADDRESS: ${String(owner.address).slice(0, 180)}`);
-  if(inventory.notes) lines.push(`NOTES: ${String(inventory.notes).slice(0, 180)}`);
+  if(owner.address) lines.push(`Adres: ${String(owner.address).slice(0, 180)}`);
+  if(inventory.notes) lines.push(`Uwagi: ${String(inventory.notes).slice(0, 180)}`);
   lines.push('');
-  lines.push('ITEMS:');
+  lines.push('POZYCJE:');
 
   let total = 0;
   for(const it of items){
@@ -3474,60 +3587,448 @@ function _inventoryToLines(inv){
     if(unitCost != null){
       const lineTotal = (qty != null ? qty : 1) * unitCost;
       total += lineTotal;
-      row += ` | UNIT ${_formatMoney2(unitCost)} ${currency} | TOTAL ${_formatMoney2(lineTotal)} ${currency}`;
+      row += ` | cena ${_formatMoney2(unitCost)} ${currency} | wartość ${_formatMoney2(lineTotal)} ${currency}`;
     }
     lines.push(row.slice(0, 220));
   }
 
   if(total > 0){
     lines.push('');
-    lines.push(`TOTAL: ${_formatMoney2(total)} ${currency}`);
+    lines.push(`RAZEM: ${_formatMoney2(total)} ${currency}`);
   }
 
   return lines;
 }
 
-app.post('/api/pdf/invoice', (req, res) => {
-  const user = getUserBySession(req);
-  if (!user) return res.status(401).json({ success:false, error:'Not authenticated' });
+async function _makeFakturaVatPdfPL(inv){
+  if(!PDFDocument){
+    const lines = _invoiceToLinesPL(inv);
+    return _makeSimplePdf(lines);
+  }
 
-  const inv = req.body && typeof req.body === 'object' ? req.body : {};
-  const lines = _invoiceToLines(inv);
-  const pdfBuf = _makeSimplePdf(lines);
+  const invoice = inv && typeof inv === 'object' ? inv : {};
+  const seller = invoice.seller && typeof invoice.seller === 'object' ? invoice.seller : {};
+  const buyer  = invoice.buyer  && typeof invoice.buyer  === 'object' ? invoice.buyer  : {};
+  const items  = Array.isArray(invoice.items) ? invoice.items : [];
+  const currency = String(invoice.currency || 'PLN').toUpperCase();
+  const paymentMethod = String(invoice.paymentMethod || 'przelew');
+  const bankAccount = String(invoice.bankAccount || '');
 
-  const num = String(inv.number || 'invoice').replace(/[^\w.-]+/g, '_').slice(0, 40);
-  const filename = (num ? ('Faktura_' + num) : 'Faktura') + '.pdf';
+  // Totals + VAT summary
+  let totalNet = 0, totalVat = 0, totalGross = 0;
+  const vatMap = {}; // rate -> {net, vat, gross}
+  for(const it of items){
+    if(!it || typeof it !== 'object') continue;
+    const qty = Number(it.qty || 1) || 1;
+    const net = Number(it.net || it.priceNet || 0) || 0;
+    const rate = Number(it.vatRate ?? it.vat ?? 0) || 0;
 
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
-  return res.status(200).send(pdfBuf);
+    const lineNet = net * qty;
+    const lineVat = lineNet * (rate/100);
+    const lineGross = lineNet + lineVat;
+
+    totalNet += lineNet;
+    totalVat += lineVat;
+    totalGross += lineGross;
+
+    const key = String(rate);
+    if(!vatMap[key]) vatMap[key] = { rate, net:0, vat:0, gross:0 };
+    vatMap[key].net += lineNet;
+    vatMap[key].vat += lineVat;
+    vatMap[key].gross += lineGross;
+  }
+
+  const amountWords = (currency === 'PLN') ? _plAmountToWordsPLN(totalGross) : '';
+
+  return await _pdfkitToBuffer((doc)=>{
+    const left = doc.page.margins.left;
+    const right = doc.page.width - doc.page.margins.right;
+    const width = right - left;
+    let y = doc.page.margins.top;
+
+    // Header
+    _pdfFont(doc, true).fontSize(18).text('Faktura VAT', left, y, { width: width/2 });
+    _pdfFont(doc, true).fontSize(12).text('Nr: ' + String(invoice.number || '—'), left + width/2, y + 4, { width: width/2, align: 'right' });
+    y += 28;
+
+    // Dates block (right)
+    const issueDate = String(invoice.issueDate || '—');
+    const saleDate  = String(invoice.saleDate || invoice.issueDate || '—');
+    const dueDate   = String(invoice.dueDate || '—');
+
+    _pdfFont(doc, false).fontSize(10);
+    _pdfFont(doc, false).text(`Data wystawienia: ${issueDate}`, left, y, { width, align:'right' });
+    y += 14;
+    _pdfFont(doc, false).text(`Data sprzedaży: ${saleDate}`, left, y, { width, align:'right' });
+    y += 14;
+    _pdfFont(doc, false).text(`Termin płatności: ${dueDate}`, left, y, { width, align:'right' });
+    y += 10;
+
+    doc.moveTo(left, y).lineTo(right, y).stroke();
+    y += 10;
+
+    const colGap = 18;
+    const colW = (width - colGap) / 2;
+
+    // Seller + Buyer
+    _pdfFont(doc, true).fontSize(11).text('Sprzedawca', left, y, { width: colW });
+    _pdfFont(doc, true).fontSize(11).text('Nabywca', left + colW + colGap, y, { width: colW });
+    y += 14;
+
+    _pdfFont(doc, false).fontSize(10);
+    const sellerLines = [
+      String(seller.name || '—'),
+      seller.address ? String(seller.address) : '',
+      seller.nip ? ('NIP: ' + String(seller.nip)) : ''
+    ].filter(Boolean).join('\n');
+
+    const buyerLines = [
+      String(buyer.name || '—'),
+      buyer.address ? String(buyer.address) : '',
+      buyer.nip ? ('NIP: ' + String(buyer.nip)) : ''
+    ].filter(Boolean).join('\n');
+
+    const h1 = doc.heightOfString(sellerLines, { width: colW });
+    const h2 = doc.heightOfString(buyerLines, { width: colW });
+    const blockH = Math.max(h1, h2);
+
+    _pdfFont(doc, false).text(sellerLines, left, y, { width: colW });
+    _pdfFont(doc, false).text(buyerLines, left + colW + colGap, y, { width: colW });
+    y += blockH + 10;
+
+    doc.moveTo(left, y).lineTo(right, y).stroke();
+    y += 10;
+
+    const cols = [
+      { title:'Lp.', w:22, align:'center' },
+      { title:'Nazwa towaru/usługi', w:175, align:'left' },
+      { title:'Ilość', w:35, align:'right' },
+      { title:'J.m.', w:30, align:'left' },
+      { title:'Cena netto', w:55, align:'right' },
+      { title:'Wartość netto', w:60, align:'right' },
+      { title:'VAT', w:30, align:'right' },
+      { title:'Kwota VAT', w:50, align:'right' },
+      { title:'Wartość brutto', w:58, align:'right' }
+    ];
+
+    function drawRow(yRow, cells, isHeader){
+      const paddingX = 3;
+      const paddingY = 4;
+      _pdfFont(doc, isHeader).fontSize(isHeader ? 8.5 : 9);
+      // compute row height
+      let rowH = 18;
+      const nameIdx = 1;
+      const nameW = cols[nameIdx].w - paddingX*2;
+      const nameH = doc.heightOfString(String(cells[nameIdx] || ''), { width: nameW, align:'left' });
+      rowH = Math.max(rowH, nameH + paddingY*2);
+
+      // background for header
+      if(isHeader){
+        doc.save();
+        doc.rect(left, yRow, width, rowH).fill('#F2F2F2');
+        doc.restore();
+      }
+
+      // borders
+      doc.rect(left, yRow, width, rowH).stroke();
+      let x = left;
+      for(const c of cols){
+        doc.moveTo(x, yRow).lineTo(x, yRow + rowH).stroke();
+        x += c.w;
+      }
+      doc.moveTo(left + width, yRow).lineTo(left + width, yRow + rowH).stroke();
+
+      // texts
+      x = left;
+      for(let i=0;i<cols.length;i++){
+        const c = cols[i];
+        const t = String(cells[i] ?? '');
+        doc.text(t, x + paddingX, yRow + paddingY, { width: c.w - paddingX*2, align: c.align || 'left' });
+        x += c.w;
+      }
+      return rowH;
+    }
+
+    // Header row
+    y += drawRow(y, cols.map(c=>c.title), true);
+
+    // Item rows
+    let lp = 1;
+    for(const it of items){
+      if(!it || typeof it !== 'object') continue;
+      const name = String(it.name || it.title || 'Pozycja');
+      const qty = Number(it.qty || 1) || 1;
+      const unit = String(it.unit || 'szt');
+      const net = Number(it.net || it.priceNet || 0) || 0;
+      const rate = Number(it.vatRate ?? it.vat ?? 0) || 0;
+
+      const netVal = net * qty;
+      const vatVal = netVal * (rate/100);
+      const gross = netVal + vatVal;
+
+      const row = [
+        String(lp),
+        name,
+        (qty % 1 === 0 ? String(qty) : String(qty)),
+        unit,
+        _formatMoneyPL(net),
+        _formatMoneyPL(netVal),
+        (String(rate) + '%'),
+        _formatMoneyPL(vatVal),
+        _formatMoneyPL(gross)
+      ];
+
+      // new page if needed
+      const estimatedH = 24;
+      if(y + estimatedH > (doc.page.height - doc.page.margins.bottom - 120)){
+        doc.addPage();
+        y = doc.page.margins.top;
+        y += drawRow(y, cols.map(c=>c.title), true);
+      }
+      y += drawRow(y, row, false);
+      lp += 1;
+    }
+
+    y += 12;
+
+    // Summary (VAT rates)
+    _pdfFont(doc, true).fontSize(11).text('Podsumowanie', left, y);
+    y += 14;
+
+    const vatCols = [
+      { title:'Stawka VAT', w:90, align:'left' },
+      { title:'Wartość netto', w:120, align:'right' },
+      { title:'VAT', w:90, align:'right' },
+      { title:'Wartość brutto', w:120, align:'right' }
+    ];
+
+    function drawVatRow(yRow, cells, isHeader){
+      const padX = 3, padY = 4;
+      _pdfFont(doc, isHeader).fontSize(9);
+      const rowH = 18;
+      if(isHeader){
+        doc.save();
+        doc.rect(left, yRow, vatCols.reduce((a,c)=>a+c.w,0), rowH).fill('#F2F2F2');
+        doc.restore();
+      }
+      doc.rect(left, yRow, vatCols.reduce((a,c)=>a+c.w,0), rowH).stroke();
+      let x = left;
+      for(const c of vatCols){
+        doc.moveTo(x, yRow).lineTo(x, yRow + rowH).stroke();
+        doc.text(String(cells.shift() ?? ''), x + padX, yRow + padY, { width: c.w - padX*2, align: c.align });
+        x += c.w;
+      }
+      doc.moveTo(left + vatCols.reduce((a,c)=>a+c.w,0), yRow).lineTo(left + vatCols.reduce((a,c)=>a+c.w,0), yRow + rowH).stroke();
+      return rowH;
+    }
+
+    y += drawVatRow(y, [vatCols[0].title, vatCols[1].title, vatCols[2].title, vatCols[3].title], true);
+
+    const rates = Object.keys(vatMap).map(k=>vatMap[k]).sort((a,b)=>a.rate-b.rate);
+    for(const r of rates){
+      y += drawVatRow(y, [String(r.rate) + '%', _formatMoneyPL(r.net), _formatMoneyPL(r.vat), _formatMoneyPL(r.gross)], false);
+    }
+
+    y += 10;
+
+    _pdfFont(doc, true).fontSize(11).text(`Razem do zapłaty: ${_formatMoneyPL(totalGross)} ${currency}`, left, y);
+    y += 14;
+
+    if(amountWords){
+      _pdfFont(doc, false).fontSize(10).text('Słownie: ' + amountWords, left, y, { width });
+      y += 14;
+    }
+
+    _pdfFont(doc, false).fontSize(10).text('Sposób zapłaty: ' + paymentMethod, left, y, { width });
+    y += 14;
+    if(bankAccount){
+      _pdfFont(doc, false).fontSize(10).text('Numer rachunku: ' + bankAccount, left, y, { width });
+      y += 14;
+    }
+
+    if(invoice.notes){
+      _pdfFont(doc, true).fontSize(10).text('Uwagi:', left, y);
+      y += 12;
+      _pdfFont(doc, false).fontSize(10).text(String(invoice.notes), left, y, { width });
+      y += 14;
+    }
+
+    // signatures
+    y = Math.min(y + 18, doc.page.height - doc.page.margins.bottom - 60);
+    const sigY = y + 20;
+    doc.moveTo(left, sigY).lineTo(left + colW, sigY).stroke();
+    doc.moveTo(left + colW + colGap, sigY).lineTo(left + width, sigY).stroke();
+    _pdfFont(doc, false).fontSize(9).text('Wystawił(a)', left, sigY + 4, { width: colW, align:'center' });
+    _pdfFont(doc, false).fontSize(9).text('Odebrał(a)', left + colW + colGap, sigY + 4, { width: colW, align:'center' });
+  });
+}
+
+async function _makeInwentaryzacjaPdfPL(inv){
+  if(!PDFDocument){
+    const lines = _inventoryToLinesPL(inv);
+    return _makeSimplePdf(lines);
+  }
+
+  const inventory = inv && typeof inv === 'object' ? inv : {};
+  const owner = inventory.owner && typeof inventory.owner === 'object' ? inventory.owner : {};
+  const items = Array.isArray(inventory.items) ? inventory.items : [];
+  const title = String(inventory.title || 'Inwentaryzacja').trim() || 'Inwentaryzacja';
+  const date  = String(inventory.date || '').trim();
+  const currency = String(inventory.currency || 'PLN').trim().toUpperCase() || 'PLN';
+
+  let total = 0;
+  for(const it of items){
+    if(!it || typeof it !== 'object') continue;
+    const qty = Number(it.qty || 0) || 0;
+    const unitCost = Number(it.unitCost || 0) || 0;
+    total += qty * unitCost;
+  }
+
+  return await _pdfkitToBuffer((doc)=>{
+    const left = doc.page.margins.left;
+    const right = doc.page.width - doc.page.margins.right;
+    const width = right - left;
+    let y = doc.page.margins.top;
+
+    _pdfFont(doc, true).fontSize(18).text(title, left, y, { width });
+    y += 26;
+
+    _pdfFont(doc, false).fontSize(10);
+    if(date){
+      _pdfFont(doc, false).text('Data: ' + date, left, y, { width });
+      y += 14;
+    }
+
+    const ownerLines = [
+      owner.name ? String(owner.name) : '',
+      owner.address ? String(owner.address) : '',
+      owner.nip ? ('NIP: ' + String(owner.nip)) : ''
+    ].filter(Boolean).join('\n');
+
+    if(ownerLines){
+      _pdfFont(doc, true).fontSize(11).text('Podmiot', left, y);
+      y += 14;
+      _pdfFont(doc, false).fontSize(10).text(ownerLines, left, y, { width });
+      y += doc.heightOfString(ownerLines, { width }) + 8;
+    }
+
+    doc.moveTo(left, y).lineTo(right, y).stroke();
+    y += 10;
+
+    const cols = [
+      { title:'Lp.', w:22, align:'center' },
+      { title:'Nazwa', w:255, align:'left' },
+      { title:'Ilość', w:60, align:'right' },
+      { title:'J.m.', w:40, align:'left' },
+      { title:'Cena jedn.', w:70, align:'right' },
+      { title:'Wartość', w:68, align:'right' }
+    ];
+
+    function drawRow(yRow, cells, isHeader){
+      const padX = 3, padY = 4;
+      _pdfFont(doc, isHeader).fontSize(isHeader ? 9 : 9);
+      let rowH = 18;
+      const nameIdx = 1;
+      const nameW = cols[nameIdx].w - padX*2;
+      const nameH = doc.heightOfString(String(cells[nameIdx] || ''), { width: nameW, align:'left' });
+      rowH = Math.max(rowH, nameH + padY*2);
+
+      if(isHeader){
+        doc.save();
+        doc.rect(left, yRow, width, rowH).fill('#F2F2F2');
+        doc.restore();
+      }
+      doc.rect(left, yRow, width, rowH).stroke();
+      let x = left;
+      for(const c of cols){
+        doc.moveTo(x, yRow).lineTo(x, yRow + rowH).stroke();
+        x += c.w;
+      }
+      doc.moveTo(left + width, yRow).lineTo(left + width, yRow + rowH).stroke();
+
+      x = left;
+      for(let i=0;i<cols.length;i++){
+        const c = cols[i];
+        doc.text(String(cells[i] ?? ''), x + padX, yRow + padY, { width: c.w - padX*2, align: c.align });
+        x += c.w;
+      }
+      return rowH;
+    }
+
+    y += drawRow(y, cols.map(c=>c.title), true);
+
+    let lp = 1;
+    for(const it of items){
+      if(!it || typeof it !== 'object') continue;
+      const name = String(it.name || it.title || '').trim();
+      if(!name) continue;
+      const qty = Number(it.qty || 0) || 0;
+      const unit = String(it.unit || 'szt');
+      const unitCost = (it.unitCost != null && it.unitCost !== '') ? Number(it.unitCost || 0) || 0 : null;
+      const value = unitCost != null ? qty * unitCost : null;
+
+      if(y + 24 > (doc.page.height - doc.page.margins.bottom - 90)){
+        doc.addPage();
+        y = doc.page.margins.top;
+        y += drawRow(y, cols.map(c=>c.title), true);
+      }
+
+      y += drawRow(y, [
+        String(lp),
+        name,
+        (qty % 1 === 0 ? String(qty) : String(qty)),
+        unit,
+        unitCost != null ? _formatMoneyPL(unitCost) : '',
+        value != null ? _formatMoneyPL(value) : ''
+      ], false);
+
+      lp += 1;
+    }
+
+    y += 12;
+    if(total > 0){
+      _pdfFont(doc, true).fontSize(11).text(`Razem: ${_formatMoneyPL(total)} ${currency}`, left, y);
+      y += 14;
+    }
+
+    if(inventory.notes){
+      _pdfFont(doc, true).fontSize(10).text('Uwagi:', left, y);
+      y += 12;
+      _pdfFont(doc, false).fontSize(10).text(String(inventory.notes), left, y, { width });
+      y += 14;
+    }
+  });
+}
+
+
+app.post('/api/pdf/invoice', async (req,res)=>{
+  try{
+    const inv = (req.body && typeof req.body === 'object') ? req.body : {};
+    const pdfBuf = Array.isArray(inv.lines) ? _makeSimplePdf(inv.lines) : await _makeFakturaVatPdfPL(inv);
+
+    res.setHeader('Content-Type','application/pdf');
+    res.setHeader('Content-Disposition','attachment; filename="Faktura.pdf"');
+    res.send(pdfBuf);
+  }catch(e){
+    console.error('[pdf/invoice]', e);
+    res.status(500).json({ error: 'PDF generation failed' });
+  }
 });
 
-app.post('/api/pdf/inventory', (req, res) => {
-  const user = getUserBySession(req);
-  if (!user) return res.status(401).json({ success:false, error:'Not authenticated' });
+app.post('/api/pdf/inventory', async (req,res)=>{
+  try{
+    const inv = (req.body && typeof req.body === 'object') ? req.body : {};
+    const pdfBuf = Array.isArray(inv.lines) ? _makeSimplePdf(inv.lines) : await _makeInwentaryzacjaPdfPL(inv);
 
-  const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const inv = (body.inventory && typeof body.inventory === 'object') ? body.inventory : body;
-
-  const lines = _inventoryToLines(inv);
-  const pdfBuf = _makeSimplePdf(lines);
-
-  const base = String(body.filename || inv.title || 'Inwentaryzacja');
-  const safe = _safeFilename(base.replace(/[^\w\-\.]+/g,'_').slice(0, 60) || 'Inwentaryzacja');
-  const fname = safe.toLowerCase().endsWith('.pdf') ? safe : (safe + '.pdf');
-
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
-  return res.end(pdfBuf);
+    res.setHeader('Content-Type','application/pdf');
+    res.setHeader('Content-Disposition','attachment; filename="Inwentaryzacja.pdf"');
+    res.send(pdfBuf);
+  }catch(e){
+    console.error('[pdf/inventory]', e);
+    res.status(500).json({ error: 'PDF generation failed' });
+  }
 });
 
-
-
-/* ==== END AI ==== */
-
-
-// catch-all
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err && err.stack ? err.stack : err);
   res.status(500).json({ success: false, error: 'internal' });
