@@ -3,7 +3,7 @@
 <html lang="pl">
 <head>
 <meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
 <!-- App icons -->
 <link href="/apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="/icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
@@ -564,7 +564,7 @@
 .sheet-row .btn{flex:1;min-width:120px}
 .sheet-adv{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
 .speechSel{flex:0 0 auto}
-.micStatus{font-size:12px;color:var(--muted);flex:1;min-width:120px}
+.micStatus{font-size:12px;color:var(--muted);flex:0 1 auto;min-width:0;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);padding:6px 10px;border-radius:999px}
 
 /* Ensure cash section doesn't sit under fixed action bar */
 .section#kasa{padding-bottom:120px}
@@ -1007,7 +1007,7 @@
 .sheet-row .btn{flex:1;min-width:120px}
 .sheet-adv{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
 .speechSel{flex:0 0 auto}
-.micStatus{font-size:12px;color:var(--muted);flex:1;min-width:120px}
+.micStatus{font-size:12px;color:var(--muted);flex:0 1 auto;min-width:0;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);padding:6px 10px;border-radius:999px}
 
 /* Ensure cash section doesn't sit under fixed action bar */
 .section#kasa{padding-bottom:120px}
@@ -1088,65 +1088,110 @@
     .planCard .btn{width:100%}
 
 
-/* ===== PATCH v2025-12-30: AI chat composer like ChatGPT + full height ===== */
-.section#aiAssist .aiChatShell{
+/* ===== PATCH v2026-01-01: AI chat layout (pinned composer + only thread scrolls) ===== */
+#aiAssist.section.active{ margin-top:10px; }
+
+/* AI chat card: flex column + viewport-friendly height so the PAGE doesn't scroll */
+#aiAssist.section.active .aiChatShell{
   display:flex;
   flex-direction:column;
-  min-height:70vh;
+  overflow:hidden;
+
+  /* Fill the visible viewport, but don't become a skyscraper on desktop */
+  height: calc(100dvh - 150px);
+  max-height: 760px;
+  min-height: 480px;
 }
-.section#aiAssist .aiChatThread{
+
+/* Header stays fixed inside the card */
+#aiAssist .aiChatHeader{ flex:0 0 auto; }
+
+/* Only the messages list scrolls */
+#aiAssist .aiChatThread{
   flex:1 1 auto;
-  max-height:none !important;
-  min-height:40vh;
-}
-.aiComposer{
+  min-height:0;
+  overflow:auto;
+  max-height:none;
+  -webkit-overflow-scrolling:touch;
+  padding:12px 12px 10px;
+
   display:flex;
+  flex-direction:column;
   gap:10px;
-  padding:10px 12px 12px;
-  border-top:1px solid #22282c;
-  align-items:flex-end;
 }
-.aiInputWrap{
-  position:relative;
-  flex:1;
+
+/* Attachments row sits above composer */
+#aiAssist .aiAttachRow{ flex:0 0 auto; }
+
+/* Composer pinned to bottom via flex (NOT sticky) */
+#aiAssist .aiComposer{
+  flex:0 0 auto;
+  margin-top:auto;
+
   display:flex;
+  align-items:flex-end;
+  gap:10px;
+
+  padding:12px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+
+  border-top:1px solid rgba(255,255,255,0.08);
+  background:rgba(15,18,20,0.92);
+  backdrop-filter:blur(10px);
 }
-.aiComposer textarea{
-  width:100%;
-  flex:1;
+
+/* Lay out textarea + buttons without overlap */
+#aiAssist .aiComposer .aiInputWrap{
+  flex:1 1 auto;
+  display:flex;
+  align-items:flex-end;
+  gap:10px;
+  min-width:0;
+}
+
+#aiAssist .aiComposer #aiChatInput{
+  flex:1 1 auto;
   min-height:44px;
   max-height:140px;
   resize:none;
+
   border-radius:16px;
-  background:#12181d;
-  color:#e9eef2;
-  border:1px solid #242b30;
-  padding:12px 86px 12px 14px; /* space for inside icons */
-  outline:none;
-  line-height:1.25;
+  padding:12px 14px;
+  box-sizing:border-box;
 }
-.aiComposer textarea:focus{
-  border-color:#2f5b3b;
-  box-shadow:0 0 0 2px rgba(71,181,0,.12);
-}
-.aiInsideBtn{
-  position:absolute;
-  bottom:6px;
-  width:40px;
-  height:40px;
+
+/* Buttons: consistent size, no absolute positioning */
+#aiAssist .aiComposer .aiToolBtn,
+#aiAssist .aiComposer .aiInsideBtn{
+  width:44px;
+  height:44px;
+  min-width:44px;
   padding:0;
-  border-radius:12px;
+  border-radius:14px;
   display:flex;
   align-items:center;
   justify-content:center;
+
+  position:static !important;
+  transform:none !important;
 }
-#aiVoiceBtn.aiInsideBtn{ right:48px; }
-#aiChatSend.aiInsideBtn{ right:6px; }
-.aiSendBtn{
-  min-width:40px;
-  height:40px;
-  border-radius:12px;
+
+#aiAssist .aiComposer #aiChatSend{
+  width:54px;
+  min-width:54px;
 }
+
+/* Mobile: use full height, keep it tight */
+@media (max-width: 560px){
+  #aiAssist.section.active{ margin-top:8px; }
+  #aiAssist.section.active .aiChatShell{
+    max-height:none;
+    height: calc(100dvh - 130px);
+    min-height: 420px;
+  }
+}
+
+
 /* ===== PATCH v2025-12-30: Analytics donut palette + hover ===== */
 .donutSeg{ transition:opacity .12s ease, stroke-width .12s ease; }
 .donutSeg:hover{ opacity:.92; stroke-width:4.2; }
