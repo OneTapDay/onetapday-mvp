@@ -94,6 +94,7 @@
 
   let selectedMonth = lsGet('otd_vault_month', curMonth());
   let selectedCat = lsGet('otd_vault_cat', 'incoming');
+  let vaultShowAllFolders = (lsGet('otd_vault_show_all_folders', '0') === '1');
 
   let vaultPickCtx = null; // { requestId }
   let vaultPickResolve = null;
@@ -102,6 +103,7 @@
 
   function setSelectedMonth(v){ selectedMonth = v || curMonth(); lsSet('otd_vault_month', selectedMonth); }
   function setSelectedCat(v){ selectedCat = v || 'incoming'; lsSet('otd_vault_cat', selectedCat); }
+  function setShowAllFolders(v){ vaultShowAllFolders = !!v; lsSet('otd_vault_show_all_folders', vaultShowAllFolders ? '1' : '0'); }
 
   function catBtnHtml(cat){
     const active = (cat.id === selectedCat);
@@ -169,9 +171,21 @@
     wrap.innerHTML = `
       <style>
         #otdVaultModal select option{ color:#111; background:#fff; }
+        #otdVaultModal .otdVaultCard{width:min(920px,96vw);max-height:90vh;overflow:auto;border-radius:18px;background:rgba(18,22,25,.92);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 80px rgba(0,0,0,.55);padding:14px;}
+        #otdVaultModal .otdVaultRow{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}
+        #otdVaultModal .otdVaultRowTop{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
+        #otdVaultModal .otdVaultBlock{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:12px;}
+        #otdVaultModal .otdVaultLbl{opacity:.75;font-size:12px;margin-bottom:6px;}
+        #otdVaultModal .otdVaultCatBtns{display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin;}
+        #otdVaultModal .otdVaultCatBtns::-webkit-scrollbar{height:6px;}
+        #otdVaultModal .otdVaultCatBtns::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;}
+        #otdVaultModal .otdVaultFolderGrid{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;}
+        @media (max-width:720px){
+          #otdVaultModal .otdVaultFolderGrid{grid-template-columns:1fr;}
+        }
       </style>
-      <div style="width:min(820px,96vw);max-height:90vh;overflow:auto;border-radius:18px;background:rgba(18,22,25,.92);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 80px rgba(0,0,0,.55);padding:14px">
-        <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+      <div class="otdVaultCard">
+        <div class="otdVaultRowTop">
           <div>
             <div style="font-weight:900;font-size:18px" data-i18n="vault.modal_title">${TT('vault.modal_title', null, 'My documents')}</div>
             <div style="opacity:.75;font-size:12px;margin-top:2px" data-i18n="vault.modal_desc">${TT('vault.modal_desc', null, 'Folders and files inside OneTapDay. Not lost in chat, not lost in gallery.')}</div>
@@ -179,37 +193,53 @@
           <button id="otdVaultClose" class="btn ghost" type="button" data-i18n="common.close">${TT('common.close', null, 'Close')}</button>
         </div>
 
-        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:12px">
-          <div style="min-width:160px">
-            <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.month">${TT('vault.ui.month', null, 'Month')}</div>
-            <select id="otdVaultMonthSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
-          </div>
-          <div style="flex:1;min-width:240px">
-            <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.section">${TT('vault.ui.section', null, 'Section')}</div>
-            <div id="otdVaultCatBtns" style="display:flex;gap:8px;flex-wrap:wrap"></div>
-          </div>
-          <button id="otdVaultFoldersToggle" class="btn ghost" type="button" data-i18n="vault.ui.folders">${TT('vault.ui.folders', null, 'Folders')}</button>
-        </div>
-
-        <div id="otdVaultFoldersPanel" style="display:none;margin-top:12px">
-          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-            <div style="flex:1;min-width:220px">
-              <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.folder">${TT('vault.ui.folder', null, 'Folder')}</div>
-              <select id="otdVaultFolderSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
+        <div class="otdVaultBlock" style="margin-top:12px">
+          <div class="otdVaultRow">
+            <div style="min-width:160px;flex:0 0 auto">
+              <div class="otdVaultLbl" data-i18n="vault.ui.month">${TT('vault.ui.month', null, 'Month')}</div>
+              <select id="otdVaultMonthSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
             </div>
-            <div style="min-width:220px;flex:1">
-              <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.new_folder">${TT('vault.ui.new_folder', null, 'New folder')}</div>
-              <div style="display:flex;gap:8px">
-                <input id="otdVaultNewFolder" data-i18n-ph="vault.ui.new_folder_ph" placeholder="e.g. 2025-12 / VAT / rent" style="flex:1;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff" />
+            <div style="flex:1;min-width:260px">
+              <div class="otdVaultLbl" data-i18n="vault.ui.section">${TT('vault.ui.section', null, 'Section')}</div>
+              <div id="otdVaultCatBtns" class="otdVaultCatBtns"></div>
+            </div>
+          </div>
+
+          <div style="margin-top:12px">
+            <div class="otdVaultFolderGrid">
+              <div>
+                <div class="otdVaultLbl" data-i18n="vault.ui.folder">${TT('vault.ui.folder', null, 'Folder')}</div>
+                <select id="otdVaultFolderSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+                <button id="otdVaultRenameFolder" class="btn ghost small" type="button" data-i18n="vault.ui.rename_folder">${TT('vault.ui.rename_folder', null, 'Rename')}</button>
+                <button id="otdVaultDeleteFolder" class="btn ghost small" type="button" data-i18n="vault.ui.delete_folder">${TT('vault.ui.delete_folder', null, 'Delete')}</button>
+              </div>
+            </div>
+
+            <div style="margin-top:8px;display:flex;justify-content:flex-end">
+              <label class="muted small" style="display:flex;gap:8px;align-items:center;cursor:pointer;opacity:.9">
+                <input id="otdVaultShowAllFolders" type="checkbox" style="transform:scale(1.1)" />
+                <span data-i18n="vault.ui.show_all_folders">${TT('vault.ui.show_all_folders', null, 'Show all folders')}</span>
+              </label>
+            </div>
+
+            <div style="margin-top:10px">
+              <div class="otdVaultLbl" data-i18n="vault.ui.new_folder">${TT('vault.ui.new_folder', null, 'New folder')}</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <input id="otdVaultNewFolder" data-i18n-ph="vault.ui.new_folder_ph" placeholder="e.g. VAT / rent" style="flex:1;min-width:220px;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff" />
                 <button id="otdVaultCreateFolder" class="btn secondary" type="button" data-i18n="vault.ui.create_folder">${TT('vault.ui.create_folder', null, 'Create')}</button>
               </div>
-            
-          <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <div class="muted small" data-i18n="vault.ui.accountant_access">${TT('vault.ui.accountant_access', null, 'Accountant access')}</div>
-            <button id="otdVaultShareToggle" class="btn secondary small" type="button">...</button>
-            <div id="otdVaultShareState" class="muted small" style="opacity:.8"></div>
-          </div>
-        </div>
+              <div class="muted small" style="opacity:.8;margin-top:8px" data-i18n="vault.ui.hint">
+                ${TT('vault.ui.hint', null, 'Month + section filter the list. New folders will be attached to the current month/section.')}
+              </div>
+            </div>
+
+            <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <div class="muted small" data-i18n="vault.ui.accountant_access">${TT('vault.ui.accountant_access', null, 'Accountant access')}</div>
+              <button id="otdVaultShareToggle" class="btn secondary small" type="button">...</button>
+              <div id="otdVaultShareState" class="muted small" style="opacity:.8"></div>
+            </div>
           </div>
         </div>
 
@@ -239,6 +269,11 @@
     modal = wrap;
     try{ if (window.i18n && typeof i18n.apply==='function') i18n.apply(); }catch(_){ }
 
+    try{
+      const cb = wrap.querySelector('#otdVaultShowAllFolders');
+      if (cb) cb.checked = !!vaultShowAllFolders;
+    }catch(_){ }
+
     wrap.addEventListener('click', (e)=>{ if (e.target === wrap) close(); });
     wrap.querySelector('#otdVaultClose')?.addEventListener('click', close);
     wrap.querySelector('#otdVaultCreateFolder')?.addEventListener('click', onCreateFolder);
@@ -251,6 +286,18 @@
       const fid = wrap.querySelector('#otdVaultFolderSel')?.value || '';
       renderFiles((vaultState && vaultState.files) ? vaultState.files : [], fid);
       renderShare(fid);
+    });
+    wrap.querySelector('#otdVaultShowAllFolders')?.addEventListener('change', (e)=>{
+      vaultShowAllFolders = !!(e && e.target && e.target.checked);
+      lsSet('otd_vault_show_all_folders', vaultShowAllFolders ? '1' : '0');
+      const fid = wrap.querySelector('#otdVaultFolderSel')?.value || '';
+      refresh(fid).catch(_=>{});
+    });
+    wrap.querySelector('#otdVaultRenameFolder')?.addEventListener('click', ()=>{
+      onRenameFolder().catch(err=>setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}')));
+    });
+    wrap.querySelector('#otdVaultDeleteFolder')?.addEventListener('click', ()=>{
+      onDeleteFolder().catch(err=>setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}')));
     });
     wrap.querySelector('#otdVaultFoldersToggle')?.addEventListener('click', ()=>{
       const p = wrap.querySelector('#otdVaultFoldersPanel');
@@ -317,10 +364,62 @@
     const sel = modal.querySelector('#otdVaultFolderSel');
     const cur = sel ? (sel.value || '') : '';
     if (sel){
-      sel.innerHTML = folders.map(f=>`<option value="${esc(f.id)}">${esc(f.name||f.id)}</option>`).join('');
+      const month = selectedMonth || curMonth();
+      const cat = selectedCat || 'incoming';
+      const catName = (DOC_CATEGORIES && DOC_CATEGORIES[cat]) ? DOC_CATEGORIES[cat] : cat;
+
+      const byId = new Map((folders||[]).map(f=>[String(f.id||''), f]));
+      const isAiInbox = (f)=>{
+        const n = String((f && (f.name||f.id)) || '').trim().toLowerCase();
+        return n === 'ai inbox' || n === 'ai-inbox' || n === 'ai_inbox';
+      };
+      const inMonthCat = (f)=>{
+        const m = f && f.meta ? String(f.meta.month||'') : '';
+        const c = f && f.meta ? String(f.meta.category||'') : '';
+        return !!(m === month && c === cat);
+      };
+      const label = (f)=>{
+        if (!f) return '';
+        const nm = String(f.name||f.id||'');
+        const isSmart = !!(f.meta && f.meta.smart);
+        if (isSmart && inMonthCat(f)) return '⭐ ' + nm;
+        if (isSmart) return '• ' + nm;
+        return nm;
+      };
+
+      const smart = (folders||[]).filter(f=>inMonthCat(f) && f.meta && f.meta.smart);
+      const match = (folders||[]).filter(f=>inMonthCat(f) && !(f.meta && f.meta.smart));
+      const inbox = (folders||[]).filter(isAiInbox);
+      const other = (folders||[]).filter(f=>!inMonthCat(f) && !isAiInbox(f));
+
+      const opt = (f)=>`<option value="${esc(f.id)}">${esc(label(f))}</option>`;
+      let html = '';
+      if (smart.length || match.length){
+        html += `<optgroup label="${esc(month + ' / ' + catName)}">`;
+        html += smart.map(opt).join('');
+        html += match.map(opt).join('');
+        html += `</optgroup>`;
+      }
+      if (inbox.length){
+        html += `<optgroup label="AI Inbox">` + inbox.map(opt).join('') + `</optgroup>`;
+      }
+      if (other.length && vaultShowAllFolders){
+        html += `<optgroup label="${esc(TT('vault.ui.other_folders', null, 'Other folders'))}">` + other.map(opt).join('') + `</optgroup>`;
+      }
+
+      sel.innerHTML = html || folders.map(opt).join('');
+
       const desired = selectFolderId || cur;
-      if (desired && folders.some(f=>f.id===desired)) sel.value = desired;
-      if (!sel.value && folders.length) sel.value = folders[0].id;
+      if (desired && byId.has(String(desired))) sel.value = desired;
+      // If current selection not visible (filtered), fall back to smart folder for month+cat.
+      if (!sel.value){
+        const def = folderByMeta(month, cat);
+        if (def && byId.has(String(def))) sel.value = def;
+      }
+      if (!sel.value){
+        const firstOpt = sel.querySelector('option');
+        if (firstOpt) sel.value = firstOpt.value;
+      }
     }
 
     const folderId = sel ? sel.value : '';
@@ -652,11 +751,61 @@ async function onCreateFolder(){
     const name = (inp.value||'').trim();
     if (!name) { setStatus(TT('vault.errors.folder_name_required', null, 'Enter folder name.')); return; }
     setStatus(TT('vault.status.creating_folder', null, 'Creating folder...'));
-    await apiJson('/api/docs/folders/create','POST',{ name });
+    const created = await apiJson('/api/docs/folders/create','POST',{ name });
+    // Attach new folder to current month/section to reduce chaos in the list.
+    try{
+      const folderId = (created && created.folder && created.folder.id) ? String(created.folder.id) : '';
+      if (folderId){
+        const month = selectedMonth || curMonth();
+        const cat = selectedCat || 'incoming';
+        await apiJson('/api/docs/folders/update','POST',{ folderId, month, category: cat });
+        await refresh(folderId);
+      } else {
+        await refresh();
+      }
+    }catch(_e){
+      await refresh();
+    }
     inp.value='';
-    await refresh();
     setStatus(TT('vault.status.folder_created', null, 'Folder created.'));
     setTimeout(()=>setStatus(''), 1200);
+  }
+
+  async function onRenameFolder(){
+    const sel = modal && modal.querySelector('#otdVaultFolderSel');
+    const folderId = sel && sel.value ? String(sel.value) : '';
+    if (!folderId) return;
+    const f = (vaultState && vaultState.folders || []).find(x=>String(x.id||'')===folderId);
+    const curName = f && f.name ? String(f.name) : folderId;
+    const nm = prompt(TT('vault.dialogs.rename_folder', null, 'New folder name:'), curName);
+    if (!nm) return;
+    const name = String(nm).trim().slice(0, 60);
+    if (!name) return;
+    setStatus(TT('vault.status.saving', null, 'Saving...'));
+    await apiJson('/api/docs/folders/update','POST',{ folderId, name });
+    await refresh(folderId);
+    setStatus(TT('vault.status.saved', null, 'Saved.'));
+    setTimeout(()=>setStatus(''), 900);
+  }
+
+  async function onDeleteFolder(){
+    const sel = modal && modal.querySelector('#otdVaultFolderSel');
+    const folderId = sel && sel.value ? String(sel.value) : '';
+    if (!folderId) return;
+    const f = (vaultState && vaultState.folders || []).find(x=>String(x.id||'')===folderId);
+    const isSmart = !!(f && f.meta && f.meta.smart);
+    const nm = f && f.name ? String(f.name) : folderId;
+    const ok = confirm(TT('vault.dialogs.delete_folder', {name:nm}, 'Delete folder “{name}” with all files inside?'));
+    if (!ok) return;
+    setStatus(TT('vault.status.deleting', null, 'Deleting...'));
+    await apiJson('/api/docs/folders/delete','POST',{ folderId });
+    if (isSmart){
+      await syncSmart();
+    } else {
+      await refresh();
+    }
+    setStatus(TT('vault.status.deleted', null, 'Deleted.'));
+    setTimeout(()=>setStatus(''), 900);
   }
 
   async function onUpload(){
