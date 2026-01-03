@@ -3464,12 +3464,17 @@ function _pdfkitToBuffer(buildFn){
       doc.on('data', (c)=> chunks.push(c));
       doc.on('end', ()=> resolve(Buffer.concat(chunks)));
 
-      // fonts (UTF-8 / Polish diacritics)
+      // fonts (UTF‑8 / Polish diacritics)
+      // IMPORTANT: do not rely on internal pdfkit fields like doc._fontFamilies.
+      // If the font is available, force it for the whole document.
       try{
         if(fs.existsSync(OTD_PDF_FONT_REG)) doc.registerFont('OTD_REG', OTD_PDF_FONT_REG);
         if(fs.existsSync(OTD_PDF_FONT_BOLD)) doc.registerFont('OTD_BOLD', OTD_PDF_FONT_BOLD);
-        if(doc._fontFamilies && doc._fontFamilies.OTD_REG) doc.font('OTD_REG');
-      }catch(_e){}
+        doc.font('OTD_REG');
+      }catch(_e){
+        // fallback: built‑in fonts (will not render PL diacritics correctly)
+        try{ doc.font('Helvetica'); }catch(__e){}
+      }
 
       buildFn(doc);
       doc.end();
@@ -3480,12 +3485,13 @@ function _pdfkitToBuffer(buildFn){
 }
 
 function _pdfFont(doc, bold){
+  // Force our embedded Unicode fonts when available (PL diacritics).
+  // Do not depend on internal pdfkit structures.
   try{
-    if(bold && doc._fontFamilies && doc._fontFamilies.OTD_BOLD) return doc.font('OTD_BOLD');
-    if(doc._fontFamilies && doc._fontFamilies.OTD_REG) return doc.font('OTD_REG');
-  }catch(_e){}
-  // fallback to base fonts
-  return doc.font(bold ? 'Helvetica-Bold' : 'Helvetica');
+    return doc.font(bold ? 'OTD_BOLD' : 'OTD_REG');
+  }catch(_e){
+    return doc.font(bold ? 'Helvetica-Bold' : 'Helvetica');
+  }
 }
 
 function _invoiceToLinesPL(inv){
@@ -3699,58 +3705,99 @@ async function _makeFakturaVatPdfPL(inv){
     doc.moveTo(left, y).lineTo(right, y).stroke();
     y += 10;
 
-    const cols = [
-      { title:'Lp.', w:22, align:'center' },
-      { title:'Nazwa towaru/usługi', w:175, align:'left' },
-      { title:'Ilość', w:35, align:'right' },
-      { title:'J.m.', w:30, align:'left' },
-      { title:'Cena netto', w:55, align:'right' },
-      { title:'Wartość netto', w:60, align:'right' },
-      { title:'VAT', w:30, align:'right' },
-      { title:'Kwota VAT', w:50, align:'right' },
-      { title:'Wartość brutto', w:58, align:'right' }
-    ];
+    const _tCols = (pageW)=>{
+      // Make columns fit the page and avoid header clipping.
+      // Keep "Nazwa" wide, shorten headers, and compute row height dynamically.
+      const fixed = {
+        lp: 18,
+        qty: 34,
+        unit: 28,
+        price: 60,
+        net: 62,
+        vatp: 30,
+        vat: 56,
+        gross: 65
+      };
+      const fixedSum = fixed.lp + fixed.qty + fixed.unit + fixed.price + fixed.net + fixed.vatp + fixed.vat + fixed.gross;
+      let nameW = pageW - fixedSum;
+      const minName = 160;
+      if(nameW < minName){
+        const need = minName - nameW;
+        const scaleBase = fixedSum;
+        const k = (scaleBase - need) / scaleBase;
+        for(const key of Object.keys(fixed)){
+          fixed[key] = Math.max(18, Math.floor(fixed[key] * k));
+        }
+        const fixedSum2 = fixed.lp + fixed.qty + fixed.unit + fixed.price + fixed.net + fixed.vatp + fixed.vat + fixed.gross;
+        nameW = pageW - fixedSum2;
+      }
+      return [
+        { title:'Lp.', w: fixed.lp, align:'center' },
+        { title:'Nazwa', w: nameW, align:'left' },
+        { title:'Ilość', w: fixed.qty, align:'right' },
+        { title:'J.m.', w: fixed.unit, align:'left' },
+        { title:'Cena netto', w: fixed.price, align:'right' },
+        { title:'Wartość netto', w: fixed.net, align:'right' },
+        { title:'VAT%', w: fixed.vatp, align:'right' },
+        { title:'Kwota VAT', w: fixed.vat, align:'right' },
+        { title:'Brutto', w: fixed.gross, align:'right' }
+      ];
+    };
+
+    const cols = _tCols(width);
+
+    function _rowHeight(cells, isHeader){
+      const paddingX = 3;
+      const paddingY = 4;
+      const fontSize = isHeader ? 8.5 : 9;
+      _pdfFont(doc, isHeader).fontSize(fontSize);
+      let maxH = 0;
+      for(let i=0;i<cols.length;i++){
+        const c = cols[i];
+        const t = String(cells[i] ?? '');
+        const h = doc.heightOfString(t, { width: c.w - paddingX*2, align: c.align || 'left' });
+        if(h > maxH) maxH = h;
+      }
+      return Math.max(18, Math.ceil(maxH + paddingY*2));
+    }
 
     function drawRow(yRow, cells, isHeader){
       const paddingX = 3;
       const paddingY = 4;
-      _pdfFont(doc, isHeader).fontSize(isHeader ? 8.5 : 9);
-      // compute row height
-      let rowH = 18;
-      const nameIdx = 1;
-      const nameW = cols[nameIdx].w - paddingX*2;
-      const nameH = doc.heightOfString(String(cells[nameIdx] || ''), { width: nameW, align:'left' });
-      rowH = Math.max(rowH, nameH + paddingY*2);
+      const rowH = _rowHeight(cells, isHeader);
 
-      // background for header
+      // Header background
       if(isHeader){
         doc.save();
-        doc.rect(left, yRow, width, rowH).fill('#F2F2F2');
+        doc.rect(left, yRow, cols.reduce((a,c)=>a+c.w,0), rowH).fill('#F2F2F2');
         doc.restore();
       }
 
-      // borders
-      doc.rect(left, yRow, width, rowH).stroke();
-      let x = left;
-      for(const c of cols){
-        doc.moveTo(x, yRow).lineTo(x, yRow + rowH).stroke();
-        x += c.w;
-      }
-      doc.moveTo(left + width, yRow).lineTo(left + width, yRow + rowH).stroke();
+      doc.rect(left, yRow, cols.reduce((a,c)=>a+c.w,0), rowH).stroke();
 
-      // texts
-      x = left;
+      let x = left;
       for(let i=0;i<cols.length;i++){
         const c = cols[i];
+        // vertical separators
+        doc.moveTo(x, yRow).lineTo(x, yRow + rowH).stroke();
+
         const t = String(cells[i] ?? '');
-        doc.text(t, x + paddingX, yRow + paddingY, { width: c.w - paddingX*2, align: c.align || 'left' });
+        _pdfFont(doc, isHeader).fontSize(isHeader ? 8.5 : 9).text(
+          t,
+          x + paddingX,
+          yRow + paddingY,
+          { width: c.w - paddingX*2, align: c.align || 'left' }
+        );
         x += c.w;
       }
+      // right border
+      doc.moveTo(x, yRow).lineTo(x, yRow + rowH).stroke();
       return rowH;
     }
 
     // Header row
     y += drawRow(y, cols.map(c=>c.title), true);
+
 
     // Item rows
     let lp = 1;
@@ -3804,8 +3851,18 @@ async function _makeFakturaVatPdfPL(inv){
 
     function drawVatRow(yRow, cells, isHeader){
       const padX = 3, padY = 4;
-      _pdfFont(doc, isHeader).fontSize(9);
-      const rowH = 18;
+      const fontSize = 9;
+      _pdfFont(doc, isHeader).fontSize(fontSize);
+
+      let maxH = 0;
+      for(let i=0;i<vatCols.length;i++){
+        const c = vatCols[i];
+        const t = String(cells[i] ?? '');
+        const h = doc.heightOfString(t, { width: c.w - padX*2, align: c.align || 'left' });
+        if(h > maxH) maxH = h;
+      }
+      const rowH = Math.max(18, Math.ceil(maxH + padY*2));
+
       if(isHeader){
         doc.save();
         doc.rect(left, yRow, vatCols.reduce((a,c)=>a+c.w,0), rowH).fill('#F2F2F2');
@@ -3813,12 +3870,14 @@ async function _makeFakturaVatPdfPL(inv){
       }
       doc.rect(left, yRow, vatCols.reduce((a,c)=>a+c.w,0), rowH).stroke();
       let x = left;
-      for(const c of vatCols){
+      for(let i=0;i<vatCols.length;i++){
+        const c = vatCols[i];
         doc.moveTo(x, yRow).lineTo(x, yRow + rowH).stroke();
-        doc.text(String(cells.shift() ?? ''), x + padX, yRow + padY, { width: c.w - padX*2, align: c.align });
+        const t = String(cells[i] ?? '');
+        doc.text(t, x + padX, yRow + padY, { width: c.w - padX*2, align: c.align || 'left' });
         x += c.w;
       }
-      doc.moveTo(left + vatCols.reduce((a,c)=>a+c.w,0), yRow).lineTo(left + vatCols.reduce((a,c)=>a+c.w,0), yRow + rowH).stroke();
+      doc.moveTo(x, yRow).lineTo(x, yRow + rowH).stroke();
       return rowH;
     }
 
