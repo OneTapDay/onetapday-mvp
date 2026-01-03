@@ -1418,7 +1418,7 @@ const renderChat = ()=>{
         const thumb = (mime.startsWith('image/') && url)
           ? '<img class="aiAttachThumb" src="'+safeUrl+'" alt=""/>'
           : '<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid #242b30;background:#0f1418;font-size:14px">📎</div>';
-        return '<a class="aiAttachItem aiAttachLink" href="'+safeUrl+'" target="_blank" rel="noopener">'+thumb+'<div class="aiAttachName">'+escHtml(name)+'</div></a>';
+        return '<a class="aiAttachItem aiAttachLink" href="'+safeUrl+'" target="_blank" rel="noopener" download>'+thumb+'<div class="aiAttachName">'+escHtml(name)+'</div></a>';
       }).join('');
       attHtml = '<div class="aiAttachList">'+items+'</div>';
     }
@@ -1453,6 +1453,7 @@ async function __otdAiEnsureInboxFolder(){
     const name = TT('ai.inbox_name', null, 'AI Inbox');
     const r = await fetch('/api/docs/folders/create', {
       method:'POST',
+      credentials:'include',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ name })
     });
@@ -1467,6 +1468,7 @@ async function __otdAiEnsureInboxFolder(){
     const month = __otdAiNowMonth();
     const r = await fetch('/api/docs/folders/ensure', {
       method:'POST',
+      credentials:'include',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ month, category:'other' })
     });
@@ -1527,6 +1529,7 @@ async function __otdAiUploadFileToDocs(file){
 
   const r = await fetch('/api/docs/upload', {
     method:'POST',
+    credentials:'include',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ folderId, fileName: file.name || 'file', dataUrl })
   });
@@ -1609,6 +1612,76 @@ async function __otdAiFetchPdfBlob(endpoint, payload){
   return await r.blob();
 }
 
+
+function __otdAiExtractJsonAction(text){
+  const s = String(text||'');
+  // Prefer fenced blocks that contain otd_action
+  let m = s.match(/```(?:json)?\s*([\s\S]*?\"otd_action\"[\s\S]*?)```/i);
+  let raw = m ? String(m[1]||'').trim() : '';
+  let obj = null;
+
+  function tryParseJson(str){
+    if(!str) return null;
+    try{ return JSON.parse(str); }catch(_e){}
+    // tolerate trailing commas
+    try{
+      const fixed = str
+        .replace(/,\s*([}\]])/g, '$1')
+        .replace(/\uFEFF/g,'');
+      return JSON.parse(fixed);
+    }catch(_e2){}
+    return null;
+  }
+
+  if(raw){
+    obj = tryParseJson(raw);
+    const cleaned = s.replace(m[0], '').trim();
+    return { cleaned, action: obj };
+  }
+
+  // Fallback: inline JSON object containing "otd_action"
+  const idx = s.toLowerCase().indexOf('\"otd_action\"');
+  if(idx >= 0){
+    const before = s.lastIndexOf('{', idx);
+    if(before >= 0){
+      let depth = 0;
+      for(let i=before; i<Math.min(s.length, before+50000); i++){
+        const ch = s[i];
+        if(ch === '{') depth++;
+        else if(ch === '}'){
+          depth--;
+          if(depth === 0){
+            const candidate = s.slice(before, i+1);
+            const parsed = tryParseJson(candidate);
+            if(parsed){
+              const cleaned2 = (s.slice(0, before) + s.slice(i+1)).trim();
+              return { cleaned: cleaned2, action: parsed };
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return { cleaned: s.trim(), action: null };
+}
+
+function __otdAiStripDevTalk(text){
+  let out = String(text||'');
+  out = out.replace(/```[\s\S]*?```/g, '').trim();
+  out = out.split('\n').filter(line=>{
+    const l = String(line||'').toLowerCase();
+    if(!l.trim()) return false;
+    if(l.includes('otd_action')) return false;
+    if(l.includes('```')) return false;
+    if(l.includes('json')) return false;
+    if(l.includes('код для') || l.includes('json-код') || l.includes('json код')) return false;
+    return true;
+  }).join('\n').trim();
+  return out;
+}
+
 function __otdAiPdfReadyMsg(fname){
   const lang = __otdAiLang();
   if(lang==='pl') return `📄 PDF: ${fname} (gotowe, zapisane w „Moje dokumenty”)`;
@@ -1620,15 +1693,17 @@ function __otdAiPdfReadyMsg(fname){
 async function __otdAiGeneratePdfAndStore(endpoint, payload, filename){
   const blob = await __otdAiFetchPdfBlob(endpoint, payload);
 
-  // Start a normal download once (like before)
-  try{ await __otdAiDownloadBlob(blob, filename || 'document.pdf'); }catch(_e){}
-
-  // Save to Docs (AI Inbox) so it can be downloaded again later
+  // Store in Docs (AI Inbox) so user can download again later (and repeatedly)
   try{
     const safeName = String(filename || 'document.pdf').trim() || 'document.pdf';
     const file = new File([blob], safeName, { type:'application/pdf' });
     const up = await __otdAiUploadFileToDocs(file);
     if(up && up.ok && up.file) return up.file;
+  }catch(_e){}
+
+  // Fallback: try direct download (may be blocked on iOS/PWA without user gesture)
+  try{
+    await __otdAiDownloadBlob(blob, String(filename || 'document.pdf'));
   }catch(_e){}
   return null;
 }
@@ -1639,6 +1714,7 @@ async function __otdAiProcessActions(ans){
   try{
     const ext = __otdAiExtractJsonAction(out);
     out = ext.cleaned;
+    try{ out = __otdAiStripDevTalk(out); }catch(_e){}
     const act = ext.action;
 
     async function handlePdf(kind, endpoint, payload){
@@ -1797,56 +1873,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
 
   let opId = 0; // cancel stale callbacks
 
-  function __otdAiOpenVoiceReviewModal(initialText){
-    try{
-      const id = 'aiVoiceReviewModal';
-      let ov = document.getElementById(id);
-      if(!ov){
-        ov = document.createElement('div');
-        ov.id = id;
-        ov.className = 'modal-overlay';
-        ov.innerHTML = `
-          <div class="modal-card" style="max-width:540px;width:92%">
-            <h3>${escHtml(TT('ai.voice_review_title', null, 'Проверь расшифровку'))}</h3>
-            <div class="muted small" style="margin-bottom:8px">${escHtml(TT('ai.voice_review_desc', null, 'Можно поправить текст перед отправкой.'))}</div>
-            <textarea id="aiVoiceReviewText" style="width:100%;min-height:140px;background:#0f1418;border:1px solid #242b30;border-radius:10px;color:var(--text);padding:10px;resize:vertical"></textarea>
-            <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end">
-              <button class="btn ghost" id="aiVoiceReviewCancel" type="button">${escHtml(TT('common.cancel', null, 'Отмена'))}</button>
-              <button class="btn" id="aiVoiceReviewSend" type="button">${escHtml(TT('common.send', null, 'Отправить'))}</button>
-            </div>
-          </div>`;
-        document.body.appendChild(ov);
-      }
-
-      const ta = ov.querySelector('#aiVoiceReviewText');
-      const btnCancel = ov.querySelector('#aiVoiceReviewCancel');
-      const btnSend = ov.querySelector('#aiVoiceReviewSend');
-
-      if(ta) ta.value = String(initialText || '').trim();
-      ov.classList.add('show');
-
-      const close = ()=>{
-        try{ ov.classList.remove('show'); }catch(_){}
-      };
-
-      if(btnCancel){
-        btnCancel.onclick = ()=>{ close(); };
-      }
-      if(btnSend){
-        btnSend.onclick = ()=>{
-          const text = ta ? String(ta.value || '').trim() : '';
-          close();
-          if(text){
-            try{ inp.value = text; }catch(_){}
-            try{ if(typeof sendAiChat === 'function') sendAiChat(); }catch(_){}
-          }
-        };
-      }
-
-      try{ if(ta) ta.focus(); }catch(_){}
-    }catch(_e){}
-  }
-
+  function __otdAiOpenVoiceReviewModal(initialText){ /* disabled: user edits in input */ }
 
   function setUI(on){
     recording = !!on;
@@ -2033,9 +2060,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
           const text = await transcribe(blob, mime);
           if(!text) return;
           const prev = String(inp.value || '').trim();
-          inp.value = (prev ? (prev + ' ') : '') + text;
-          try{ __otdAiOpenVoiceReviewModal(String(inp.value||'').trim()); }catch(_e){}
-          try{ inp.focus(); }catch(_){}
+          inp.value = (prev ? (prev + ' ') : '') + text;          try{ inp.focus(); }catch(_){}
         }catch(e){
           if(typeof pushMsg === 'function'){
             pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог распознать голос. Проверь AI ключ / доступ.'));
@@ -2093,10 +2118,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     try{
       const draft = String(inp.value || '').trim();
       if(draft){
-        setTimeout(()=>{ try{ __otdAiOpenVoiceReviewModal(draft); }catch(_e){} }, 120);
-      }
-    }catch(_e){}
-  }
+        setTimeout(()=>{  }
 
 btn.addEventListener('click', ()=>{
     if(recording) stop();
