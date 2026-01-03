@@ -104,6 +104,23 @@ async function syncUserStatus(){
     const user = data && data.user;
     if (!user) return;
 
+    // --- LANG: server is the source-of-truth ---
+    try{
+      if (user.lang){
+        const l = String(user.lang).toLowerCase().trim();
+        if (l) {
+          localStorage.setItem('otd_lang', l);
+          // align cash mic language with UI, but DO NOT overwrite manual mic settings
+          const sp = (l==='ru')?'ru-RU':(l==='en')?'en-US':(l==='uk')?'uk-UA':'pl-PL';
+          localStorage.setItem('speechLocale', sp);
+        }
+      } else if (!localStorage.getItem('otd_lang')) {
+        // fallback only if server doesn't know
+        localStorage.setItem('otd_lang', 'pl');
+        localStorage.setItem('speechLocale', 'pl-PL');
+      }
+    }catch(e){}
+
     // Auto-resync access (Stripe → server → client) once per tab if we look locked.
     // Goal: NO manual buttons. If user paid, access should just unlock.
     try {
@@ -232,7 +249,8 @@ async function syncUserStatus(){
             btn.id = 'openClientRequestsBtn';
             btn.className = 'btn secondary';
             btn.type = 'button';
-            btn.textContent = TT('documents.req_btn', null, 'Запросы бухгалтера');
+            btn.setAttribute('data-i18n','documents.req_btn');
+            btn.textContent = TT('documents.req_btn', null, 'Accountant requests');
             btn.style.marginLeft = '8px';
             if (anchor && anchor.parentNode) {
               // try to place near Vault button
@@ -241,6 +259,7 @@ async function syncUserStatus(){
             } else {
               document.body.appendChild(btn);
             }
+            try{ if (window.i18n && typeof i18n.apply==='function') i18n.apply(); }catch(_){ }
           }
 
           // Modal
@@ -780,12 +799,48 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   // Синхронизируем статус пользователя с сервером (для автоматически активированного демо)
   await syncUserStatus();
   
-  // Lang bar
+  // Lang bar (persisted per-user on the server; localStorage is just a cache)
+  function _otdNormUiLang(l){
+    const v = String(l||'').toLowerCase().trim();
+    if (v==='pl'||v==='en'||v==='ru'||v==='uk') return v;
+    return 'pl';
+  }
+  function _otdSpeechFromUiLang(ui){
+    switch(_otdNormUiLang(ui)){
+      case 'ru': return 'ru-RU';
+      case 'en': return 'en-US';
+      case 'uk': return 'uk-UA';
+      default: return 'pl-PL';
+    }
+  }
+  function _otdApplyLangUI(uiLang){
+    const lang = _otdNormUiLang(uiLang);
+    try{ document.documentElement.setAttribute('lang', lang); }catch(e){}
+    try{ localStorage.setItem('otd_lang', lang); }catch(e){}
+    // Keep cash mic language aligned with UI language (requested behavior)
+    // IMPORTANT: we store it as speechLocale to avoid breaking other code that may use speechLang differently.
+    try{
+      const sp = _otdSpeechFromUiLang(lang);
+      localStorage.setItem('speechLocale', sp);
+      const sel = document.getElementById('speechLang');
+      if (sel) sel.value = sp;
+    }catch(e){}
+    // Visual state of buttons
+    try{
+      document.querySelectorAll('#langBarMain button').forEach(b=>{
+        b.classList.toggle('on', (b.dataset.lang||'')===lang);
+      });
+    }catch(e){}
+    // Load translations (i18n engine will also persist best-effort to /api/user/lang)
+    try{ applyLang(lang); }catch(e){}
+  }
+
   document.querySelectorAll('#langBarMain button').forEach(b=>{
-    b.addEventListener('click',()=> applyLang(b.dataset.lang));
+    b.addEventListener('click',()=> _otdApplyLangUI(b.dataset.lang));
   });
-  applyLang(localStorage.getItem('otd_lang')||'pl');
-  initTheme();
+  _otdApplyLangUI(localStorage.getItem('otd_lang')||'pl');
+
+initTheme();
   initHelper();
   initSpendingUI();
   initTrendInteractions();
@@ -962,18 +1017,19 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     byId('reportsBills')?.addEventListener('click', ()=> byId('exportBillsCSV')?.click());
     byId('reportsBook')?.addEventListener('click', ()=> byId('exportBook')?.click());
 
-    // AI profile + chat UI (локально, без облачной магии)
+    // AI profile + chat UI (с сохранением на сервере для синхронизации между устройствами)
 const AI_PROFILE_KEY = 'otd_ai_profile';
 const AI_CHATS_META_KEY = 'otd_ai_chats_meta_v1';
 const AI_CHAT_ACTIVE_KEY = 'otd_ai_chat_active_v1';
 const AI_CHAT_PREFIX = 'otd_ai_chat_msgs_';
 const LEGACY_AI_CHAT_KEY = 'otd_ai_chat_v1';
+const AI_CLOUD_APPLIED_TS_KEY = 'otd_ai_cloud_applied_ts_v1';
 
 const escHtml = (s)=>String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const loadJSON = (k, fallback)=>{
   try{ const raw = localStorage.getItem(k); return raw ? JSON.parse(raw) : fallback; }catch(e){ return fallback; }
 };
-const saveJSON = (k, v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+const saveJSON = (k, v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} try{ __aiScheduleCloudPush(); }catch(_e){} };
 
 const tSafe = (key, fallback)=>{
   try{
@@ -1047,7 +1103,7 @@ const getChatsMeta = ()=>{
 };
 const saveChatsMeta = (arr)=> saveJSON(AI_CHATS_META_KEY, arr);
 const getActiveChatId = ()=> localStorage.getItem(AI_CHAT_ACTIVE_KEY) || '';
-const setActiveChatId = (id)=>{ try{ localStorage.setItem(AI_CHAT_ACTIVE_KEY, id); }catch(e){} };
+const setActiveChatId = (id)=>{ try{ localStorage.setItem(AI_CHAT_ACTIVE_KEY, id); }catch(e){} try{ __aiScheduleCloudPush(); }catch(_e){} };
 const chatKey = (id)=> AI_CHAT_PREFIX + id;
 const loadChat = (id)=> loadJSON(chatKey(id), []);
 const saveChat = (id, arr)=> saveJSON(chatKey(id), arr);
@@ -1079,6 +1135,174 @@ const ensureDefaultChat = ()=>{
   }
   if(!getActiveChatId() && meta[0]?.id) setActiveChatId(meta[0].id);
 };
+
+//
+// AI Cloud Sync (server-side storage)
+// Goal: same AI chat history + titles + AI profile across devices.
+// Storage is handled by backend (/api/ai/state) so we don't rely on localStorage and don't expose DB writes in the browser.
+//
+let __aiCloudInited = false;
+let __aiCloudPulling = false;
+let __aiCloudPushing = false;
+let __aiCloudPushTimer = null;
+
+function __aiEmail(){
+  try{ return String(localStorage.getItem(USER_KEY)||'').trim().toLowerCase(); }catch(_){ return ''; }
+}
+function __aiGetAppliedTs(){
+  try{ return parseInt(String(localStorage.getItem(AI_CLOUD_APPLIED_TS_KEY)||'0'),10) || 0; }catch(_){ return 0; }
+}
+function __aiSetAppliedTs(ts){
+  try{ localStorage.setItem(AI_CLOUD_APPLIED_TS_KEY, String(ts||0)); }catch(_){}
+}
+
+function __aiBuildLocalState(){
+  ensureDefaultChat();
+  const meta = getChatsMeta().slice(0, 25);
+  const chats = {};
+  for (const m of meta){
+    if(!m || !m.id) continue;
+    const arr = loadChat(m.id);
+    chats[m.id] = (Array.isArray(arr) ? arr.slice(-200) : []);
+  }
+  return {
+    v: 1,
+    updatedAt: Date.now(),
+    profile: getProfile(),
+    chatsMeta: meta,
+    activeChatId: getActiveChatId(),
+    chats
+  };
+}
+
+function __aiApplyRemoteState(st){
+  if(!st || typeof st !== 'object') return;
+  // Apply profile
+  try{
+    if(st.profile && typeof st.profile === 'object'){
+      localStorage.setItem(AI_PROFILE_KEY, JSON.stringify(st.profile));
+    }
+  }catch(_){}
+  // Apply meta
+  try{
+    if(Array.isArray(st.chatsMeta)){
+      localStorage.setItem(AI_CHATS_META_KEY, JSON.stringify(st.chatsMeta.slice(0,25)));
+    }
+  }catch(_){}
+  // Apply active chat
+  try{
+    if(st.activeChatId){
+      localStorage.setItem(AI_CHAT_ACTIVE_KEY, String(st.activeChatId));
+    }
+  }catch(_){}
+  // Apply chats
+  try{
+    if(st.chats && typeof st.chats === 'object'){
+      for(const [id, arr] of Object.entries(st.chats)){
+        if(!id) continue;
+        const msgs = Array.isArray(arr) ? arr.slice(-200) : [];
+        localStorage.setItem(chatKey(id), JSON.stringify(msgs));
+      }
+    }
+  }catch(_){}
+}
+
+async function __aiPullFromServer(force){
+  const email = __aiEmail();
+  if(!email) return;
+  if(__aiCloudPulling) return;
+  __aiCloudPulling = true;
+
+  try{
+    const r = await fetch('/api/ai/state', { method:'GET', credentials:'same-origin' });
+    if(!r.ok) { __aiCloudPulling=false; return; }
+    const j = await r.json().catch(()=>null);
+    if(!j || !j.success) { __aiCloudPulling=false; return; }
+    const st = j.state;
+
+    if(!st) { __aiCloudPulling=false; return; }
+
+    const rTs = Number(st.updatedAt || 0) || 0;
+    const lTs = __aiGetAppliedTs();
+    if(!force && rTs && rTs <= lTs) { __aiCloudPulling=false; return; }
+
+    __aiApplyRemoteState(st);
+    __aiSetAppliedTs(rTs || Date.now());
+
+    // refresh UI if AI panel is present
+    try{ applyProfileToUI(); }catch(_){}
+    try{ renderChatList(); }catch(_){}
+    try{ renderChat(); }catch(_){}
+  }catch(_e){
+  }finally{
+    __aiCloudPulling = false;
+  }
+}
+
+async function __aiPushToServerNow(){
+  const email = __aiEmail();
+  if(!email) return;
+  if(__aiCloudPushing) return;
+  __aiCloudPushing = true;
+
+  try{
+    const st = __aiBuildLocalState();
+    const r = await fetch('/api/ai/state', {
+      method:'POST',
+      credentials:'same-origin',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ state: st })
+    });
+
+    // If conflict (newer state on server), pull and apply server version.
+    if(r.status === 409){
+      const j = await r.json().catch(()=>null);
+      if(j && j.state){
+        __aiApplyRemoteState(j.state);
+        __aiSetAppliedTs(Number(j.serverUpdatedAt || j.state.updatedAt || Date.now()) || Date.now());
+        try{ renderChatList(); renderChat(); }catch(_){}
+      }
+      return;
+    }
+
+    const j = await r.json().catch(()=>null);
+    if(j && j.success && j.state){
+      __aiSetAppliedTs(Number(j.state.updatedAt || Date.now()) || Date.now());
+    }
+  }catch(_e){
+  }finally{
+    __aiCloudPushing = false;
+  }
+}
+
+// called automatically after any local AI state change (debounced)
+function __aiScheduleCloudPush(){
+  if(__aiCloudPushTimer) clearTimeout(__aiCloudPushTimer);
+  __aiCloudPushTimer = setTimeout(()=>{ __aiPushToServerNow(); }, 1200);
+}
+
+function __aiInitCloudSync(){
+  if(__aiCloudInited) return;
+  const email = __aiEmail();
+  if(!email){
+    setTimeout(__aiInitCloudSync, 1000);
+    return;
+  }
+  __aiCloudInited = true;
+
+  // initial pull (server may have newer history from another device)
+  __aiPullFromServer(true);
+
+  // lightweight polling (MVP): keeps devices in sync without websockets
+  setInterval(()=>{ __aiPullFromServer(false); }, 15000);
+
+  // pull when the tab becomes active again
+  document.addEventListener('visibilitychange', ()=>{
+    if(!document.hidden) __aiPullFromServer(true);
+  });
+}
+
+
 
 const formatShortDate = (ts)=>{
   try{ const d=new Date(ts||Date.now()); return d.toISOString().slice(0,10); }catch(e){ return ''; }
@@ -1156,6 +1380,7 @@ byId('aiChatList')?.addEventListener('click', (e)=>{
 });
 
 ensureDefaultChat();
+__aiInitCloudSync();
 
 const renderChat = ()=>{
   const host = byId('aiChatLog');
@@ -1167,12 +1392,12 @@ const renderChat = ()=>{
 
   // Seed with greeting once (per chat)
   if(msgs.length === 0){
-        let greet = tSafe('ai.chat_intro', 'Привет! Я AI‑бухгалтер OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?');
+        let greet = tSafe('ai.chat_intro', 'Привет! Я AI‑консультант OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?');
     // If i18n returns the key itself (common "missing translation" behavior), fallback to a real greeting.
     if(!greet || greet === 'ai.chat_intro'){
       greet = (window.OTD_AI && typeof window.OTD_AI.greeting==='function')
         ? window.OTD_AI.greeting(getProfile())
-        : 'Привет! Я AI‑бухгалтер OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?';
+        : 'Привет! Я AI‑консультант OneTapDay. С чем разберёмся сегодня: расходы, доход, платежи, долги или налоги?';
     }
 
     msgs.push({ role:'assistant', text: greet, ts: Date.now() });
@@ -1347,6 +1572,68 @@ function __otdAiGetReadyAttachments(){
     .map(a=>({ fileId:a.fileId || '', fileUrl:a.fileUrl || '', fileName:a.fileName || 'file', fileMime:a.fileMime || '' }));
 }
 // --- end attachments ---
+
+// --- AI assistant actions (download PDF, etc.) ---
+function __otdAiLang(){
+  try{ return String(localStorage.getItem('otd_lang')||'pl').toLowerCase().trim(); }catch(_){ return 'pl'; }
+}
+function __otdAiPdfStartedMsg(fname){
+  const lang = __otdAiLang();
+  if(lang==='pl') return `📄 PDF: ${fname} (pobieranie rozpoczęte)`;
+  if(lang==='en') return `📄 PDF: ${fname} (download started)`;
+  if(lang==='uk') return `📄 PDF: ${fname} (завантаження почалося)`;
+  return `📄 PDF: ${fname} (скачивание началось)`;
+}
+async function __otdAiDownloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'file';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(_e){} }, 30000);
+}
+async function __otdAiFetchInvoicePdf(invoice, filename){
+  const r = await fetch('/api/pdf/invoice', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(invoice||{})
+  });
+  if(!r.ok){
+    let msg='';
+    try{ const j=await r.json().catch(()=>null); msg = j && (j.error||j.message) ? String(j.error||j.message) : ''; }catch(_e){}
+    throw new Error(msg || ('HTTP ' + r.status));
+  }
+  const blob = await r.blob();
+  await __otdAiDownloadBlob(blob, filename || 'Faktura.pdf');
+}
+function __otdAiExtractJsonAction(text){
+  const s = String(text||'');
+  const m = s.match(/```json\s*([\s\S]*?)```/i);
+  if(!m) return { cleaned:s, action:null };
+  const raw = String(m[1]||'').trim();
+  let obj=null;
+  try{ obj = JSON.parse(raw); }catch(_e){ obj=null; }
+  const cleaned = s.replace(m[0], '').trim();
+  return { cleaned, action: obj };
+}
+async function __otdAiProcessActions(ans){
+  let out = String(ans||'').trim();
+  try{
+    const ext = __otdAiExtractJsonAction(out);
+    out = ext.cleaned;
+    const act = ext.action;
+    if(act && act.otd_action === 'invoice_pdf' && act.invoice){
+      const fname = String(act.filename || 'Faktura.pdf').trim() || 'Faktura.pdf';
+      try{ await __otdAiFetchInvoicePdf(act.invoice, fname); }catch(_e){}
+      out = (out ? (out + "\n\n") : "") + __otdAiPdfStartedMsg(fname);
+    }
+  }catch(_e){}
+  return out || String(ans||'');
+}
+
+
 const sendAiChat = async ()=>{
   const inp = byId('aiChatInput');
   if(!inp) return;
@@ -1380,6 +1667,9 @@ const sendAiChat = async ()=>{
     }else{
       ans = 'AI модуль не подключен. Проверь, что загружается /js/features/ai/ai-client.js.';
     }
+
+    // handle special AI actions (e.g., invoice PDF)
+    ans = await __otdAiProcessActions(ans);
 
     const msgs = loadChat(activeId);
     for(let i=msgs.length-1;i>=0;i--){
@@ -1428,7 +1718,9 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   try{ e.target.value = ''; }catch(_){}
 });
 
-// Voice input (stable): record → transcribe → put text into input (no auto-send)
+// Voice input (LIVE, ChatGPT-style): speak → see live transcription → review → send
+// Primary: Web Speech API (SpeechRecognition/webkitSpeechRecognition) with interimResults=true
+// Fallback: record → server STT (/api/ai/transcribe) for browsers without Web Speech
 (function(){
   const btn = byId('aiVoiceBtn');
   const inp = byId('aiChatInput');
@@ -1438,24 +1730,39 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   if(btn.dataset && btn.dataset.voiceBound === '1') return;
   try{ btn.dataset.voiceBound = '1'; }catch(_){}
 
-  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA' };
+  const langMap = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA', ua:'uk-UA' };
   const getLang = ()=>{
     try{
+      // 1) explicit cache for speech locale (set from UI)
+      const cached = String(localStorage.getItem('speechLocale') || localStorage.getItem('speechLang') || '').trim();
+      if (cached) {
+        if (cached.includes('-')) return cached;
+        const k2 = cached.toLowerCase();
+        return langMap[k2] || 'pl-PL';
+      }
+      // 2) UI language
       const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
       return langMap[k] || 'pl-PL';
-    }catch(_){ return 'pl-PL'; }
+    }catch(_){
+      return 'pl-PL';
+    }
   };
 
   let recording = false;
+  let speechRec = null;
+
   let mediaRec = null;
   let mediaStream = null;
   let chunks = [];
+
   let opId = 0; // cancel stale callbacks
 
   function setUI(on){
-    recording = on;
-    btn.classList.toggle('is-recording', !!on);
-    btn.textContent = on ? '⏹' : '🎤';
+    recording = !!on;
+    try{
+      btn.classList.toggle('is-recording', recording);
+      btn.textContent = recording ? '⏹' : '🎤';
+    }catch(_){}
   }
 
   function stopTracks(){
@@ -1516,49 +1823,81 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     return true;
   }
 
-  async function start(){
-    if(recording) return;
+  function startSpeech(){
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!SR) return false;
+
+    const my = ++opId;
+    try{
+      const rec = new SR();
+      speechRec = rec;
+
+      const base = String(inp.value || '').trim();
+      const basePrefix = base ? (base + ' ') : '';
+
+      let finalText = '';
+      let interimText = '';
+
+      rec.lang = getLang();
+      rec.interimResults = true;
+      rec.continuous = false;
+
+      rec.onresult = (ev)=>{
+        if(my !== opId) return;
+        try{
+          let interim = '';
+          let fin = '';
+          const start = (typeof ev.resultIndex === 'number') ? ev.resultIndex : 0;
+          for(let i=start; i<(ev.results ? ev.results.length : 0); i++){
+            const r = ev.results[i];
+            const t = r && r[0] ? String(r[0].transcript || '') : '';
+            if(!t) continue;
+            if(r.isFinal) fin += t;
+            else interim += t;
+          }
+          if(fin){
+            finalText = (finalText ? (finalText + ' ') : '') + String(fin).trim();
+          }
+          interimText = String(interim || '').trim();
+
+          const combined = (basePrefix + [finalText, interimText].filter(Boolean).join(' ')).trim();
+          inp.value = combined || base;
+          try{ inp.focus(); }catch(_){}
+        }catch(_){}
+      };
+
+      rec.onerror = (e)=>{
+        if(my !== opId) return;
+        try{
+          const err = e && e.error ? String(e.error) : '';
+          if(typeof pushMsg === 'function' && err){
+            pushMsg('assistant', TT('ai.voice_failed', null, 'Голосовой ввод не сработал: ' + err));
+          }
+        }catch(_){}
+        // Stop + cleanup
+        try{ rec.stop(); }catch(_){}
+      };
+
+      rec.onend = ()=>{
+        if(my !== opId) return;
+        speechRec = null;
+        setUI(false);
+      };
+
+      setUI(true);
+      rec.start();
+      return true;
+    }catch(_e){
+      speechRec = null;
+      setUI(false);
+      return false;
+    }
+  }
+
+  async function startFallbackMedia(){
     const my = ++opId;
 
-    // Prefer stable flow: record → server STT
-    if(navigator.mediaDevices && window.MediaRecorder){
-      try{
-        await startMedia();
-        setUI(true);
-        mediaRec.onstop = async ()=>{
-          const mine = my;
-          const localChunks = chunks.slice();
-          const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
-          setUI(false);
-          stopTracks();
-
-          if(mine !== opId) return; // cancelled
-          try{
-            const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
-            const text = await transcribe(blob, mime);
-            if(!text) return;
-            const prev = String(inp.value || '').trim();
-            inp.value = (prev ? (prev + ' ') : '') + text;
-            try{ inp.focus(); }catch(_){}
-          }catch(e){
-            // If STT is not available, do not spam the chat. Just show a minimal error.
-            if(typeof pushMsg === 'function'){
-              pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог распознать голос. Проверь AI ключ / доступ.'));
-            }
-          }
-        };
-        mediaRec.start();
-        return;
-      }catch(_e){
-        // fallthrough to Web Speech if available
-        stopTracks();
-        setUI(false);
-      }
-    }
-
-    // Fallback: Web Speech API (device-dependent)
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if(!SR){
+    if(!(navigator.mediaDevices && window.MediaRecorder)){
       if(typeof pushMsg === 'function'){
         pushMsg('assistant', TT('ai.voice_unsupported', null, 'Голосовой ввод недоступен в этом браузере.'));
       }
@@ -1566,44 +1905,73 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     }
 
     try{
-      const rec = new SR();
-      rec.lang = getLang();
-      rec.interimResults = false;
-      rec.continuous = false;
-
+      await startMedia();
       setUI(true);
-      rec.onresult = (ev)=>{
+
+      mediaRec.onstop = async ()=>{
+        const localChunks = chunks.slice();
+        const mime = (mediaRec && mediaRec.mimeType) ? mediaRec.mimeType : '';
+        setUI(false);
+        stopTracks();
+
+        if(my !== opId) return; // cancelled
+
         try{
-          const t = ev.results && ev.results[0] && ev.results[0][0] ? ev.results[0][0].transcript : '';
-          const text = String(t || '').trim();
-          if(text){
-            const prev = String(inp.value || '').trim();
-            inp.value = (prev ? (prev + ' ') : '') + text;
-            try{ inp.focus(); }catch(_){}
+          const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
+          const text = await transcribe(blob, mime);
+          if(!text) return;
+          const prev = String(inp.value || '').trim();
+          inp.value = (prev ? (prev + ' ') : '') + text;
+          try{ inp.focus(); }catch(_){}
+        }catch(e){
+          if(typeof pushMsg === 'function'){
+            pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог распознать голос. Проверь AI ключ / доступ.'));
           }
-        }catch(_){}
+        }
       };
-      rec.onerror = ()=> setUI(false);
-      rec.onend = ()=> setUI(false);
-      rec.start();
+
+      mediaRec.start();
     }catch(_e){
       setUI(false);
+      stopTracks();
       if(typeof pushMsg === 'function'){
-        pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог включить голосовой ввод.'));
+        pushMsg('assistant', TT('ai.voice_failed', null, 'Не смог включить микрофон. Проверь доступ к микрофону.'));
       }
     }
   }
 
+  function start(){
+    if(recording) return;
+
+    // Prefer live transcription (like ChatGPT) where possible
+    if(startSpeech()) return;
+
+    // Fallback to server STT (record → transcribe)
+    startFallbackMedia();
+  }
+
   function stop(){
-    // Stop either MediaRecorder or SpeechRecognition (if running)
-    const my = ++opId;
+    ++opId; // cancel callbacks
+
+    // Stop SpeechRecognition
+    try{
+      if(speechRec){
+        try{ speechRec.onresult = null; }catch(_){}
+        try{ speechRec.onerror = null; }catch(_){}
+        try{ speechRec.onend = null; }catch(_){}
+        try{ speechRec.stop(); }catch(_){}
+      }
+    }catch(_){}
+    speechRec = null;
+
+    // Stop MediaRecorder
     try{
       if(mediaRec && mediaRec.state !== 'inactive'){
         mediaRec.stop();
         return;
       }
     }catch(_){}
-    // If we reached here, nothing to stop
+
     setUI(false);
     stopTracks();
   }
@@ -2103,15 +2471,27 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     // prefer explicit selector if present (cash sheet)
     try{
       const sel = $id('speechLang');
-      const v = sel && sel.value ? String(sel.value) : '';
+      const v = sel && sel.value ? String(sel.value).trim() : '';
       if(v){
         try{ localStorage.setItem('speechLang', v); }catch(_){}
+        try{ localStorage.setItem('speechLocale', v); }catch(_){}
         return v;
       }
     }catch(_){}
-    return localStorage.getItem('speechLang')
-      || localStorage.getItem('otd_lang')
-      || 'pl-PL';
+    try{
+      const cached = String(localStorage.getItem('speechLocale') || localStorage.getItem('speechLang') || '').trim();
+      if(cached){
+        if(cached.includes('-')) return cached;
+        const m = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA', ua:'uk-UA' };
+        return m[cached.toLowerCase()] || 'pl-PL';
+      }
+    }catch(_){}
+    try{
+      const k = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
+      const m = { pl:'pl-PL', en:'en-US', ru:'ru-RU', uk:'uk-UA', ua:'uk-UA' };
+      return m[k] || 'pl-PL';
+    }catch(_){}
+    return 'pl-PL';
   }
 
   function showCashSheet(kind){
@@ -2254,7 +2634,25 @@ $id('cashClose')?.addEventListener('click', ()=> quickCashClose());
     const items = await aiParseCash(t);
     if(items && items.length){
       if(items.length === 1){
-        prefillSingle(items[0], t);
+        const it = items[0] || {};
+        try{
+          const _k = String(it && it.kind || '').toLowerCase();
+          const kind = (_k === 'in' || _k.includes('przyj') || _k.includes('przych') || _k.includes('income') || _k.includes('deposit') || _k === 'przyjęcie' || _k === 'przyjecie') ? 'przyjęcie' : 'wydanie';
+          const amt = Math.abs(Number(it.amount));
+          const note = String(it.note || '').trim() || t;
+          const cat  = String(it.categoryId || '').trim();
+
+          // Auto-save single operation (no manual confirmation needed)
+          if(typeof addKasa === 'function' && isFinite(amt) && amt !== 0){
+            addKasa(kind, amt, note, 'voice-ai', cat);
+            try{ if(typeof render === 'function') render(); }catch(_){}
+            setStatus('✅ Zapisano z głosu', false);
+          }else{
+            prefillSingle(it, t);
+          }
+        }catch(_e){
+          prefillSingle(it, t);
+        }
         return;
       }
 

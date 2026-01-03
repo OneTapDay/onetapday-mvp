@@ -53,11 +53,11 @@
   }
 
   const VAULT_CATS = [
-    { id:'incoming', label:'Входящие' },
-    { id:'outgoing', label:'Выставленные' },
-    { id:'tax', label:'ZUS/PIT' },
-    { id:'proof', label:'Подтверждения' },
-    { id:'other', label:'Другое' }
+    { id:'incoming', labelKey:'vault.tabs.incoming', fallback:'Incoming' },
+    { id:'outgoing', labelKey:'vault.tabs.outgoing', fallback:'Issued' },
+    { id:'tax',      labelKey:'vault.tabs.tax',      fallback:'ZUS/PIT' },
+    { id:'proof',    labelKey:'vault.tabs.proof',    fallback:'Proof' },
+    { id:'other',    labelKey:'vault.tabs.other',    fallback:'Other' }
   ];
 
   function curMonth(){
@@ -106,7 +106,8 @@
   function catBtnHtml(cat){
     const active = (cat.id === selectedCat);
     const cls = active ? 'btn' : 'btn secondary';
-    return `<button type="button" class="${cls} small" data-cat="${esc(cat.id)}">${esc(cat.label)}</button>`;
+    const lbl = TT(cat.labelKey || ('vault.tabs.'+cat.id), null, cat.fallback || cat.label || cat.id);
+    return `<button type="button" class="${cls} small" data-cat="${esc(cat.id)}">${esc(lbl)}</button>`;
   }
 
   function renderSmartControls(){
@@ -127,7 +128,7 @@
           setSelectedCat(c);
           // re-render for active state
           renderSmartControls();
-          await syncSmart().catch(err=>setStatus('Ошибка: '+err.message));
+          await syncSmart().catch(err=>setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}')));
         });
       });
     }
@@ -172,39 +173,39 @@
       <div style="width:min(820px,96vw);max-height:90vh;overflow:auto;border-radius:18px;background:rgba(18,22,25,.92);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 80px rgba(0,0,0,.55);padding:14px">
         <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
           <div>
-            <div style="font-weight:900;font-size:18px">Мои документы</div>
-            <div style="opacity:.75;font-size:12px;margin-top:2px">Папки и файлы внутри OneTapDay. Не теряются в чате, не теряются в галерее.</div>
+            <div style="font-weight:900;font-size:18px" data-i18n="vault.modal_title">${TT('vault.modal_title', null, 'My documents')}</div>
+            <div style="opacity:.75;font-size:12px;margin-top:2px" data-i18n="vault.modal_desc">${TT('vault.modal_desc', null, 'Folders and files inside OneTapDay. Not lost in chat, not lost in gallery.')}</div>
           </div>
-          <button id="otdVaultClose" class="btn ghost" type="button">Закрыть</button>
+          <button id="otdVaultClose" class="btn ghost" type="button" data-i18n="common.close">${TT('common.close', null, 'Close')}</button>
         </div>
 
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:12px">
           <div style="min-width:160px">
-            <div class="muted small" style="margin-bottom:6px">Месяц</div>
+            <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.month">${TT('vault.ui.month', null, 'Month')}</div>
             <select id="otdVaultMonthSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
           </div>
           <div style="flex:1;min-width:240px">
-            <div class="muted small" style="margin-bottom:6px">Раздел</div>
+            <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.section">${TT('vault.ui.section', null, 'Section')}</div>
             <div id="otdVaultCatBtns" style="display:flex;gap:8px;flex-wrap:wrap"></div>
           </div>
-          <button id="otdVaultFoldersToggle" class="btn ghost" type="button">Папки</button>
+          <button id="otdVaultFoldersToggle" class="btn ghost" type="button" data-i18n="vault.ui.folders">${TT('vault.ui.folders', null, 'Folders')}</button>
         </div>
 
         <div id="otdVaultFoldersPanel" style="display:none;margin-top:12px">
           <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
             <div style="flex:1;min-width:220px">
-              <div class="muted small" style="margin-bottom:6px">Папка</div>
+              <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.folder">${TT('vault.ui.folder', null, 'Folder')}</div>
               <select id="otdVaultFolderSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
             </div>
             <div style="min-width:220px;flex:1">
-              <div class="muted small" style="margin-bottom:6px">Новая папка</div>
+              <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.new_folder">${TT('vault.ui.new_folder', null, 'New folder')}</div>
               <div style="display:flex;gap:8px">
-                <input id="otdVaultNewFolder" placeholder="Напр. 2025-12 / VAT / Контракты" style="flex:1;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff" />
-                <button id="otdVaultCreateFolder" class="btn secondary" type="button">Создать</button>
+                <input id="otdVaultNewFolder" data-i18n-ph="vault.ui.new_folder_ph" placeholder="e.g. 2025-12 / VAT / rent" style="flex:1;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff" />
+                <button id="otdVaultCreateFolder" class="btn secondary" type="button" data-i18n="vault.ui.create_folder">${TT('vault.ui.create_folder', null, 'Create')}</button>
               </div>
             
           <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <div class="muted small">Доступ бухгалтеру</div>
+            <div class="muted small" data-i18n="vault.ui.accountant_access">${TT('vault.ui.accountant_access', null, 'Accountant access')}</div>
             <button id="otdVaultShareToggle" class="btn secondary small" type="button">...</button>
             <div id="otdVaultShareState" class="muted small" style="opacity:.8"></div>
           </div>
@@ -215,18 +216,18 @@
         <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <label class="btn secondary" style="cursor:pointer">
             <input id="otdVaultFileInput" type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" multiple style="display:none" />
-            <span>Выбрать файлы</span>
+            <span data-i18n="vault.ui.select_files">${TT('vault.ui.select_files', null, 'Select files')}</span>
           </label>
-          <button id="otdVaultUploadBtn" class="btn" type="button">Загрузить в папку</button>
+          <button id="otdVaultUploadBtn" class="btn" type="button" data-i18n="vault.ui.upload_to_folder">${TT('vault.ui.upload_to_folder', null, 'Upload to folder')}</button>
           <div id="otdVaultStatus" class="muted small" style="opacity:.85"></div>
         </div>
 
         <div style="margin-top:12px">
           <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px">
-            <div style="font-weight:800">Файлы</div>
+            <div style="font-weight:800" data-i18n="vault.ui.files">${TT('vault.ui.files', null, 'Files')}</div>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-              <input id="otdVaultSearch" placeholder="Поиск" style="padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff;min-width:180px" />
-              <button id="otdVaultExportBtn" class="btn ghost small" type="button">Экспорт месяца</button>
+              <input id="otdVaultSearch" data-i18n-ph="vault.ui.search_ph" placeholder="Search" style="padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff;min-width:180px" />
+              <button id="otdVaultExportBtn" class="btn ghost small" type="button" data-i18n="vault.ui.export_month">${TT('vault.ui.export_month', null, 'Export month')}</button>
               <div id="otdVaultBulkBar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap"></div>
             </div>
           </div>
@@ -236,13 +237,14 @@
     `;
     document.body.appendChild(wrap);
     modal = wrap;
+    try{ if (window.i18n && typeof i18n.apply==='function') i18n.apply(); }catch(_){ }
 
     wrap.addEventListener('click', (e)=>{ if (e.target === wrap) close(); });
     wrap.querySelector('#otdVaultClose')?.addEventListener('click', close);
     wrap.querySelector('#otdVaultCreateFolder')?.addEventListener('click', onCreateFolder);
     wrap.querySelector('#otdVaultUploadBtn')?.addEventListener('click', onUpload);
     wrap.querySelector('#otdVaultShareToggle')?.addEventListener('click', ()=>{
-      onToggleShare().catch(err=>setStatus('Ошибка: '+(err && err.message ? err.message : err)));
+      onToggleShare().catch(err=>setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}')));
     });
     wrap.querySelector('#otdVaultFolderSel')?.addEventListener('change', ()=>{
       bulkReset();
@@ -258,7 +260,7 @@
     });
     wrap.querySelector('#otdVaultMonthSel')?.addEventListener('change', async (e)=>{
       setSelectedMonth(e.target && e.target.value ? e.target.value : curMonth());
-      await syncSmart().catch(err=>setStatus('Ошибка: '+err.message));
+      await syncSmart().catch(err=>setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}')));
     });
     wrap.querySelector('#otdVaultSearch')?.addEventListener('input', (e)=>{
       vaultSearchQ = String(e.target && e.target.value ? e.target.value : '').trim();
@@ -279,7 +281,7 @@
     ensureModal();
     modal.style.display='flex';
     try{ renderSmartControls(); }catch(_){ }
-    syncSmart().catch(err=>setStatus('Ошибка: '+err.message));
+    syncSmart().catch(err=>setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}')));
   }
   function close(){
     if(modal) modal.style.display='none';
@@ -302,12 +304,12 @@
     vaultPickCtx = { requestId };
     if (/^[0-9]{4}-[0-9]{2}$/.test(suggestedMonth)) setSelectedMonth(suggestedMonth);
     open();
-    setStatus('Выберите файлы и нажмите “Прикрепить к запросу”.');
+    setStatus(TT('vault.status.pick_hint', null, 'Select files and attach to the request.'));
     return new Promise((resolve)=>{ vaultPickResolve = resolve; });
   }
 
   async function refresh(selectFolderId){
-    setStatus('Загружаю...');
+    setStatus(TT('vault.status.loading', null, 'Loading...'));
     const j = await apiJson('/api/docs/state','GET');
     const folders = j.folders || [];
     const files = j.files || [];
@@ -339,7 +341,7 @@
     if (!list.length){
       bulkReset();
       renderBulkBar([]);
-      box.innerHTML = '<div class="muted small">Пока пусто. Загрузите сюда файлы.</div>';
+      box.innerHTML = `<div class="muted small" data-i18n="vault.ui.empty">${TT('vault.ui.empty', null, 'Empty for now. Upload files here.')}</div>`;
       return;
     }
 
@@ -371,17 +373,17 @@
         if (act === 'attach'){
           if (!bulkSelected.size || !vaultPickCtx || !vaultPickCtx.requestId) return;
           try{
-            setStatus('Прикрепляю к запросу...');
+            setStatus(TT('vault.status.attaching', null, 'Attaching...'));
             const rid = vaultPickCtx.requestId;
             await apiJson('/api/client/requests/attach-vault','POST',{ requestId: rid, fileIds: Array.from(bulkSelected) });
             bulkReset();
-            setStatus('Прикреплено');
+            setStatus(TT('vault.status.attached', null, 'Attached.'));
             if (vaultPickResolve){ try{ vaultPickResolve(true); }catch(_){ } }
             vaultPickResolve = null;
             vaultPickCtx = null;
             setTimeout(()=>{ try{ close(); }catch(_){ } }, 400);
           }catch(err){
-            setStatus('Ошибка: '+(err && err.message ? err.message : err));
+            setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}'));
           }
           return;
         }
@@ -392,17 +394,17 @@
         }
         if (act === 'delete'){
           if (!bulkSelected.size) return;
-          const ok = confirm(TT('dialogs.delete_files', {n: bulkSelected.size}, 'Удалить выбранные файлы ({n})?'));
+          const ok = confirm(TT('dialogs.delete_files', {n: bulkSelected.size}, 'Delete selected files ({n})?'));
           if (!ok) return;
           try{
-            setStatus('Удаляю...');
+            setStatus(TT('vault.status.deleting', null, 'Deleting...'));
             await apiJson('/api/docs/files/bulk-delete','POST',{ fileIds: Array.from(bulkSelected) });
             bulkReset();
             await refresh(modal.querySelector('#otdVaultFolderSel')?.value || '');
-            setStatus('Удалено');
+            setStatus(TT('vault.status.deleted', null, 'Deleted.'));
             setTimeout(()=>setStatus(''), 900);
           }catch(err){
-            setStatus('Ошибка: '+(err && err.message ? err.message : err));
+            setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}'));
           }
           return;
         }
@@ -424,9 +426,9 @@
               </div>
             </div>
             <div style="display:flex;gap:8px;align-items:center">
-              <a class="btn ghost small" href="${esc(f.fileUrl||'#')}" target="_blank" rel="noopener">Открыть</a>
-              <button class="btn ghost small" type="button" data-docact="rename" data-fid="${esc(f.id)}">Имя</button>
-              <button class="btn ghost small" type="button" data-docact="move" data-fid="${esc(f.id)}">Раздел</button>
+              <a class="btn ghost small" href="${esc(f.fileUrl||'#')}" target="_blank" rel="noopener" data-i18n="vault.file_actions.open">${TT('vault.file_actions.open', null, 'Open')}</a>
+              <button class="btn ghost small" type="button" data-docact="rename" data-fid="${esc(f.id)}" data-i18n="vault.file_actions.rename">${TT('vault.file_actions.rename', null, 'Name')}</button>
+              <button class="btn ghost small" type="button" data-docact="move" data-fid="${esc(f.id)}" data-i18n="vault.ui.section">${TT('vault.ui.section', null, 'Section')}</button>
               <button class="btn ghost small" type="button" data-docact="delete" data-fid="${esc(f.id)}">${TT('buttons.delete', null, 'Usuń')}</button>
             </div>
           </div>
@@ -456,32 +458,32 @@
       try{
         if (act === 'rename') {
           const current = String(file.fileName || 'document');
-          const next = prompt('Новое имя файла', current);
+          const next = prompt(TT('vault.prompt.rename', null, 'New file name'), current);
           if (next === null) return;
           const name = String(next||'').trim();
-          if (!name) { setStatus('Имя не может быть пустым'); return; }
-          setStatus('Сохраняю имя...');
+          if (!name) { setStatus(TT('vault.errors.name_empty', null, 'Name cannot be empty.')); return; }
+          setStatus(TT('vault.status.saving_name', null, 'Saving name...'));
           await apiJson('/api/docs/files/rename','POST',{ fileId: fid, fileName: name });
           await refresh(modal.querySelector('#otdVaultFolderSel')?.value || '');
-          setStatus('Готово');
+          setStatus(TT('vault.status.done', null, 'Done.'));
           setTimeout(()=>setStatus(''), 900);
         }
         if (act === 'delete') {
-          const ok = confirm(TT('dialogs.delete_file', null, 'Удалить файл? Он исчезнет из OneTapDay.'));
+          const ok = confirm(TT('dialogs.delete_file', null, 'Delete this file? It will be removed from OneTapDay.'));
           if (!ok) return;
-          setStatus('Удаляю...');
+          setStatus(TT('vault.status.deleting', null, 'Deleting...'));
           await apiJson('/api/docs/files/delete','POST',{ fileId: fid });
           // keep bulk selection consistent
           bulkSelected.delete(String(fid));
           await refresh(modal.querySelector('#otdVaultFolderSel')?.value || '');
-          setStatus('Удалено');
+          setStatus(TT('vault.status.deleted', null, 'Deleted.'));
           setTimeout(()=>setStatus(''), 900);
         }
         if (act === 'move') {
           showMoveDialog(file);
         }
       } catch(err){
-        setStatus('Ошибка: '+(err && err.message ? err.message : err));
+        setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}'));
       }
     };
   }
@@ -498,27 +500,27 @@
     d.innerHTML = `
       <div style="width:min(520px,96vw);border-radius:18px;background:rgba(18,22,25,.94);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 80px rgba(0,0,0,.55);padding:14px">
         <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
-          <div id="otdMoveTitle" style="font-weight:900">Переместить файл</div>
-          <button id="otdMoveClose" class="btn ghost small" type="button">Закрыть</button>
+          <div id="otdMoveTitle" style="font-weight:900" data-i18n="vault.move.title_one">${TT('vault.move.title_one', null, 'Move file')}</div>
+          <button id="otdMoveClose" class="btn ghost small" type="button" data-i18n="common.close">${TT('common.close', null, 'Close')}</button>
         </div>
 
-        <div class="muted small" style="margin-top:6px">Выберите новый месяц/раздел или конкретную папку.</div>
+        <div class="muted small" style="margin-top:6px" data-i18n="vault.move.help">${TT('vault.move.help', null, 'Choose a new month/section or a specific folder.')}</div>
 
         <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div style="min-width:160px;flex:1">
-            <div class="muted small" style="margin-bottom:6px">Месяц</div>
+            <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.month">${TT('vault.ui.month', null, 'Month')}</div>
             <select id="otdMoveMonth" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
           </div>
           <div style="flex:2;min-width:220px">
-            <div class="muted small" style="margin-bottom:6px">Раздел</div>
+            <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.section">${TT('vault.ui.section', null, 'Section')}</div>
             <div id="otdMoveCats" style="display:flex;gap:8px;flex-wrap:wrap"></div>
           </div>
         </div>
 
         <div style="margin-top:12px">
-          <div class="muted small" style="margin-bottom:6px">Или папка</div>
+          <div class="muted small" style="margin-bottom:6px" data-i18n="vault.ui.or_folder">${TT('vault.ui.or_folder', null, 'Or folder')}</div>
           <select id="otdMoveFolder" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
-          <div class="muted small" style="opacity:.8;margin-top:6px">Если выбрана папка, она приоритетнее месяца/раздела.</div>
+          <div class="muted small" style="opacity:.8;margin-top:6px" data-i18n="vault.move.folder_priority">${TT('vault.move.folder_priority', null, 'If a folder is selected, it has priority over month/section.')}</div>
         </div>
 
         <div style="margin-top:14px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
@@ -527,10 +529,11 @@
       </div>
     `;
     document.body.appendChild(d);
+    try{ if (window.i18n && typeof i18n.apply==='function') i18n.apply(); }catch(_){ }
     d.addEventListener('click', (e)=>{ if (e.target === d) hideMove(); });
     d.querySelector('#otdMoveClose')?.addEventListener('click', hideMove);
     d.querySelector('#otdMoveDo')?.addEventListener('click', ()=>{
-      doMove().catch(err=>setStatus('Ошибка: '+(err && err.message ? err.message : err)));
+      doMove().catch(err=>setStatus(TT('common.error_prefix', {msg:(err && err.message)?err.message:String(err)}, 'Error: {msg}')));
     });
     moveDlg = d;
     return d;
@@ -563,7 +566,9 @@
     const title = moveDlg.querySelector('#otdMoveTitle');
     if (title){
       const n = moveCtx.fileIds.length || 1;
-      title.textContent = n === 1 ? 'Переместить файл' : ('Переместить ' + n + ' файлов');
+      title.textContent = (n === 1)
+      ? TT('vault.move.title_one', null, 'Move file')
+      : TT('vault.move.title_many', {n:n}, 'Move {n} files');
     }
     moveCtx.month = selectedMonth || curMonth();
     moveCtx.cat = selectedCat || 'incoming';
@@ -579,7 +584,7 @@
 
     const fsel = moveDlg.querySelector('#otdMoveFolder');
     const folders = (vaultState.folders||[]);
-    fsel.innerHTML = `<option value="">(не выбрано)</option>` + folders.map(f=>`<option value="${esc(f.id)}">${esc(f.name||f.id)}</option>`).join('');
+    fsel.innerHTML = `<option value="">${TT('vault.ui.not_selected', null, '(not selected)')}</option>` + folders.map(f=>`<option value="${esc(f.id)}">${esc(f.name||f.id)}</option>`).join('');
     fsel.onchange = ()=>{ moveCtx.folderId = fsel.value || ''; };
 
     moveDlg.style.display = 'flex';
@@ -589,7 +594,7 @@
   async function doMove(){
     const fileIds = (moveCtx.fileIds||[]).map(x=>String(x||'')).filter(Boolean);
     if (!fileIds.length) return;
-    setStatus('Перемещаю...');
+    setStatus(TT('vault.status.moving', null, 'Moving...'));
     if (moveCtx.folderId){
       await apiJson('/api/docs/files/bulk-move','POST',{ fileIds, folderId: moveCtx.folderId });
     } else {
@@ -597,7 +602,7 @@
     }
     hideMove();
     await refresh(modal.querySelector('#otdVaultFolderSel')?.value || '');
-    setStatus('Готово');
+    setStatus(TT('vault.status.done', null, 'Done.'));
     setTimeout(()=>setStatus(''), 900);
   }
 
@@ -624,33 +629,33 @@
     }
     const shared = getFolderShared(fid);
     btn.disabled = false;
-    btn.textContent = shared ? TT('vault.share_close_access', null, 'Закрыть доступ') : TT('vault.share_open_access', null, 'Открыть доступ');
-    st.textContent = shared ? TT('vault.share_status_on', null, 'Бухгалтер видит эту папку') : TT('vault.share_status_off', null, 'Бухгалтер НЕ видит эту папку');
+    btn.textContent = shared ? TT('vault.share_close_access', null, 'Close access') : TT('vault.share_open_access', null, 'Open access');
+    st.textContent = shared ? TT('vault.share_status_on', null, 'Accountant can see this folder') : TT('vault.share_status_off', null, 'Accountant cannot see this folder');
   }
 
   async function onToggleShare(){
     const sel = modal && modal.querySelector('#otdVaultFolderSel');
     const folderId = sel && sel.value ? sel.value : '';
-    if (!folderId) { setStatus(TT('vault.share_choose_folder', null, 'Выберите папку')); return; }
+    if (!folderId) { setStatus(TT('vault.share_choose_folder', null, 'Choose a folder')); return; }
     const cur = getFolderShared(folderId);
     const next = !cur;
-    setStatus(next ? TT('vault.share_opening', null, 'Открываю доступ...') : TT('vault.share_closing', null, 'Закрываю доступ...'));
+    setStatus(next ? TT('vault.share_opening', null, 'Opening access...') : TT('vault.share_closing', null, 'Closing access...'));
     await apiJson('/api/docs/folders/share', 'POST', { folderId, shared: next });
     await refresh(folderId);
     renderShare(folderId);
-    setStatus(next ? TT('vault.share_opened', null, 'Доступ открыт') : TT('vault.share_closed', null, 'Доступ закрыт'));
+    setStatus(next ? TT('vault.share_opened', null, 'Access opened') : TT('vault.share_closed', null, 'Access closed'));
     setTimeout(()=>setStatus(''), 1200);
   }
 
 async function onCreateFolder(){
     const inp = modal.querySelector('#otdVaultNewFolder');
     const name = (inp.value||'').trim();
-    if (!name) { setStatus('Введите имя папки'); return; }
-    setStatus('Создаю папку...');
+    if (!name) { setStatus(TT('vault.errors.folder_name_required', null, 'Enter folder name.')); return; }
+    setStatus(TT('vault.status.creating_folder', null, 'Creating folder...'));
     await apiJson('/api/docs/folders/create','POST',{ name });
     inp.value='';
     await refresh();
-    setStatus('Папка создана');
+    setStatus(TT('vault.status.folder_created', null, 'Folder created.'));
     setTimeout(()=>setStatus(''), 1200);
   }
 
@@ -658,16 +663,16 @@ async function onCreateFolder(){
     const sel = modal.querySelector('#otdVaultFolderSel');
     let folderId = sel && sel.value ? sel.value : '';
     if (!folderId){
-      setStatus('Создаю папку...');
-      try{ await syncSmart(); }catch(e){ setStatus('Ошибка: '+e.message); return; }
+      setStatus(TT('vault.status.creating_folder', null, 'Creating folder...'));
+      try{ await syncSmart(); }catch(e){ setStatus(TT('common.error_prefix', {msg:(e && e.message)?e.message:String(e)}, 'Error: {msg}')); return; }
       folderId = (sel && sel.value) ? sel.value : '';
     }
-    if (!folderId) { setStatus('Сначала создайте или выберите папку'); return; }
+    if (!folderId) { setStatus(TT('vault.errors.choose_folder_first', null, 'Create or select a folder first.')); return; }
     const input = modal.querySelector('#otdVaultFileInput');
     const files = Array.from(input.files || []);
-    if (!files.length) { setStatus('Выберите файлы'); return; }
+    if (!files.length) { setStatus(TT('vault.errors.choose_files', null, 'Select files.')); return; }
 
-    setStatus(`Загрузка 0/${files.length}...`);
+    setStatus(TT('vault.status.upload_progress', {i:0,n:files.length}, 'Uploading {i}/{n}...'));
     for (let i=0; i<files.length; i++){
       const f = files[i];
       const dataUrl = await new Promise((resolve, reject)=>{
@@ -677,11 +682,11 @@ async function onCreateFolder(){
         r.readAsDataURL(f);
       });
       await apiJson('/api/docs/upload','POST',{ folderId, fileName: f.name, dataUrl });
-      setStatus(`Загрузка ${i+1}/${files.length}...`);
+      setStatus(TT('vault.status.upload_progress', {i:i+1,n:files.length}, 'Uploading {i}/{n}...'));
     }
     input.value='';
     await refresh();
-    setStatus('Готово');
+    setStatus(TT('vault.status.done', null, 'Done.'));
     setTimeout(()=>setStatus(''), 1200);
   }
 

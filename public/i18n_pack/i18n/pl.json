@@ -103,7 +103,7 @@
     "btn_open_chat": "Otwórz czat",
     "btn_settings": "Ustawienia",
     "btn_settings_short": "⚙︎",
-    "chat_intro": "ai.chat_intro",
+    "chat_intro": "Cześć! Jestem konsultantem AI OneTapDay. Z czym dziś działamy: wydatki, przychody, płatności, długi czy podatki?",
     "chat_ph": "Np.: „cel 20 000 PLN, co robić najpierw?”",
     "chat_starter": "Ustaw cel i zapytaj, co robić dalej.",
     "chat_title": "Czat z AI konsultantem",
@@ -254,7 +254,9 @@
     "close": "Zamknij",
     "make_plan": "Utwórz",
     "pdf": "Raport PDF",
-    "sync": "Synchronizacja"
+    "sync": "Synchronizacja",
+    "delete": "Usuń",
+    "move": "Przenieś"
   },
   "cash": {
     "balance_label": "Saldo",
@@ -295,7 +297,8 @@
   "common": {
     "accountant": "Księgowy",
     "close": "Zamknij",
-    "delete": "Usuń"
+    "delete": "Usuń",
+    "error_prefix": "Błąd: {msg}"
   },
   "dialogs": {
     "clear_local_history": "Wyczyścić lokalną historię? (Transakcje, faktury, kasa)\n\nKategorie zostaną.",
@@ -373,7 +376,10 @@
     "template_inventory": "Szablon inwentaryzacji",
     "template_invoice": "Szablon faktury",
     "title": "Dokumenty",
-    "voice_hint": "Kliknij pole i naciśnij 🎤, żeby podyktować."
+    "voice_hint": "Kliknij pole i naciśnij 🎤, żeby podyktować.",
+    "req_only_files": "Tylko JPG, PNG lub PDF.",
+    "req_file_read_failed": "Nie udało się odczytać pliku.",
+    "req_upload_progress": "Wgrywam {i}/{n}..."
   },
   "errors": {
     "no_data": "Brak danych",
@@ -732,10 +738,68 @@
     "share_status_off": "Księgowy NIE widzi tego folderu",
     "share_status_on": "Księgowy widzi ten folder",
     "status": {
-      "select_files_to_move": "Wybierz pliki do przeniesienia."
+      "select_files_to_move": "Wybierz pliki do przeniesienia.",
+      "creating_folder": "Tworzę folder...",
+      "folder_created": "Folder utworzony.",
+      "loading": "Ładuję...",
+      "attaching": "Dołączam...",
+      "attached": "Dołączono.",
+      "deleting": "Usuwam...",
+      "deleted": "Usunięto.",
+      "saving_name": "Zapisuję nazwę...",
+      "done": "Gotowe.",
+      "moving": "Przenoszę...",
+      "upload_progress": "Wgrywam {i}/{n}...",
+      "pick_hint": "Wybierz pliki i kliknij „Dołącz do zapytania”."
     },
     "tile_desc": "Foldery i pliki: paragony, faktury, umowy. Żeby nic nie zginęło.",
-    "tile_title": "Moje dokumenty"
+    "tile_title": "Moje dokumenty",
+    "modal_title": "Moje dokumenty",
+    "modal_desc": "Foldery i pliki w OneTapDay. Nie gubią się w czacie ani w galerii.",
+    "ui": {
+      "month": "Miesiąc",
+      "section": "Sekcja",
+      "folders": "Foldery",
+      "folder": "Folder",
+      "new_folder": "Nowy folder",
+      "new_folder_ph": "np. 2025-12 / VAT / czynsz",
+      "create_folder": "Utwórz",
+      "accountant_access": "Dostęp księgowego",
+      "select_files": "Wybierz pliki",
+      "upload_to_folder": "Wgraj do folderu",
+      "files": "Pliki",
+      "search_ph": "Szukaj",
+      "export_month": "Eksport miesiąca",
+      "or_folder": "Lub folder",
+      "not_selected": "(nie wybrano)",
+      "empty": "Na razie pusto. Wgraj tu pliki."
+    },
+    "move": {
+      "title_one": "Przenieś plik",
+      "help": "Wybierz nowy miesiąc/sekcję lub konkretny folder.",
+      "folder_priority": "Jeśli wybrano folder, ma on priorytet nad miesiącem/sekcją.",
+      "title_many": "Przenieś {n} plików"
+    },
+    "prompt": {
+      "rename": "Nowa nazwa pliku"
+    },
+    "errors": {
+      "name_empty": "Nazwa nie może być pusta.",
+      "folder_name_required": "Wpisz nazwę folderu.",
+      "choose_folder_first": "Najpierw utwórz lub wybierz folder.",
+      "choose_files": "Wybierz pliki."
+    },
+    "tabs": {
+      "incoming": "Przychodzące",
+      "outgoing": "Wystawione",
+      "tax": "ZUS/PIT",
+      "proof": "Potwierdzenia",
+      "other": "Inne"
+    },
+    "file_actions": {
+      "open": "Otwórz",
+      "rename": "Nazwa"
+    }
   },
   "sub.status_locked": "Brak aktywnej subskrypcji. Wybierz taryfę."
 }

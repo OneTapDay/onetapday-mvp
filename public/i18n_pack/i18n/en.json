@@ -103,7 +103,7 @@
     "btn_open_chat": "Open chat",
     "btn_settings": "Settings",
     "btn_settings_short": "⚙︎",
-    "chat_intro": "ai.chat_intro",
+    "chat_intro": "Hi! I'm the OneTapDay AI consultant. What are we tackling today: expenses, income, payments, debts, or taxes?",
     "chat_ph": "Example: “goal 20,000 PLN, what should I do first?”",
     "chat_starter": "Set a goal and ask what to do next.",
     "chat_title": "Chat with AI consultant",
@@ -254,7 +254,9 @@
     "close": "Close",
     "make_plan": "Create",
     "pdf": "PDF report",
-    "sync": "Sync"
+    "sync": "Sync",
+    "delete": "Delete",
+    "move": "Move"
   },
   "cash": {
     "balance_label": "Balance",
@@ -295,7 +297,8 @@
   "common": {
     "accountant": "Accountant",
     "close": "Close",
-    "delete": "Delete"
+    "delete": "Delete",
+    "error_prefix": "Error: {msg}"
   },
   "dialogs": {
     "clear_local_history": "Clear local history? (Transactions, invoices, cash)\n\nCategories will stay.",
@@ -373,7 +376,10 @@
     "template_inventory": "Inventory template",
     "template_invoice": "Invoice template",
     "title": "Documents",
-    "voice_hint": "Click a field and press 🎤 to dictate."
+    "voice_hint": "Click a field and press 🎤 to dictate.",
+    "req_only_files": "Only JPG, PNG or PDF.",
+    "req_file_read_failed": "Could not read the file.",
+    "req_upload_progress": "Uploading {i}/{n}..."
   },
   "errors": {
     "no_data": "No data",
@@ -732,10 +738,68 @@
     "share_status_off": "Accountant cannot see this folder",
     "share_status_on": "Accountant can see this folder",
     "status": {
-      "select_files_to_move": "Select files to move."
+      "select_files_to_move": "Select files to move.",
+      "creating_folder": "Creating folder...",
+      "folder_created": "Folder created.",
+      "loading": "Loading...",
+      "attaching": "Attaching...",
+      "attached": "Attached.",
+      "deleting": "Deleting...",
+      "deleted": "Deleted.",
+      "saving_name": "Saving name...",
+      "done": "Done.",
+      "moving": "Moving...",
+      "upload_progress": "Uploading {i}/{n}...",
+      "pick_hint": "Select files and press “Attach to request”."
     },
     "tile_desc": "Folders and files: receipts, invoices, contracts. So nothing gets lost.",
-    "tile_title": "My documents"
+    "tile_title": "My documents",
+    "modal_title": "My documents",
+    "modal_desc": "Folders and files inside OneTapDay. Not lost in chat, not lost in gallery.",
+    "ui": {
+      "month": "Month",
+      "section": "Section",
+      "folders": "Folders",
+      "folder": "Folder",
+      "new_folder": "New folder",
+      "new_folder_ph": "e.g. 2025-12 / VAT / rent",
+      "create_folder": "Create",
+      "accountant_access": "Accountant access",
+      "select_files": "Select files",
+      "upload_to_folder": "Upload to folder",
+      "files": "Files",
+      "search_ph": "Search",
+      "export_month": "Export month",
+      "or_folder": "Or folder",
+      "not_selected": "(not selected)",
+      "empty": "Empty for now. Upload files here."
+    },
+    "move": {
+      "title_one": "Move file",
+      "help": "Choose a new month/section or a specific folder.",
+      "folder_priority": "If a folder is selected, it has priority over month/section.",
+      "title_many": "Move {n} files"
+    },
+    "prompt": {
+      "rename": "New file name"
+    },
+    "errors": {
+      "name_empty": "Name cannot be empty.",
+      "folder_name_required": "Enter folder name.",
+      "choose_folder_first": "Create or select a folder first.",
+      "choose_files": "Select files."
+    },
+    "tabs": {
+      "incoming": "Incoming",
+      "outgoing": "Issued",
+      "tax": "ZUS/PIT",
+      "proof": "Proof",
+      "other": "Other"
+    },
+    "file_actions": {
+      "open": "Open",
+      "rename": "Name"
+    }
   },
   "sub.status_locked": "No active subscription. Choose a plan."
 }
