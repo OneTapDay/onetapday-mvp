@@ -1525,15 +1525,13 @@ function __otdAiRenderAttachRow(){
   });
 }
 
+// Upload chat attachments into AI TEMP storage (not "My documents").
+// This keeps AI context working but avoids auto-creating folders and polluting the user's vault.
 async function __otdAiUploadFileToDocs(file){
   const MAX = 9.5 * 1024 * 1024;
   if(!file) return null;
   if(file.size > MAX){
     return { ok:false, error: TT('ai.file_too_large', null, 'Файл слишком большой (макс 10MB).') };
-  }
-  const folderId = await __otdAiEnsureInboxFolder();
-  if(!folderId){
-    return { ok:false, error: TT('ai.file_no_folder', null, 'Не смог создать папку для файлов (Docs).') };
   }
   const dataUrl = await new Promise((resolve, reject)=>{
     const fr = new FileReader();
@@ -1542,15 +1540,15 @@ async function __otdAiUploadFileToDocs(file){
     fr.readAsDataURL(file);
   });
 
-  const r = await fetch('/api/docs/upload', {
+  const r = await fetch('/api/ai/temp/upload', {
     method:'POST',
     credentials:'include',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ folderId, fileName: file.name || 'file', dataUrl })
+    body: JSON.stringify({ fileName: file.name || 'file', dataUrl })
   });
   const j = await r.json().catch(()=>null);
-  if(r.ok && j && j.success && j.file){
-    return { ok:true, file: j.file };
+  if(r.ok && j && j.success && j.temp){
+    return { ok:true, temp: j.temp };
   }
   return { ok:false, error: (j && j.error) ? j.error : 'upload_failed' };
 }
@@ -1563,11 +1561,12 @@ async function __otdAiHandleFiles(files){
     __otdAiRenderAttachRow();
     try{
       const up = await __otdAiUploadFileToDocs(f);
-      if(up && up.ok && up.file){
+      if(up && up.ok && up.temp){
         tmp.status = 'ready';
-        tmp.fileId = up.file.id;
-        tmp.fileUrl = up.file.fileUrl || up.file.url || '';
-        tmp.fileMime = up.file.fileMime || tmp.fileMime;
+        tmp.tempId = up.temp.id;
+        tmp.fileUrl = up.temp.fileUrl || '';
+        tmp.fileName = up.temp.fileName || tmp.fileName;
+        tmp.fileMime = up.temp.fileMime || tmp.fileMime;
       }else{
         tmp.status = 'error';
         tmp.error = (up && up.error) ? String(up.error) : 'upload_failed';
@@ -1587,7 +1586,7 @@ function __otdAiAnyUploading(){
 function __otdAiGetReadyAttachments(){
   return __otdAiPendingAtt
     .filter(a=>a && a.status === 'ready' && a.fileUrl)
-    .map(a=>({ fileId:a.fileId || '', fileUrl:a.fileUrl || '', fileName:a.fileName || 'file', fileMime:a.fileMime || '' }));
+    .map(a=>({ tempId:a.tempId || '', fileUrl:a.fileUrl || '', fileName:a.fileName || 'file', fileMime:a.fileMime || '' }));
 }
 // --- end attachments ---
 

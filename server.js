@@ -1405,7 +1405,7 @@ app.post('/api/ai/temp/upload', (req, res)=>{
   const head = dataUrl.slice(0, dataUrl.indexOf('base64,'));
   const mimeMatch = head.match(/^data:([^;]+);/i);
   const mime = (mimeMatch && mimeMatch[1]) ? String(mimeMatch[1]).toLowerCase() : '';
-  const ALLOW = ['application/pdf'];
+  const ALLOW = ['application/pdf','image/jpeg','image/jpg','image/png','image/webp'];
   if (!ALLOW.includes(mime)) return res.status(415).json({ success:false, error:'Unsupported file type' });
 
   const b64 = dataUrl.slice(dataUrl.indexOf('base64,')+7);
@@ -1414,8 +1414,10 @@ app.post('/api/ai/temp/upload', (req, res)=>{
   const MAX = 10 * 1024 * 1024;
   if (buf.length > MAX) return res.status(413).json({ success:false, error:'File too large (max 10MB)' });
 
-  const { base, ext } = sanitizeBaseFileName(fileNameIn);
-  const forcedExt = '.pdf';
+  const { base } = sanitizeBaseFileName(fileNameIn);
+  const extMap = { 'application/pdf':'.pdf', 'image/jpeg':'.jpg', 'image/jpg':'.jpg', 'image/png':'.png', 'image/webp':'.webp' };
+  const forcedExt = extMap[mime] || '';
+  if (!forcedExt) return res.status(415).json({ success:false, error:'Unsupported file type' });
   const tid = aiTempId();
   const storedName = `${tid}_${base}${forcedExt}`;
   const absPath = path.join(aiTempUploadsDir, storedName);
@@ -1450,8 +1452,8 @@ app.get('/api/ai/temp/file/:tempId', (req, res)=>{
   const abs = path.isAbsolute(rec.filePath) ? rec.filePath : path.join(DATA_ROOT, rec.filePath);
   if (!fs.existsSync(abs)) return res.status(404).send('Not found');
 
-  res.setHeader('Content-Type', rec.fileMime || 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${String(rec.fileName || 'document.pdf').replace(/"/g,'') }"`);
+  res.setHeader('Content-Type', rec.fileMime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${String(rec.fileName || 'document').replace(/"/g,'') }"`);
   try {
     return fs.createReadStream(abs).pipe(res);
   } catch(e){
@@ -1478,9 +1480,12 @@ app.post('/api/ai/temp/file/:tempId/save', (req, res)=>{
   const absOld = path.isAbsolute(rec.filePath) ? rec.filePath : path.join(DATA_ROOT, rec.filePath);
   if (!fs.existsSync(absOld)) return res.status(404).json({ success:false, error:'Temp file missing' });
 
-  const { base } = sanitizeBaseFileName(rec.fileName || 'document.pdf');
+  const { base } = sanitizeBaseFileName(rec.fileName || 'document');
   const fileId = docFileId();
-  const storedName = `${fileId}_${base}.pdf`;
+  const extMap = { 'application/pdf':'.pdf', 'image/jpeg':'.jpg', 'image/jpg':'.jpg', 'image/png':'.png', 'image/webp':'.webp' };
+  const ext = extMap[String(rec.fileMime || '').toLowerCase()] || (String(path.extname(rec.fileName || '') || '').toLowerCase());
+  const safeExt = (ext && ext.length <= 6) ? ext : '';
+  const storedName = `${fileId}_${base}${safeExt}`;
   const absNew = path.join(vaultUploadsDir, storedName);
   try {
     fs.renameSync(absOld, absNew);
@@ -1500,8 +1505,8 @@ app.post('/api/ai/temp/file/:tempId/save', (req, res)=>{
     id: fileId,
     ownerEmail: email,
     folderId,
-    fileName: base + '.pdf',
-    fileMime: 'application/pdf',
+    fileName: base + (safeExt || ''),
+    fileMime: rec.fileMime || 'application/octet-stream',
     fileSize: stat.size,
     filePath: relPath,
     fileUrl: `/api/docs/file/${fileId}`,
