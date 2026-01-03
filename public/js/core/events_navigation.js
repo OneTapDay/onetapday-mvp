@@ -1802,8 +1802,9 @@ async function __otdAiFindOrCreateFolderIdByName(folderName){
     body: JSON.stringify({ name })
   });
   const cj = await cr.json().catch(()=>null);
-  if(!cj || !cj.success || !cj.folderId) throw new Error((cj && cj.error) ? cj.error : 'folder create failed');
-  return String(cj.folderId);
+  const createdId = (cj && (cj.folderId || (cj.folder && cj.folder.id) || (cj.data && cj.data.folderId))) || '';
+  if(!cj || !cj.success || !createdId) throw new Error((cj && cj.error) ? cj.error : 'folder create failed');
+  return String(createdId);
 }
 
 async function __otdAiSaveTempPdfToDocs(tempId, folderName){
