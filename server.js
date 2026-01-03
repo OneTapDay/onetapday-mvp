@@ -2730,6 +2730,17 @@ function _aiSystemPrompt(){
     '  "notes":""',
     '} }',
     '```',
+    '',
+    'Inventory / Inwentaryzacja / Инвентаризация helper:',
+    "- If the user asks to create an inventory / stock list PDF (inwentaryzacja / инвентаризация), do NOT use invoice fields (buyer/VAT).",
+    "- Collect required fields first: owner/company (name + optional NIP + address), inventory date, and items (name, qty, unit; optional unitCost).",
+    "- When you have enough data, output a SINGLE JSON code block exactly like this (no extra keys):",
+    '```json',
+    '{ "otd_action":"inventory_pdf", "filename":"Inwentaryzacja.pdf", "inventory": {',
+    '  "title":"Inwentaryzacja", "date":"2026-01-03", "owner":{"name":"","nip":"","address":""},',
+    '  "items":[{"name":"Towar","qty":1,"unit":"szt","unitCost":0}], "notes":""',
+    '} }',
+    '```',
     "- Outside the JSON, explain briefly what will be generated and what the user should verify.",
     '',
     'Do NOT claim you executed payments, filed taxes, or sent invoices. You can only guide and generate templates.'
@@ -3426,6 +3437,56 @@ function _invoiceToLines(inv){
   return lines;
 }
 
+function _inventoryToLines(inv){
+  const inventory = inv && typeof inv === 'object' ? inv : {};
+  const owner = inventory.owner && typeof inventory.owner === 'object' ? inventory.owner : {};
+  const items = Array.isArray(inventory.items) ? inventory.items : [];
+
+  const title = String(inventory.title || 'Inwentaryzacja').trim() || 'Inwentaryzacja';
+  const date  = String(inventory.date || '').trim();
+  const currency = String(inventory.currency || 'PLN').trim().toUpperCase() || 'PLN';
+
+  const lines = [];
+  lines.push(title.toUpperCase());
+  lines.push('');
+  if(date) lines.push(`DATE: ${date}`);
+  if(owner.name) lines.push(`OWNER: ${String(owner.name).slice(0, 140)}`);
+  if(owner.nip) lines.push(`NIP: ${String(owner.nip).slice(0, 60)}`);
+  if(owner.address) lines.push(`ADDRESS: ${String(owner.address).slice(0, 180)}`);
+  if(inventory.notes) lines.push(`NOTES: ${String(inventory.notes).slice(0, 180)}`);
+  lines.push('');
+  lines.push('ITEMS:');
+
+  let total = 0;
+  for(const it of items){
+    if(!it || typeof it !== 'object') continue;
+    const name = String(it.name || it.title || '').trim();
+    const qty  = _aiClampNum(it.qty, 0, 1e9);
+    const unit = String(it.unit || '').trim();
+    const unitCost = _aiClampNum(it.unitCost, 0, 1e9);
+
+    if(!name) continue;
+
+    let row = `- ${name}`;
+    if(qty != null){
+      row += ` | ${qty}${unit ? (' ' + unit) : ''}`;
+    }
+    if(unitCost != null){
+      const lineTotal = (qty != null ? qty : 1) * unitCost;
+      total += lineTotal;
+      row += ` | UNIT ${_formatMoney2(unitCost)} ${currency} | TOTAL ${_formatMoney2(lineTotal)} ${currency}`;
+    }
+    lines.push(row.slice(0, 220));
+  }
+
+  if(total > 0){
+    lines.push('');
+    lines.push(`TOTAL: ${_formatMoney2(total)} ${currency}`);
+  }
+
+  return lines;
+}
+
 app.post('/api/pdf/invoice', (req, res) => {
   const user = getUserBySession(req);
   if (!user) return res.status(401).json({ success:false, error:'Not authenticated' });
@@ -3441,6 +3502,26 @@ app.post('/api/pdf/invoice', (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
   return res.status(200).send(pdfBuf);
 });
+
+app.post('/api/pdf/inventory', (req, res) => {
+  const user = getUserBySession(req);
+  if (!user) return res.status(401).json({ success:false, error:'Not authenticated' });
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const inv = (body.inventory && typeof body.inventory === 'object') ? body.inventory : body;
+
+  const lines = _inventoryToLines(inv);
+  const pdfBuf = _makeSimplePdf(lines);
+
+  const base = String(body.filename || inv.title || 'Inwentaryzacja');
+  const safe = _safeFilename(base.replace(/[^\w\-\.]+/g,'_').slice(0, 60) || 'Inwentaryzacja');
+  const fname = safe.toLowerCase().endsWith('.pdf') ? safe : (safe + '.pdf');
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  return res.end(pdfBuf);
+});
+
 
 
 /* ==== END AI ==== */

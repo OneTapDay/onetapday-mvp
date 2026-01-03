@@ -1594,43 +1594,79 @@ async function __otdAiDownloadBlob(blob, filename){
   a.remove();
   setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(_e){} }, 30000);
 }
-async function __otdAiFetchInvoicePdf(invoice, filename){
-  const r = await fetch('/api/pdf/invoice', {
+async function __otdAiFetchPdfBlob(endpoint, payload){
+  const r = await fetch(endpoint, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(invoice||{})
+    credentials:'include',
+    body: JSON.stringify(payload||{})
   });
   if(!r.ok){
     let msg='';
     try{ const j=await r.json().catch(()=>null); msg = j && (j.error||j.message) ? String(j.error||j.message) : ''; }catch(_e){}
     throw new Error(msg || ('HTTP ' + r.status));
   }
-  const blob = await r.blob();
-  await __otdAiDownloadBlob(blob, filename || 'Faktura.pdf');
+  return await r.blob();
 }
-function __otdAiExtractJsonAction(text){
-  const s = String(text||'');
-  const m = s.match(/```json\s*([\s\S]*?)```/i);
-  if(!m) return { cleaned:s, action:null };
-  const raw = String(m[1]||'').trim();
-  let obj=null;
-  try{ obj = JSON.parse(raw); }catch(_e){ obj=null; }
-  const cleaned = s.replace(m[0], '').trim();
-  return { cleaned, action: obj };
+
+function __otdAiPdfReadyMsg(fname){
+  const lang = __otdAiLang();
+  if(lang==='pl') return `📄 PDF: ${fname} (gotowe, zapisane w „Moje dokumenty”)`;
+  if(lang==='en') return `📄 PDF: ${fname} (ready, saved to “My documents”)`;
+  if(lang==='uk') return `📄 PDF: ${fname} (готово, збережено в «Мої документи»)`;
+  return `📄 PDF: ${fname} (готово, сохранено в «Мои документы»)`;
 }
+
+async function __otdAiGeneratePdfAndStore(endpoint, payload, filename){
+  const blob = await __otdAiFetchPdfBlob(endpoint, payload);
+
+  // Start a normal download once (like before)
+  try{ await __otdAiDownloadBlob(blob, filename || 'document.pdf'); }catch(_e){}
+
+  // Save to Docs (AI Inbox) so it can be downloaded again later
+  try{
+    const safeName = String(filename || 'document.pdf').trim() || 'document.pdf';
+    const file = new File([blob], safeName, { type:'application/pdf' });
+    const up = await __otdAiUploadFileToDocs(file);
+    if(up && up.ok && up.file) return up.file;
+  }catch(_e){}
+  return null;
+}
+
 async function __otdAiProcessActions(ans){
   let out = String(ans||'').trim();
+  const extraAtt = [];
   try{
     const ext = __otdAiExtractJsonAction(out);
     out = ext.cleaned;
     const act = ext.action;
+
+    async function handlePdf(kind, endpoint, payload){
+      const defName = (kind==='inventory') ? 'Inwentaryzacja.pdf' : 'Faktura.pdf';
+      const fname = String((act && act.filename) ? act.filename : defName).trim() || defName;
+      let fileRec = null;
+      try{
+        fileRec = await __otdAiGeneratePdfAndStore(endpoint, payload, fname);
+      }catch(_e){
+        fileRec = null;
+      }
+
+      if(fileRec && fileRec.fileUrl){
+        extraAtt.push({ fileId: fileRec.id || '', fileUrl: fileRec.fileUrl || '', fileName: fileRec.fileName || fname, fileMime: fileRec.fileMime || 'application/pdf' });
+        out = (out ? (out + "\n\n") : "") + __otdAiPdfReadyMsg(fname);
+      }else{
+        out = (out ? (out + "\n\n") : "") + __otdAiPdfStartedMsg(fname);
+      }
+    }
+
     if(act && act.otd_action === 'invoice_pdf' && act.invoice){
-      const fname = String(act.filename || 'Faktura.pdf').trim() || 'Faktura.pdf';
-      try{ await __otdAiFetchInvoicePdf(act.invoice, fname); }catch(_e){}
-      out = (out ? (out + "\n\n") : "") + __otdAiPdfStartedMsg(fname);
+      await handlePdf('invoice', '/api/pdf/invoice', act.invoice);
+    }else if(act && act.otd_action === 'inventory_pdf' && (act.inventory || act.items)){
+      const payload = act.inventory || { items: act.items };
+      await handlePdf('inventory', '/api/pdf/inventory', payload);
     }
   }catch(_e){}
-  return out || String(ans||'');
+  return { text: out || String(ans||''), attachments: extraAtt };
 }
 
 
@@ -1667,15 +1703,19 @@ const sendAiChat = async ()=>{
     }else{
       ans = 'AI модуль не подключен. Проверь, что загружается /js/features/ai/ai-client.js.';
     }
-
-    // handle special AI actions (e.g., invoice PDF)
-    ans = await __otdAiProcessActions(ans);
+    // handle special AI actions (e.g., invoice/inventory PDF)
+    const processed = await __otdAiProcessActions(ans);
+    const extraAtt = (processed && typeof processed === 'object' && Array.isArray(processed.attachments)) ? processed.attachments : [];
+    ans = (processed && typeof processed === 'object') ? String(processed.text || ans || '') : String(processed || ans || '');
 
     const msgs = loadChat(activeId);
     for(let i=msgs.length-1;i>=0;i--){
       if(msgs[i] && msgs[i]._pending){
         msgs[i].text = ans;
         delete msgs[i]._pending;
+        if(extraAtt && extraAtt.length){
+          msgs[i].attachments = (Array.isArray(msgs[i].attachments) ? msgs[i].attachments : []).concat(extraAtt);
+        }
         break;
       }
     }
@@ -1756,6 +1796,57 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
   let chunks = [];
 
   let opId = 0; // cancel stale callbacks
+
+  function __otdAiOpenVoiceReviewModal(initialText){
+    try{
+      const id = 'aiVoiceReviewModal';
+      let ov = document.getElementById(id);
+      if(!ov){
+        ov = document.createElement('div');
+        ov.id = id;
+        ov.className = 'modal-overlay';
+        ov.innerHTML = `
+          <div class="modal-card" style="max-width:540px;width:92%">
+            <h3>${escHtml(TT('ai.voice_review_title', null, 'Проверь расшифровку'))}</h3>
+            <div class="muted small" style="margin-bottom:8px">${escHtml(TT('ai.voice_review_desc', null, 'Можно поправить текст перед отправкой.'))}</div>
+            <textarea id="aiVoiceReviewText" style="width:100%;min-height:140px;background:#0f1418;border:1px solid #242b30;border-radius:10px;color:var(--text);padding:10px;resize:vertical"></textarea>
+            <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn ghost" id="aiVoiceReviewCancel" type="button">${escHtml(TT('common.cancel', null, 'Отмена'))}</button>
+              <button class="btn" id="aiVoiceReviewSend" type="button">${escHtml(TT('common.send', null, 'Отправить'))}</button>
+            </div>
+          </div>`;
+        document.body.appendChild(ov);
+      }
+
+      const ta = ov.querySelector('#aiVoiceReviewText');
+      const btnCancel = ov.querySelector('#aiVoiceReviewCancel');
+      const btnSend = ov.querySelector('#aiVoiceReviewSend');
+
+      if(ta) ta.value = String(initialText || '').trim();
+      ov.classList.add('show');
+
+      const close = ()=>{
+        try{ ov.classList.remove('show'); }catch(_){}
+      };
+
+      if(btnCancel){
+        btnCancel.onclick = ()=>{ close(); };
+      }
+      if(btnSend){
+        btnSend.onclick = ()=>{
+          const text = ta ? String(ta.value || '').trim() : '';
+          close();
+          if(text){
+            try{ inp.value = text; }catch(_){}
+            try{ if(typeof sendAiChat === 'function') sendAiChat(); }catch(_){}
+          }
+        };
+      }
+
+      try{ if(ta) ta.focus(); }catch(_){}
+    }catch(_e){}
+  }
+
 
   function setUI(on){
     recording = !!on;
@@ -1840,7 +1931,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
 
       rec.lang = getLang();
       rec.interimResults = true;
-      rec.continuous = false;
+      rec.continuous = true;
 
       rec.onresult = (ev)=>{
         if(my !== opId) return;
@@ -1868,20 +1959,41 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
 
       rec.onerror = (e)=>{
         if(my !== opId) return;
+        const err = e && e.error ? String(e.error) : '';
+
+        // Frequent case: silence/long pauses. Keep listening until user presses Stop.
+        if(recording && (err === 'no-speech' || err === 'aborted')){
+          try{ rec.stop(); }catch(_){}
+          return;
+        }
+
         try{
-          const err = e && e.error ? String(e.error) : '';
           if(typeof pushMsg === 'function' && err){
             pushMsg('assistant', TT('ai.voice_failed', null, 'Голосовой ввод не сработал: ' + err));
           }
         }catch(_){}
+
         // Stop + cleanup
         try{ rec.stop(); }catch(_){}
+        try{ setUI(false); }catch(_){}
       };
 
       rec.onend = ()=>{
         if(my !== opId) return;
         speechRec = null;
-        setUI(false);
+        // Allow long pauses: restart listening unless user pressed Stop
+        if(recording){
+          setTimeout(()=>{
+            try{
+              if(recording){
+                const ok = startSpeech();
+                if(!ok) setUI(false);
+              }
+            }catch(_e){}
+          }, 250);
+        }else{
+          setUI(false);
+        }
       };
 
       setUI(true);
@@ -1922,6 +2034,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
           if(!text) return;
           const prev = String(inp.value || '').trim();
           inp.value = (prev ? (prev + ' ') : '') + text;
+          try{ __otdAiOpenVoiceReviewModal(String(inp.value||'').trim()); }catch(_e){}
           try{ inp.focus(); }catch(_){}
         }catch(e){
           if(typeof pushMsg === 'function'){
@@ -1956,9 +2069,7 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     // Stop SpeechRecognition
     try{
       if(speechRec){
-        try{ speechRec.onresult = null; }catch(_){}
-        try{ speechRec.onerror = null; }catch(_){}
-        try{ speechRec.onend = null; }catch(_){}
+        try{ /* keep latest text as-is */ }catch(_){}
         try{ speechRec.stop(); }catch(_){}
       }
     }catch(_){}
@@ -1967,16 +2078,27 @@ byId('aiFileInput')?.addEventListener('change', (e)=>{
     // Stop MediaRecorder
     try{
       if(mediaRec && mediaRec.state !== 'inactive'){
-        mediaRec.stop();
+        try{ mediaRec.stop(); }catch(_){}
+        setUI(false);
+        stopTracks();
+        // Review modal will open in mediaRec.onstop after transcription
         return;
       }
     }catch(_){}
 
     setUI(false);
     stopTracks();
+
+    // Show review modal (confirm/edit) before sending
+    try{
+      const draft = String(inp.value || '').trim();
+      if(draft){
+        setTimeout(()=>{ try{ __otdAiOpenVoiceReviewModal(draft); }catch(_e){} }, 120);
+      }
+    }catch(_e){}
   }
 
-  btn.addEventListener('click', ()=>{
+btn.addEventListener('click', ()=>{
     if(recording) stop();
     else start();
   });
