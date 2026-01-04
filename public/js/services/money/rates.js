@@ -17,8 +17,11 @@ function computeAccountBalance(accId){
 }
 function bankAvailablePLN(){
   let sum=0;
-  Object.values(accMeta).filter(a=>a.include).forEach(a=>{
-    sum+=computeAccountBalance(a.id)*rate(a.currency);
+  accMeta = accMeta && typeof accMeta === 'object' ? accMeta : {};
+  Object.entries(accMeta).forEach(([id,a])=>{
+    a = a && typeof a === 'object' ? a : {};
+    if(!a.include) return;
+    sum += computeAccountBalance(id) * rate(a.currency);
   });
   return sum;
 }

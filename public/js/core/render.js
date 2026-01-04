@@ -27,30 +27,54 @@ function renderKasa(){
 }
 function renderAccounts(){
   const tb=document.querySelector('#autoAcc tbody'); if(!tb) return; tb.innerHTML='';
-  Object.values(accMeta).forEach(a=>{
-    const bal=computeAccountBalance(a.id);
+  accMeta = accMeta && typeof accMeta === 'object' ? accMeta : {};
+
+  // NOTE: accMeta is an object keyed by accountId. Values may not have `.id`.
+  Object.entries(accMeta).forEach(([id, metaRaw])=>{
+    const a = (metaRaw && typeof metaRaw === 'object') ? metaRaw : (accMeta[id] = {});
+    // sane defaults (prevents "undefined" UI and broken handlers)
+    if(!a.type) a.type = 'Biznes';
+    if(!a.currency) a.currency = 'PLN';
+    if(a.start==null) a.start = 0;
+    if(a.include==null) a.include = true;
+
+    const displayName = (a.name!=null && String(a.name).trim()!=='') ? String(a.name) : String(id);
+    const bal = computeAccountBalance(id);
+
     const tr=document.createElement('tr');
-    tr.innerHTML = `<td>${a.id}</td>
-      <td><select data-id="${a.id}" class="acc-type">
+    tr.innerHTML = `
+      <td>
+        <input type="text" class="acc-name" data-id="${escapeHtml(id)}" value="${escapeHtml(displayName)}"
+               placeholder="${escapeHtml(id)}" style="width:100%;min-width:140px"/>
+      </td>
+      <td><select data-id="${escapeHtml(id)}" class="acc-type">
             <option ${a.type==="Biznes"?"selected":""}>Biznes</option>
             <option ${a.type==="Osobisty"?"selected":""}>Osobisty</option>
           </select></td>
-      <td><select data-id="${a.id}" class="acc-cur">
+      <td><select data-id="${escapeHtml(id)}" class="acc-cur">
             <option ${a.currency==="PLN"?"selected":""}>PLN</option>
             <option ${a.currency==="EUR"?"selected":""}>EUR</option>
             <option ${a.currency==="USD"?"selected":""}>USD</option>
             <option ${a.currency==="UAH"?"selected":""}>UAH</option>
-
           </select></td>
-      <td>${bal.toFixed(2)}</td>
-      <td><input type="number" step="0.01" value="${a.start||0}" class="acc-start" data-id="${a.id}"/></td>
-      <td><input type="checkbox" class="acc-include" data-id="${a.id}" ${a.include?"checked":""}/></td>`;
+      <td>${asNum(bal).toFixed(2)}</td>
+      <td><input type="number" step="0.01" value="${escapeHtml(a.start||0)}" class="acc-start" data-id="${escapeHtml(id)}"/></td>
+      <td><input type="checkbox" class="acc-include" data-id="${escapeHtml(id)}" ${a.include?"checked":""}/></td>`;
     tb.appendChild(tr);
   });
-  tb.querySelectorAll(".acc-type").forEach(el=>el.addEventListener("change",e=>{accMeta[e.target.dataset.id].type=e.target.value;saveLocal();render();pushState();}));
-  tb.querySelectorAll(".acc-cur").forEach(el=>el.addEventListener("change",e=>{accMeta[e.target.dataset.id].currency=e.target.value;saveLocal();render();pushState();}));
-  tb.querySelectorAll(".acc-start").forEach(el=>el.addEventListener("change",e=>{accMeta[e.target.dataset.id].start=asNum(e.target.value);saveLocal();render();pushState();}));
-  tb.querySelectorAll(".acc-include").forEach(el=>el.addEventListener("change",e=>{accMeta[e.target.dataset.id].include=e.target.checked;saveLocal();render();pushState();}));
+
+  tb.querySelectorAll(".acc-name").forEach(el=>el.addEventListener("change",e=>{
+    const id = e.target.dataset.id;
+    if(!id) return;
+    accMeta[id] = accMeta[id] && typeof accMeta[id] === 'object' ? accMeta[id] : {};
+    const v = String(e.target.value||'').trim();
+    if(!v || v===id) delete accMeta[id].name; else accMeta[id].name = v;
+    saveLocal(); render(); pushState();
+  }));
+  tb.querySelectorAll(".acc-type").forEach(el=>el.addEventListener("change",e=>{accMeta[e.target.dataset.id] = accMeta[e.target.dataset.id]||{}; accMeta[e.target.dataset.id].type=e.target.value;saveLocal();render();pushState();}));
+  tb.querySelectorAll(".acc-cur").forEach(el=>el.addEventListener("change",e=>{accMeta[e.target.dataset.id] = accMeta[e.target.dataset.id]||{}; accMeta[e.target.dataset.id].currency=e.target.value;saveLocal();render();pushState();}));
+  tb.querySelectorAll(".acc-start").forEach(el=>el.addEventListener("change",e=>{accMeta[e.target.dataset.id] = accMeta[e.target.dataset.id]||{}; accMeta[e.target.dataset.id].start=asNum(e.target.value);saveLocal();render();pushState();}));
+  tb.querySelectorAll(".acc-include").forEach(el=>el.addEventListener("change",e=>{accMeta[e.target.dataset.id] = accMeta[e.target.dataset.id]||{}; accMeta[e.target.dataset.id].include=e.target.checked;saveLocal();render();pushState();}));
 }
 
 function openCloseDayModal(){
