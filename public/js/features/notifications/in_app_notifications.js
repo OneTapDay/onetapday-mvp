@@ -17,7 +17,7 @@
   const SEEN_KEY = 'otd_notif_toast_seen';
 
   let otdNotifShowAll = false;
-  let otdNotifUnreadCount = 0; // combined: notifications + chat
+  let otdNotifUnreadCount = 0; // notifications unread only
   let otdNotifView = 'unread'; // 'unread' | 'all' | 'chat'
   let otdChatUnreadCount = 0;
 
@@ -91,7 +91,7 @@
 
   function ensureUi(){
     injectCss();
-    if (byId('otdNotifBell')) return;
+    if (byId('otdNotifBell') && byId('otdChatBell')) return;
 
     const bell = document.createElement('button');
     bell.type = 'button';
@@ -100,7 +100,14 @@
     bell.setAttribute('aria-label', TT('client.notifs.aria', null, 'Powiadomienia'));
     bell.innerHTML = `<svg class="otdBellIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="otdNotifBadge" aria-label="0" style="display:none">0</span>`;
 
-    const panel = document.createElement('div');
+    
+    const chatBtn = document.createElement('button');
+    chatBtn.type = 'button';
+    chatBtn.id = 'otdChatBell';
+    chatBtn.className = 'iconBtn iconPill otdNotifBellBtn';
+    chatBtn.setAttribute('aria-label', TT('client.chat.aria', null, 'Czat'));
+    chatBtn.innerHTML = `<span class="otdBellIcon" style="font-size:16px;line-height:1">💬</span><span class="otdNotifBadge" aria-label="0" style="display:none">0</span>`;
+const panel = document.createElement('div');
     panel.id = 'otdNotifPanel';
     panel.className = 'otdNotifPanel';
     panel.innerHTML = `
@@ -128,12 +135,20 @@
       const settingsBtn = byId('navSettingsBtn');
       const right = byId('topRight') || (settingsBtn ? settingsBtn.parentElement : null);
 
-      if (right && settingsBtn && settingsBtn.parentElement===right) right.insertBefore(bell, settingsBtn);
-      else if (right) right.appendChild(bell);
-      else if (top && settingsBtn && settingsBtn.parentElement===top) top.insertBefore(bell, settingsBtn);
-      else if (top) top.appendChild(bell);
-      else document.body.appendChild(bell);
-    }catch(_){ document.body.appendChild(bell); }
+      const attach = (el)=>{
+        if (right && settingsBtn && settingsBtn.parentElement===right) right.insertBefore(el, settingsBtn);
+        else if (right) right.appendChild(el);
+        else if (top && settingsBtn && settingsBtn.parentElement===top) top.insertBefore(el, settingsBtn);
+        else if (top) top.appendChild(el);
+        else document.body.appendChild(el);
+      };
+
+      attach(chatBtn);
+      attach(bell);
+    }catch(_){
+      document.body.appendChild(chatBtn);
+      document.body.appendChild(bell);
+    }
 
     document.body.appendChild(panel);
     document.body.appendChild(toast);
@@ -146,17 +161,36 @@
 
     bell.addEventListener('click', async ()=>{
       const shown = panel.style.display === 'block';
-      panel.style.display = shown ? 'none' : 'block';
-      if (!shown) { try{ await pull(); }catch(_){}} 
+      // If panel is already open on notifications, close it. If open on chat, switch to notifications.
+      if (shown && otdNotifView !== 'chat'){
+        panel.style.display = 'none';
+        return;
+      }
+      panel.style.display = 'block';
+      try{ byId('otdNotifShowNew')?.click(); }catch(_){}
+    });
+
+    chatBtn.addEventListener('click', async ()=>{
+      const shown = panel.style.display === 'block';
+      // If panel is already open on chat, close it. Otherwise open and switch to chat.
+      if (shown && otdNotifView === 'chat'){
+        panel.style.display = 'none';
+        return;
+      }
+      panel.style.display = 'block';
+      try{ byId('otdNotifShowChat')?.click(); }catch(_){}
     });
 
     document.addEventListener('click', (e)=>{
       if (!panel || panel.style.display !== 'block') return;
-      if (e.target === bell || bell.contains(e.target) || e.target === panel || panel.contains(e.target)) return;
+      if (
+        e.target === bell || bell.contains(e.target) ||
+        e.target === chatBtn || chatBtn.contains(e.target) ||
+        e.target === panel || panel.contains(e.target)
+      ) return;
       panel.style.display = 'none';
     });
-
-    byId('otdNotifMarkAll')?.addEventListener('click', async ()=>{
+byId('otdNotifMarkAll')?.addEventListener('click', async ()=>{
       if (otdNotifView === 'chat') return;
       try{
         await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({all:true}) });
@@ -216,13 +250,20 @@
 
   function renderNotifications(list, mode){
     const badge = document.querySelector('#otdNotifBell .otdNotifBadge');
+    const badgeChat = document.querySelector('#otdChatBell .otdNotifBadge');
     const listEl = byId('otdNotifList');
     const cnt = (list||[]).length;
 
-    // badge: notifications + chat
+    // badges: notifications + chat (separate)
     if (badge){
       badge.textContent = String(otdNotifUnreadCount || 0);
+      badge.setAttribute('aria-label', String(otdNotifUnreadCount || 0));
       badge.style.display = (otdNotifUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
+    }
+    if (badgeChat){
+      badgeChat.textContent = String(otdChatUnreadCount || 0);
+      badgeChat.setAttribute('aria-label', String(otdChatUnreadCount || 0));
+      badgeChat.style.display = (otdChatUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
     }
 
     if (!listEl) return;
@@ -847,8 +888,8 @@
     // unread chat
     otdChatUnreadCount = await chatUnreadCount();
 
-    // combined badge
-    otdNotifUnreadCount = unreadNotifCount + otdChatUnreadCount;
+    // notifications badge (separate from chat)
+    otdNotifUnreadCount = unreadNotifCount;
 
     // Render notifications list only if not in chat view
     if (otdNotifView !== 'chat'){
@@ -865,11 +906,18 @@
         }
       }
     }else{
-      // just update badge
+      // just update badges
       const badge = document.querySelector('#otdNotifBell .otdNotifBadge');
+      const badgeChat = document.querySelector('#otdChatBell .otdNotifBadge');
       if (badge){
         badge.textContent = String(otdNotifUnreadCount || 0);
+        badge.setAttribute('aria-label', String(otdNotifUnreadCount || 0));
         badge.style.display = (otdNotifUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
+      }
+      if (badgeChat){
+        badgeChat.textContent = String(otdChatUnreadCount || 0);
+        badgeChat.setAttribute('aria-label', String(otdChatUnreadCount || 0));
+        badgeChat.style.display = (otdChatUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
       }
     }
 

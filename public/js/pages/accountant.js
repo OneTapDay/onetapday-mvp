@@ -119,7 +119,7 @@ const _otdNotif = (function(){
     const st = document.createElement('style');
     st.id = 'otdNotifCssAcc';
     st.textContent = `
-      .otdNotifBell{ position:fixed; top:12px; right:12px; z-index:9999; display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:999px; background:rgba(0,0,0,.35); border:1px solid rgba(71,181,0,.35); backdrop-filter: blur(10px); cursor:pointer; user-select:none; }
+      .otdNotifBell{ position:relative; display:inline-flex; align-items:center; justify-content:center; z-index:9999; display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:999px; background:rgba(0,0,0,.35); border:1px solid rgba(71,181,0,.35); backdrop-filter: blur(10px); cursor:pointer; user-select:none; }
       .otdNotifBell .t{ font-weight:800; color:#dfffd0; font-size:13px; }
       .otdNotifBadge{ min-width:18px; height:18px; padding:0 6px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:900; color:#0b1a07; background:#47b500; }
       .otdNotifPanel{ position:fixed; top:54px; right:12px; width:min(390px, calc(100vw - 24px)); max-height:60vh; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; overflow:hidden; }
@@ -169,14 +169,22 @@ const _otdNotif = (function(){
 
   function ensureUi(){
     injectCss();
-    if (byId('otdNotifBellAcc')) return;
+    if (byId('otdNotifBellAcc') && byId('otdChatBellAcc')) return;
 
-    const bell = document.createElement('div');
+    const bell = document.createElement('button');
+    bell.type = 'button';
     bell.id = 'otdNotifBellAcc';
     bell.className = 'otdNotifBell';
-    bell.innerHTML = `<span class="t">🔔</span><span class="t" data-i18n-html="accountant.notifs.title">${esc(TT('accountant.notifs.title', null, 'Powiadomienia'))}</span><span class="otdNotifBadge" style="display:none">0</span>`;
+    bell.setAttribute('aria-label', TT('accountant.notifs.aria', null, 'Powiadomienia'));
+    bell.innerHTML = `<span class="t">🔔</span><span class="otdNotifBadge" style="display:none">0</span>`;
 
-    const panel = document.createElement('div');
+    const chatBtn = document.createElement('button');
+    chatBtn.type = 'button';
+    chatBtn.id = 'otdChatBellAcc';
+    chatBtn.className = 'otdNotifBell';
+    chatBtn.setAttribute('aria-label', TT('accountant.notifs.chat_aria', null, 'Czat'));
+    chatBtn.innerHTML = `<span class="t">💬</span><span class="otdNotifBadge" style="display:none">0</span>`;
+const panel = document.createElement('div');
     panel.id = 'otdNotifPanelAcc';
     panel.className = 'otdNotifPanel';
     panel.innerHTML = `
@@ -199,11 +207,30 @@ const _otdNotif = (function(){
     toast.id = 'otdNotifToastAcc';
     toast.className = 'otdNotifToast';
 
-    document.body.appendChild(bell);
+    // Mount buttons into top bar (prevents overlay with 🌐 and Wyloguj)
+    try{
+      const row = document.querySelector('.top .row') || document.querySelector('.top');
+      const logout = byId('logoutBtn');
+      if (row){
+        if (logout && logout.parentElement===row){
+          row.insertBefore(chatBtn, logout);
+          row.insertBefore(bell, logout);
+        }else{
+          row.appendChild(chatBtn);
+          row.appendChild(bell);
+        }
+      }else{
+        document.body.appendChild(chatBtn);
+        document.body.appendChild(bell);
+      }
+    }catch(_){
+      document.body.appendChild(chatBtn);
+      document.body.appendChild(bell);
+    }
+
     document.body.appendChild(panel);
     document.body.appendChild(toast);
-
-    function setActive(btnId){
+function setActive(btnId){
       ['otdNotifShowNewAcc','otdNotifShowAllAcc','otdNotifShowChatAcc'].forEach(id=>{
         const b = byId(id);
         if (!b) return;
@@ -222,22 +249,39 @@ const _otdNotif = (function(){
 
     bell.addEventListener('click', async ()=>{
       const shown = panel.style.display === 'block';
-      panel.style.display = shown ? 'none' : 'block';
-      if (shown) {
+      if (shown && view !== 'chat'){
+        panel.style.display = 'none';
         stopChatStream();
-      } else {
-        try{ await pull(); }catch(_){ }
+        return;
       }
+      panel.style.display = 'block';
+      try{ setView('unread'); }catch(_){}
+      try{ await pull(); }catch(_){}
+    });
+
+    chatBtn.addEventListener('click', async ()=>{
+      const shown = panel.style.display === 'block';
+      if (shown && view === 'chat'){
+        panel.style.display = 'none';
+        stopChatStream();
+        return;
+      }
+      panel.style.display = 'block';
+      try{ setView('chat'); }catch(_){}
+      try{ await pull(); }catch(_){}
     });
 
     document.addEventListener('click', (e)=>{
       if (!panel || panel.style.display !== 'block') return;
-      if (e.target === bell || bell.contains(e.target) || e.target === panel || panel.contains(e.target)) return;
+      if (
+        e.target === bell || bell.contains(e.target) ||
+        e.target === chatBtn || chatBtn.contains(e.target) ||
+        e.target === panel || panel.contains(e.target)
+      ) return;
       panel.style.display = 'none';
       stopChatStream();
     });
-
-    byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
+byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
       try{
         await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ all:true }) });
       }catch(_){}
@@ -313,11 +357,16 @@ const _otdNotif = (function(){
   }
 
   function updateBadge(){
-    const badge = document.querySelector('#otdNotifBellAcc .otdNotifBadge');
-    const total = (notifUnreadCount||0) + (chatUnreadCount||0);
-    if (!badge) return;
-    badge.textContent = String(total || 0);
-    badge.style.display = (total > 0) ? 'inline-flex' : 'none';
+    const badgeNotif = document.querySelector('#otdNotifBellAcc .otdNotifBadge');
+    const badgeChat = document.querySelector('#otdChatBellAcc .otdNotifBadge');
+    if (badgeNotif){
+      badgeNotif.textContent = String(notifUnreadCount || 0);
+      badgeNotif.style.display = (notifUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
+    }
+    if (badgeChat){
+      badgeChat.textContent = String(chatUnreadCount || 0);
+      badgeChat.style.display = (chatUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
+    }
   }
 
   function renderNotifs(list, mode){
