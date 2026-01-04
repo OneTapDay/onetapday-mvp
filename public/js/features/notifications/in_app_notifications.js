@@ -420,20 +420,10 @@
         <div class="otdChatComposer">
           <button class="otdChatIconBtn" id="otdChatMic" data-i18n-title="client.chat.mic" title="${esc(TT('client.chat.mic', null, 'Mikrofon'))}">🎤</button>
           <textarea id="otdChatInput" data-i18n-ph="client.chat.placeholder" placeholder="${esc(TT('client.chat.placeholder', null, 'Napisz wiadomość…'))}"></textarea>
-          <label class="otdChatToggle" title="${esc(TT('client.chat.translate_hint', null, 'Tłumacz na polski'))}">
-            <input type="checkbox" id="otdChatToPl" />
-            <span>${esc(TT('client.chat.translate_pl', null, 'PL'))}</span>
-          </label>
           <button class="otdChatIconBtn" id="otdChatSend" data-i18n-title="client.chat.send" title="${esc(TT('client.chat.send', null, 'Wyślij'))}">➤</button>
         </div>
       </div>
     `;
-
-    // default translate-to-PL ON when UI lang != pl
-    try{
-      const uiLang = String(localStorage.getItem('otd_lang') || 'pl').toLowerCase().trim();
-      byId('otdChatToPl').checked = uiLang !== 'pl';
-    }catch(_){}
 
     // re-apply i18n on injected UI
     try{ if(window.i18n && typeof window.i18n.apply === 'function') window.i18n.apply(); }catch(_){}
@@ -792,8 +782,6 @@
       const text = String(inp.value || '').trim();
       if(!text) return;
 
-      const toPl = !!byId('otdChatToPl')?.checked;
-
       // optimistic UI (show pending)
       const pendingId = 'pending_' + Math.random().toString(16).slice(2);
       const nowIso = new Date().toISOString();
@@ -808,8 +796,7 @@
           body: JSON.stringify({
             accountantEmail: th.accountantEmail,
             clientEmail: th.clientEmail,
-            text,
-            translateToPl: toPl
+            text
           })
         });
         const j = await r.json().catch(()=>({}));

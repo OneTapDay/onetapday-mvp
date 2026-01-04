@@ -1139,6 +1139,59 @@ async function aiTranslateToPolish(text){
   }
 }
 
+function normLang(code){
+  let c = String(code || '').toLowerCase().trim();
+  if (c === 'ua') c = 'uk';
+  if (c.startsWith('ua-')) c = 'uk';
+  if (!c) return 'pl';
+  if (!['pl','en','ru','uk'].includes(c)) return 'pl';
+  return c;
+}
+function langHumanName(code){
+  const c = normLang(code);
+  return (c === 'pl') ? 'Polish' : (c === 'en') ? 'English' : (c === 'ru') ? 'Russian' : 'Ukrainian';
+}
+
+async function aiTranslateToLang(text, targetLang){
+  if (!_aiAllow('translate')) return String(text || '');
+  const tgt = normLang(targetLang);
+  const languageName = langHumanName(tgt);
+
+  // Keep it extremely strict: only the translated text, no extra words.
+  const prompt = `Translate the text into ${languageName}. Keep meaning, numbers, names, and formatting. If it is already in ${languageName}, return it unchanged. Return ONLY the translated text.\n\nTEXT:\n${String(text||'')}`;
+  const r = await _callOpenAI('translate', [{
+    role:'user',
+    content: prompt
+  }], { max_output_tokens: 600 });
+
+  const out = (r && r.text) ? String(r.text).trim() : '';
+  return out || String(text || '');
+}
+
+function chatTextForViewer(m, viewerLang){
+  const lang = normLang(viewerLang);
+  const orig = String((m && (m.originalText || m.text)) || '');
+  const tr = (m && m.translations && typeof m.translations === 'object') ? m.translations : null;
+  const display = (tr && typeof tr[lang] === 'string' && tr[lang].trim()) ? String(tr[lang]) : orig;
+  return String(display || '').trim();
+}
+
+function mapChatMessageForViewer(m, viewer){
+  const role = String((viewer && viewer.role) || 'freelance_business');
+  const viewerLang = normLang(viewer && viewer.lang);
+  const orig = String((m && (m.originalText || m.text)) || '').trim();
+  const display = chatTextForViewer(m, viewerLang);
+
+  const out = Object.assign({}, m, { text: display });
+  if (role === 'accountant'){
+    out.originalText = '';
+  } else {
+    out.originalText = (display.trim() === orig) ? '' : orig;
+  }
+  return out;
+}
+
+
 app.get('/api/chat/unread-count', (req, res)=>{
   const u = mustAuth(req, res);
   if (!u) return;
@@ -1185,7 +1238,7 @@ app.get('/api/chat/threads', (req, res)=>{
         clientEmail: t.clientEmail,
         counterpartEmail: t.clientEmail,
         updatedAt: t.updatedAt || t.createdAt,
-        lastMessage: last ? String(last.text||'').slice(0, 180) : '',
+        lastMessage: last ? chatTextForViewer(last, u.lang).slice(0, 180) : '',
         unreadCount: unreadCountForThread(t, me)
       });
     });
@@ -1200,7 +1253,7 @@ app.get('/api/chat/threads', (req, res)=>{
         clientEmail: t.clientEmail,
         counterpartEmail: t.accountantEmail,
         updatedAt: t.updatedAt || t.createdAt,
-        lastMessage: last ? String(last.text||'').slice(0, 180) : '',
+        lastMessage: last ? chatTextForViewer(last, u.lang).slice(0, 180) : '',
         unreadCount: unreadCountForThread(t, me)
       });
     });
@@ -1226,7 +1279,7 @@ app.get('/api/chat/history', (req, res)=>{
   const limit = Math.min(200, Math.max(10, Number(req.query && req.query.limit || 120) || 120));
   const msgs = Array.isArray(t.messages) ? t.messages.slice(-limit) : [];
 
-  return res.json({ success:true, threadId: t.id, messages: msgs });
+  return res.json({ success:true, threadId: t.id, messages: msgs.map(m=>mapChatMessageForViewer(m, u)) });
 });
 
 app.post('/api/chat/mark-read', (req, res)=>{
@@ -1269,12 +1322,19 @@ app.post('/api/chat/send', async (req, res)=>{
   const me = normalizeEmail(u.email||'');
   const role = String(u.role || 'freelance_business');
 
-  const translate = !!body.translateToPl;
-  let text = rawText;
-  let originalText = '';
-  if (translate){
-    originalText = rawText;
-    text = await aiTranslateToPolish(rawText);
+  // Per-user translation: store original + translations, then serve each side in their own UI language.
+  const users = loadJsonFile(USERS_FILE) || {};
+  const clientLang = normLang((users[ce] && users[ce].lang) || 'pl');
+  const accountantLang = normLang((users[ae] && users[ae].lang) || 'pl');
+
+  const translations = {};
+  const targets = ['pl','en','ru','uk'];
+  for (const lang of targets){
+    try{
+      translations[lang] = await aiTranslateToLang(rawText, lang);
+    }catch(_e){
+      translations[lang] = rawText;
+    }
   }
 
   const ts = Date.now();
@@ -1283,13 +1343,14 @@ app.post('/api/chat/send', async (req, res)=>{
     id: chatMsgId(),
     fromEmail: me,
     fromRole: (role === 'accountant') ? 'accountant' : 'client',
-    text: String(text || '').trim().slice(0, 5000),
-    originalText: originalText ? String(originalText).trim().slice(0, 5000) : '',
+    text: String(rawText || '').trim().slice(0, 5000), // stored as original
+    originalText: String(rawText || '').trim().slice(0, 5000),
+    translations,
     ts,
     createdAt
   };
 
-  t.messages.push(msg);
+t.messages.push(msg);
   if (t.messages.length > 500) t.messages = t.messages.slice(-500);
   t.updatedAt = createdAt;
   t.lastRead = t.lastRead || {};
@@ -1307,7 +1368,7 @@ app.post('/api/chat/send', async (req, res)=>{
     });
   }catch(_e){}
 
-  return res.json({ success:true, message: msg, threadId: t.id });
+  return res.json({ success:true, message: mapChatMessageForViewer(msg, u), threadId: t.id });
 });
 
 app.get('/api/chat/stream', (req, res)=>{
@@ -1331,7 +1392,7 @@ app.get('/api/chat/stream', (req, res)=>{
   res.write(`event: hello\ndata: ${JSON.stringify({ ok:true, threadId: t.id })}\n\n`);
 
   const sendMsg = (m)=>{
-    res.write(`data: ${JSON.stringify({ type:'message', message: m })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type:'message', message: mapChatMessageForViewer(m, u) })}\n\n`);
   };
 
   const timer = setInterval(()=>{

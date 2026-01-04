@@ -398,7 +398,7 @@ const _otdNotif = (function(){
     try{
       const r = await fetch(CHAT_API_UNREAD, { credentials:'include' });
       const j = await r.json().catch(()=>({}));
-      return (j && j.success === true) ? Number(j.unreadCount||0) : 0;
+      return (j && j.success === true) ? Number(j.totalUnread || 0) : 0;
     }catch(_){ return 0; }
   }
 
@@ -407,8 +407,14 @@ const _otdNotif = (function(){
       const r = await fetch(CHAT_API_THREADS, { credentials:'include' });
       const j = await r.json().catch(()=>({}));
       const th = (j && j.success === true && Array.isArray(j.threads)) ? j.threads : [];
-      chatState.threads = th;
-      return th;
+      const mapped = th.map(t=>({
+        ...t,
+        lastMessageText: (t.lastMessage != null ? String(t.lastMessage) : ''),
+        lastMessageAt: (t.updatedAt || t.lastMessageAt || ''),
+        meEmail: (t.meEmail || (j && j.meEmail) || '')
+      }));
+      chatState.threads = mapped;
+      return mapped;
     }catch(_){ chatState.threads = []; return []; }
   }
 
@@ -721,12 +727,10 @@ const _otdNotif = (function(){
                 const mine = (normalizeEmail(m.fromEmail||'') === normalizeEmail(meEmail));
                 const txt = String(m.text || '');
                 const dt = fmtDate(m.createdAt);
-                const orig = m.originalText ? String(m.originalText) : '';
                 return `
                   <div class="otdAccChatMsg ${mine?'me':''}">
                     <div class="txt">${esc(txt)}</div>
                     <div class="meta"><span>${esc(dt)}</span><span>${mine?'me':'them'}</span></div>
-                    ${orig ? `<div class="orig">${esc(TT('client.chat.original', null, 'Oryginał'))}: ${esc(orig)}</div>` : ``}
                   </div>
                 `;
               }).join('') : `<div class="otdNotifItem" style="cursor:default"><div class="m">${esc(TT('client.chat.loading', null, 'Ładowanie…'))}</div></div>`}
@@ -734,10 +738,6 @@ const _otdNotif = (function(){
             <div class="otdAccChatComposer">
               <button class="otdAccChatIconBtn" id="otdAccChatMic" data-i18n-title="client.chat.mic" title="${esc(TT('client.chat.mic', null, 'Mikrofon'))}">🎤</button>
               <textarea id="otdAccChatInput" data-i18n-ph="client.chat.placeholder" placeholder="${esc(TT('client.chat.placeholder', null, 'Napisz wiadomość…'))}"></textarea>
-              <label class="otdAccChatToggle" title="${esc(TT('client.chat.translate_hint', null, 'Tłumacz na polski'))}">
-                <input id="otdAccChatTranslatePl" type="checkbox" checked />
-                <span>${esc(TT('client.chat.translate_pl', null, 'PL'))}</span>
-              </label>
               <button class="otdAccChatIconBtn" id="otdAccChatSend" data-i18n-title="client.chat.send" title="${esc(TT('client.chat.send', null, 'Wyślij'))}">➤</button>
             </div>
           </div>
@@ -768,13 +768,12 @@ const _otdNotif = (function(){
         const text = String(inp.value || '').trim();
         if (!text) return;
         inp.value = '';
-        const translateToPl = !!byId('otdAccChatTranslatePl')?.checked;
         try{
           const r = await fetch(CHAT_API_SEND, {
             method:'POST',
             credentials:'include',
             headers:{ 'Content-Type':'application/json' },
-            body: JSON.stringify({ accountantEmail: t.accountantEmail, clientEmail: t.clientEmail, text, translateToPl })
+            body: JSON.stringify({ accountantEmail: t.accountantEmail, clientEmail: t.clientEmail, text })
           });
           const j = await r.json().catch(()=>({}));
           if(!r.ok || !j || j.success !== true){
@@ -1706,6 +1705,27 @@ function selectDocsSmartFolder(){
     }).join('');
   }
   async function boot(){
+  // Globe language menu (UI only)
+  try{
+    const globe = document.getElementById('otdLangGlobe');
+    const menu = document.getElementById('otdLangMenu');
+    if (globe && menu){
+      const hide = ()=>{ menu.style.display='none'; globe.setAttribute('aria-expanded','false'); };
+      globe.addEventListener('click', (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        const open = (menu.style.display === 'block');
+        menu.style.display = open ? 'none' : 'block';
+        globe.setAttribute('aria-expanded', open ? 'false' : 'true');
+      });
+      menu.addEventListener('click', (e)=>{ e.stopPropagation(); });
+      document.addEventListener('click', ()=> hide());
+      menu.querySelectorAll('button[data-lang]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{ try{ hide(); }catch(_){} });
+      });
+    }
+  }catch(_e){}
+
     // auth check
     try{
       const data = await jget('/me');

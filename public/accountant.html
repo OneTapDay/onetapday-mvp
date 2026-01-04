@@ -237,11 +237,14 @@
     <div class="top">
       <div class="brand">OneTapDay <span class="badge">ACCOUNTANT</span></div>
       <div class="row">
-        <div class="lang" style="display:flex;gap:6px;align-items:center">
-  <button class="smallBtn" data-lang="pl" type="button">PL</button>
-  <button class="smallBtn" data-lang="en" type="button">EN</button>
-  <button class="smallBtn" data-lang="ru" type="button">RU</button>
-  <button class="smallBtn" data-lang="uk" type="button">UKR</button>
+        <div class="langMenuWrap" id="otdLangWrap" style="position:relative;display:flex;gap:6px;align-items:center">
+  <button class="smallBtn ghost" id="otdLangGlobe" type="button" title="Language" aria-haspopup="true" aria-expanded="false">🌐</button>
+  <div class="otdLangMenu" id="otdLangMenu" style="display:none;position:absolute;top:46px;right:0;min-width:180px;padding:8px;border-radius:14px;border:1px solid rgba(255,255,255,.14);background:rgba(12,14,16,.92);backdrop-filter: blur(10px);box-shadow:0 18px 46px rgba(0,0,0,.55);z-index:50">
+    <button class="smallBtn ghost" data-lang="pl" type="button" style="width:100%;justify-content:flex-start;display:flex">Polski</button>
+    <button class="smallBtn ghost" data-lang="en" type="button" style="width:100%;justify-content:flex-start;display:flex">English</button>
+    <button class="smallBtn ghost" data-lang="ru" type="button" style="width:100%;justify-content:flex-start;display:flex">Русский</button>
+    <button class="smallBtn ghost" data-lang="uk" type="button" style="width:100%;justify-content:flex-start;display:flex">Українська</button>
+  </div>
 </div>
 <button class="btn ghost" id="logoutBtn" data-i18n="accountant.btn_logout">Wyloguj</button>
       </div>
