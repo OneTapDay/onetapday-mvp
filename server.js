@@ -65,6 +65,9 @@ const DOCUMENTS_FILE = process.env.DOCUMENTS_FILE || (fs.existsSync('/data') ? p
 // Temporary AI-generated files (NOT visible in "My documents" until user explicitly saves)
 const AI_TEMP_FILE = process.env.AI_TEMP_FILE || (fs.existsSync('/data') ? path.join('/data','ai_temp.json') : path.join(__dirname,'ai_temp.json'));
 
+// Accountant ↔ Client chat threads (persist on /data when available)
+const CHAT_FILE = process.env.CHAT_FILE || (fs.existsSync('/data') ? path.join('/data','chat_threads.json') : path.join(__dirname,'chat_threads.json'));
+
 function loadJsonFile(file, fallback){
   try {
     if (!fs.existsSync(file)) return fallback;
@@ -88,6 +91,8 @@ const requestsStore = loadJsonFile(REQUESTS_FILE, { items: {} }); // key: reques
 const notificationsStore = loadJsonFile(NOTIFICATIONS_FILE, { items: {} }); // key: notificationId
 const documentsStore = loadJsonFile(DOCUMENTS_FILE, { users: {}, files: {} }); // Document vault
 const aiTempStore = loadJsonFile(AI_TEMP_FILE, { items: {} }); // Temporary AI files (not in docs)
+const chatStore = loadJsonFile(CHAT_FILE, { threads: {} }); // Accountant↔Client chat threads
+
 function linkKey(accEmail, clientEmail){ return `${accEmail}::${clientEmail}`; }
 
 function notifId(){ return 'n_' + crypto.randomBytes(8).toString('hex'); }
@@ -1037,6 +1042,319 @@ app.post('/api/notifications/mark-read', (req, res)=>{
   if (changed > 0) saveJsonFile(NOTIFICATIONS_FILE, notificationsStore);
   return res.json({ success:true, changed });
 });
+
+/* ===== Accountant ↔ Client Chat (live, minimal) ===== */
+function chatThreadId(accEmail, clientEmail){
+  return linkKey(normalizeEmail(accEmail||''), normalizeEmail(clientEmail||''));
+}
+function chatMsgId(){ return 'm_' + crypto.randomBytes(10).toString('hex'); }
+function ensureChatThread(accEmail, clientEmail){
+  const ae = normalizeEmail(accEmail||'');
+  const ce = normalizeEmail(clientEmail||'');
+  const id = chatThreadId(ae, ce);
+  chatStore.threads = chatStore.threads || {};
+  let t = chatStore.threads[id];
+  if (!t){
+    const nowIso = new Date().toISOString();
+    t = { id, accountantEmail: ae, clientEmail: ce, createdAt: nowIso, updatedAt: nowIso, messages: [], lastRead: {} };
+    chatStore.threads[id] = t;
+    saveJsonFile(CHAT_FILE, chatStore);
+  }
+  if (!Array.isArray(t.messages)) t.messages = [];
+  if (!t.lastRead || typeof t.lastRead !== 'object') t.lastRead = {};
+  return t;
+}
+function activeClientsForAccountant(accEmail){
+  const ae = normalizeEmail(accEmail||'');
+  const links = invitesStore.links || {};
+  const out = [];
+  Object.keys(links).forEach(k=>{
+    const it = links[k];
+    if (!it) return;
+    if (normalizeEmail(it.accountantEmail||'') !== ae) return;
+    if (String(it.status||'') !== 'active') return;
+    const ce = normalizeEmail(it.clientEmail||'');
+    if (ce) out.push(ce);
+  });
+  return Array.from(new Set(out));
+}
+function canAccessChat(u, accEmail, clientEmail){
+  if (!u) return false;
+  if (u.isAdmin) return true;
+
+  const role = String(u.role || 'freelance_business');
+  const me = normalizeEmail(u.email||'');
+  const ae = normalizeEmail(accEmail||'');
+  const ce = normalizeEmail(clientEmail||'');
+
+  if (role === 'accountant'){
+    if (me !== ae) return false;
+  } else {
+    if (me !== ce) return false;
+  }
+
+  const k = linkKey(ae, ce);
+  const link = invitesStore.links && invitesStore.links[k];
+  return !!(link && String(link.status||'') === 'active');
+}
+function unreadCountForThread(t, email){
+  const e = normalizeEmail(email||'');
+  const lr = Number((t.lastRead && t.lastRead[e]) || 0) || 0;
+  let c = 0;
+  const msgs = Array.isArray(t.messages) ? t.messages : [];
+  for (let i = 0; i < msgs.length; i++){
+    const m = msgs[i];
+    if (!m) continue;
+    if (Number(m.ts||0) <= lr) continue;
+    if (normalizeEmail(m.fromEmail||'') === e) continue;
+    c++;
+  }
+  return c;
+}
+
+async function aiTranslateToPolish(text){
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return String(text||'').trim();
+
+  const model = process.env.OTD_AI_MODEL_DEFAULT || process.env.OTD_AI_MODEL || 'gpt-4.1-mini';
+  const input = String(text||'').slice(0, 4000);
+
+  // guard: no AI in local dev if explicitly disabled
+  if (!_aiAllow('translate')) return input;
+
+  const messages = [
+    { role: 'system', content: [{ type: 'input_text', text:
+      'Translate the user text to Polish (pl-PL). If it is already Polish, return it unchanged. ' +
+      'Keep meaning, numbers, dates, invoice-like wording. Do not add commentary. Return ONLY the translated text.' }] },
+    { role: 'user', content: [{ type: 'input_text', text: input }] }
+  ];
+
+  try{
+    const out = await _callOpenAI({ model, messages, maxOutputTokens: 350 });
+    const t = String(out && out.text ? out.text : '').trim();
+    // remove wrapping quotes sometimes produced by models
+    return t.replace(/^["“”]+|["“”]+$/g, '').trim() || input;
+  }catch(_e){
+    return input;
+  }
+}
+
+app.get('/api/chat/unread-count', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+
+  const role = String(u.role || 'freelance_business');
+  const me = normalizeEmail(u.email||'');
+
+  let total = 0;
+
+  if (role === 'accountant'){
+    const clients = activeClientsForAccountant(me);
+    clients.forEach(ce=>{
+      const t = ensureChatThread(me, ce);
+      total += unreadCountForThread(t, me);
+    });
+  } else {
+    const accs = activeAccountantsForClient(me);
+    accs.forEach(ae=>{
+      const t = ensureChatThread(ae, me);
+      total += unreadCountForThread(t, me);
+    });
+  }
+
+  return res.json({ success:true, totalUnread: total });
+});
+
+app.get('/api/chat/threads', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+
+  const role = String(u.role || 'freelance_business');
+  const me = normalizeEmail(u.email||'');
+
+  const threads = [];
+
+  if (role === 'accountant'){
+    const clients = activeClientsForAccountant(me);
+    clients.forEach(ce=>{
+      const t = ensureChatThread(me, ce);
+      const last = (t.messages && t.messages.length) ? t.messages[t.messages.length - 1] : null;
+      threads.push({
+        id: t.id,
+        accountantEmail: t.accountantEmail,
+        clientEmail: t.clientEmail,
+        counterpartEmail: t.clientEmail,
+        updatedAt: t.updatedAt || t.createdAt,
+        lastMessage: last ? String(last.text||'').slice(0, 180) : '',
+        unreadCount: unreadCountForThread(t, me)
+      });
+    });
+  } else {
+    const accs = activeAccountantsForClient(me);
+    accs.forEach(ae=>{
+      const t = ensureChatThread(ae, me);
+      const last = (t.messages && t.messages.length) ? t.messages[t.messages.length - 1] : null;
+      threads.push({
+        id: t.id,
+        accountantEmail: t.accountantEmail,
+        clientEmail: t.clientEmail,
+        counterpartEmail: t.accountantEmail,
+        updatedAt: t.updatedAt || t.createdAt,
+        lastMessage: last ? String(last.text||'').slice(0, 180) : '',
+        unreadCount: unreadCountForThread(t, me)
+      });
+    });
+  }
+
+  threads.sort((a,b)=> String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));
+
+  return res.json({ success:true, threads });
+});
+
+app.get('/api/chat/history', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+
+  const ae = normalizeEmail(req.query && req.query.accountantEmail || '');
+  const ce = normalizeEmail(req.query && req.query.clientEmail || '');
+
+  if (!ae || !ce) return res.status(400).json({ success:false, error:'Missing accountantEmail/clientEmail' });
+  if (!canAccessChat(u, ae, ce)) return res.status(403).json({ success:false, error:'Forbidden' });
+
+  const t = ensureChatThread(ae, ce);
+
+  const limit = Math.min(200, Math.max(10, Number(req.query && req.query.limit || 120) || 120));
+  const msgs = Array.isArray(t.messages) ? t.messages.slice(-limit) : [];
+
+  return res.json({ success:true, threadId: t.id, messages: msgs });
+});
+
+app.post('/api/chat/mark-read', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+
+  const body = req.body || {};
+  const ae = normalizeEmail(body.accountantEmail || '');
+  const ce = normalizeEmail(body.clientEmail || '');
+
+  if (!ae || !ce) return res.status(400).json({ success:false, error:'Missing accountantEmail/clientEmail' });
+  if (!canAccessChat(u, ae, ce)) return res.status(403).json({ success:false, error:'Forbidden' });
+
+  const t = ensureChatThread(ae, ce);
+  const me = normalizeEmail(u.email||'');
+
+  const nowTs = Date.now();
+  t.lastRead[me] = nowTs;
+  t.updatedAt = new Date().toISOString();
+  saveJsonFile(CHAT_FILE, chatStore);
+
+  return res.json({ success:true });
+});
+
+app.post('/api/chat/send', async (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+
+  const body = req.body || {};
+  const ae = normalizeEmail(body.accountantEmail || '');
+  const ce = normalizeEmail(body.clientEmail || '');
+  const rawText = String(body.text || '').trim();
+
+  if (!ae || !ce) return res.status(400).json({ success:false, error:'Missing accountantEmail/clientEmail' });
+  if (!rawText) return res.status(400).json({ success:false, error:'Empty message' });
+  if (rawText.length > 5000) return res.status(400).json({ success:false, error:'Message too long' });
+  if (!canAccessChat(u, ae, ce)) return res.status(403).json({ success:false, error:'Forbidden' });
+
+  const t = ensureChatThread(ae, ce);
+  const me = normalizeEmail(u.email||'');
+  const role = String(u.role || 'freelance_business');
+
+  const translate = !!body.translateToPl;
+  let text = rawText;
+  let originalText = '';
+  if (translate){
+    originalText = rawText;
+    text = await aiTranslateToPolish(rawText);
+  }
+
+  const ts = Date.now();
+  const createdAt = new Date(ts).toISOString();
+  const msg = {
+    id: chatMsgId(),
+    fromEmail: me,
+    fromRole: (role === 'accountant') ? 'accountant' : 'client',
+    text: String(text || '').trim().slice(0, 5000),
+    originalText: originalText ? String(originalText).trim().slice(0, 5000) : '',
+    ts,
+    createdAt
+  };
+
+  t.messages.push(msg);
+  if (t.messages.length > 500) t.messages = t.messages.slice(-500);
+  t.updatedAt = createdAt;
+  t.lastRead = t.lastRead || {};
+  t.lastRead[me] = ts;
+
+  saveJsonFile(CHAT_FILE, chatStore);
+
+  // Notify other party (so it also appears in the bell)
+  const other = (normalizeEmail(me) === normalizeEmail(ae)) ? ce : ae;
+  try{
+    addNotification(other, 'chat_message', 'New message', {
+      i18nKey: 'notifications.chat_message',
+      vars: { from: me },
+      chatThread: t.id
+    });
+  }catch(_e){}
+
+  return res.json({ success:true, message: msg, threadId: t.id });
+});
+
+app.get('/api/chat/stream', (req, res)=>{
+  const u = mustAuth(req, res);
+  if (!u) return;
+
+  const ae = normalizeEmail(req.query && req.query.accountantEmail || '');
+  const ce = normalizeEmail(req.query && req.query.clientEmail || '');
+  if (!ae || !ce) return res.status(400).json({ success:false, error:'Missing accountantEmail/clientEmail' });
+  if (!canAccessChat(u, ae, ce)) return res.status(403).json({ success:false, error:'Forbidden' });
+
+  const t = ensureChatThread(ae, ce);
+  let lastTs = Number(req.query && req.query.since || 0) || 0;
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write(`event: hello\ndata: ${JSON.stringify({ ok:true, threadId: t.id })}\n\n`);
+
+  const sendMsg = (m)=>{
+    res.write(`data: ${JSON.stringify({ type:'message', message: m })}\n\n`);
+  };
+
+  const timer = setInterval(()=>{
+    try{
+      const th = chatStore.threads && chatStore.threads[t.id] ? chatStore.threads[t.id] : t;
+      const msgs = Array.isArray(th.messages) ? th.messages : [];
+      const fresh = msgs.filter(m => Number(m && m.ts || 0) > lastTs);
+      if (fresh.length){
+        fresh.forEach(sendMsg);
+        lastTs = Number(fresh[fresh.length - 1].ts || lastTs) || lastTs;
+      } else {
+        // keep-alive ping
+        res.write(`event: ping\ndata: {}\n\n`);
+      }
+    }catch(_e){}
+  }, 1000);
+
+  req.on('close', ()=>{
+    try{ clearInterval(timer); }catch(_){}
+  });
+});
+
+
 
 
 

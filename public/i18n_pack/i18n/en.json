@@ -289,7 +289,20 @@
       "tab_new": "New",
       "tab_read": "Read",
       "title": "Notifications",
-      "toast_prefix": "Notification"
+      "toast_prefix": "Notification",
+      "tab_chat": "Chat"
+    },
+    "chat": {
+      "threads_empty": "No chats yet. Accept an accountant invite first.",
+      "loading": "Loading…",
+      "placeholder": "Type a message…",
+      "send": "Send",
+      "mic": "Mic",
+      "translate_pl": "PL",
+      "translate_hint": "Translate to Polish",
+      "error_load": "Failed to load chat.",
+      "error_send": "Failed to send.",
+      "original": "Original"
     }
   },
   "close_day_cancel": "Cancel",
@@ -478,7 +491,8 @@
     "request_reminder_due": "Reminder: please upload documents by {due}.",
     "request_reminder_month": "Reminder: please upload documents for the request {month}.",
     "request_reminder_month_due": "Reminder: please upload documents for {month} by {due}.",
-    "vault_folder_shared": "Client shared folder: {name}"
+    "vault_folder_shared": "Client shared folder: {name}",
+    "chat_message": "New message from {from}"
   },
   "placeholders": {
     "amount": "Amount",

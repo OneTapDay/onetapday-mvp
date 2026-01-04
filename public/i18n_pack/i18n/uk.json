@@ -289,7 +289,20 @@
       "tab_new": "Нові",
       "tab_read": "Прочитано",
       "title": "Сповіщення",
-      "toast_prefix": "Сповіщення"
+      "toast_prefix": "Сповіщення",
+      "tab_chat": "Чат"
+    },
+    "chat": {
+      "threads_empty": "Чатів поки немає. Спочатку прийміть запрошення бухгалтера.",
+      "loading": "Завантаження…",
+      "placeholder": "Напишіть повідомлення…",
+      "send": "Надіслати",
+      "mic": "Мікрофон",
+      "translate_pl": "PL",
+      "translate_hint": "Перекласти польською",
+      "error_load": "Не вдалося завантажити чат.",
+      "error_send": "Не вдалося надіслати.",
+      "original": "Оригінал"
     }
   },
   "close_day_cancel": "Скасувати",
@@ -478,7 +491,8 @@
     "request_reminder_due": "Нагадування: надішліть документи до {due}.",
     "request_reminder_month": "Нагадування: надішліть документи по запиту {month}.",
     "request_reminder_month_due": "Нагадування: надішліть документи по запиту {month} до {due}.",
-    "vault_folder_shared": "Клієнт відкрив доступ до папки: {name}"
+    "vault_folder_shared": "Клієнт відкрив доступ до папки: {name}",
+    "chat_message": "Нове повідомлення від {from}"
   },
   "placeholders": {
     "amount": "Сума",

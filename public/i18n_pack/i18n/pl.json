@@ -289,7 +289,20 @@
       "tab_new": "Nowe",
       "tab_read": "Przeczytane",
       "title": "Powiadomienia",
-      "toast_prefix": "Powiadomienie"
+      "toast_prefix": "Powiadomienie",
+      "tab_chat": "Czat"
+    },
+    "chat": {
+      "threads_empty": "Brak czatów. Najpierw zaakceptuj zaproszenie księgowego.",
+      "loading": "Ładowanie…",
+      "placeholder": "Napisz wiadomość…",
+      "send": "Wyślij",
+      "mic": "Mikrofon",
+      "translate_pl": "PL",
+      "translate_hint": "Tłumacz na polski",
+      "error_load": "Nie udało się załadować czatu.",
+      "error_send": "Nie udało się wysłać.",
+      "original": "Oryginał"
     }
   },
   "close_day_cancel": "Anuluj",
@@ -478,7 +491,8 @@
     "request_reminder_due": "Przypomnienie: wyślij dokumenty do {due}.",
     "request_reminder_month": "Przypomnienie: wyślij dokumenty dla prośby {month}.",
     "request_reminder_month_due": "Przypomnienie: wyślij dokumenty dla prośby {month} do {due}.",
-    "vault_folder_shared": "Klient udostępnił folder: {name}"
+    "vault_folder_shared": "Klient udostępnił folder: {name}",
+    "chat_message": "Nowa wiadomość od {from}"
   },
   "placeholders": {
     "amount": "Kwota",
