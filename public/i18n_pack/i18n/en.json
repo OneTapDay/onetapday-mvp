@@ -56,7 +56,8 @@
       "tab_new": "New",
       "tab_read": "Read",
       "title": "Notifications",
-      "toast_prefix": "Notification:"
+      "toast_prefix": "Notification:",
+      "tab_chat": "Chat"
     },
     "ph_company": "Ltd / Sole trader / …",
     "ph_name": "John",
@@ -73,7 +74,21 @@
     },
     "th_actions": "Actions",
     "th_client": "Client",
-    "th_status": "Status"
+    "th_status": "Status",
+    "btn_open": "Open",
+    "btn_invite": "Invite",
+    "btn_remove": "Remove",
+    "docs_modal_title": "Client documents",
+    "docs_close": "Close",
+    "docs_month": "Month",
+    "docs_section": "Section",
+    "docs_folders": "Folders",
+    "docs_search": "Search",
+    "docs_search_ph": "Search by file name…",
+    "docs_clear": "Clear",
+    "docs_export_month": "Export month package",
+    "docs_folder": "Folder",
+    "docs_files": "Files"
   },
   "accounts": {
     "auto_desc": "Edit currency, starting balance and inclusion.",

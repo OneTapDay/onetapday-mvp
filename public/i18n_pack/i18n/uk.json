@@ -56,7 +56,8 @@
       "tab_new": "Нові",
       "tab_read": "Прочитано",
       "title": "Сповіщення",
-      "toast_prefix": "Сповіщення:"
+      "toast_prefix": "Сповіщення:",
+      "tab_chat": "Чат"
     },
     "ph_company": "ТОВ / ФОП / …",
     "ph_name": "Іван",
@@ -73,7 +74,21 @@
     },
     "th_actions": "Дії",
     "th_client": "Клієнт",
-    "th_status": "Статус"
+    "th_status": "Статус",
+    "btn_open": "Відкрити",
+    "btn_invite": "Запросити",
+    "btn_remove": "Видалити",
+    "docs_modal_title": "Документи клієнта",
+    "docs_close": "Закрити",
+    "docs_month": "Місяць",
+    "docs_section": "Розділ",
+    "docs_folders": "Папки",
+    "docs_search": "Пошук",
+    "docs_search_ph": "Пошук за назвою файлу…",
+    "docs_clear": "Очистити",
+    "docs_export_month": "Експорт пакета місяця",
+    "docs_folder": "Папка",
+    "docs_files": "Файли"
   },
   "accounts": {
     "auto_desc": "Редагуй валюту, стартовий баланс і включення.",

@@ -56,7 +56,8 @@
       "tab_new": "Новые",
       "tab_read": "Прочитано",
       "title": "Уведомления",
-      "toast_prefix": "Уведомление:"
+      "toast_prefix": "Уведомление:",
+      "tab_chat": "Чат"
     },
     "ph_company": "ООО / ФОП / …",
     "ph_name": "Иван",
@@ -73,7 +74,21 @@
     },
     "th_actions": "Действия",
     "th_client": "Клиент",
-    "th_status": "Статус"
+    "th_status": "Статус",
+    "btn_open": "Открыть",
+    "btn_invite": "Запросить",
+    "btn_remove": "Удалить",
+    "docs_modal_title": "Документы клиента",
+    "docs_close": "Закрыть",
+    "docs_month": "Месяц",
+    "docs_section": "Раздел",
+    "docs_folders": "Папки",
+    "docs_search": "Поиск",
+    "docs_search_ph": "Поиск по имени файла…",
+    "docs_clear": "Очистить",
+    "docs_export_month": "Экспорт пакета месяца",
+    "docs_folder": "Папка",
+    "docs_files": "Файлы"
   },
   "accounts": {
     "auto_desc": "Редактируй валюту, стартовый баланс и включение в план.",

@@ -56,7 +56,8 @@
       "tab_new": "Nowe",
       "tab_read": "Przeczytane",
       "title": "Powiadomienia",
-      "toast_prefix": "Powiadomienie:"
+      "toast_prefix": "Powiadomienie:",
+      "tab_chat": "Czat"
     },
     "ph_company": "sp. z o.o. / JDG / …",
     "ph_name": "Jan",
@@ -73,7 +74,21 @@
     },
     "th_actions": "Działania",
     "th_client": "Klient",
-    "th_status": "Status"
+    "th_status": "Status",
+    "btn_open": "Otwórz",
+    "btn_invite": "Zaproś",
+    "btn_remove": "Usuń",
+    "docs_modal_title": "Dokumenty klienta",
+    "docs_close": "Zamknij",
+    "docs_month": "Miesiąc",
+    "docs_section": "Sekcja",
+    "docs_folders": "Foldery",
+    "docs_search": "Szukaj",
+    "docs_search_ph": "Szukaj po nazwie pliku…",
+    "docs_clear": "Wyczyść",
+    "docs_export_month": "Eksport pakietu miesiąca",
+    "docs_folder": "Folder",
+    "docs_files": "Pliki"
   },
   "accounts": {
     "auto_desc": "Edytuj walutę, saldo początkowe i uwzględnianie.",

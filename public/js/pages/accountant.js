@@ -81,14 +81,38 @@ function TT(key, vars, fallback){
   }
 
 
-/* ==== OTD_NOTIF_V2: in-app notifications (accountant) ==== */
+/* ==== OTD_NOTIF_V2: in-app notifications (accountant) + CHAT ==== */
 const _otdNotif = (function(){
   const API = '/api/notifications';
   const API_MARK = '/api/notifications/mark-read';
+
+  const CHAT_API_THREADS = '/api/chat/threads';
+  const CHAT_API_HISTORY = '/api/chat/history';
+  const CHAT_API_SEND = '/api/chat/send';
+  const CHAT_API_MARK_READ = '/api/chat/mark-read';
+  const CHAT_API_UNREAD = '/api/chat/unread-count';
+  const CHAT_API_STREAM = '/api/chat/stream';
+
   const SEEN_KEY = 'otd_notif_toast_seen_acc';
+
   let started = false;
-  let showAll = false;
-  let unreadCount = 0;
+
+  // view: 'unread' | 'all' | 'chat'
+  let view = 'unread';
+  let notifUnreadCount = 0;
+  let chatUnreadCount = 0;
+
+  const chatState = {
+    threads: [],
+    active: null, // {id, accountantEmail, clientEmail, meEmail, counterpartEmail, ...}
+    messages: [],
+    eventSource: null,
+    pollTimer: null,
+    voice: { recording:false, speechRec:null, mediaRec:null, mediaStream:null, chunks:[], opId:0 },
+  };
+
+  function byId(id){ return document.getElementById(id); }
+  function normalizeEmail(e){ return String(e||'').trim().toLowerCase(); }
 
   function injectCss(){
     if (document.getElementById('otdNotifCssAcc')) return;
@@ -98,12 +122,13 @@ const _otdNotif = (function(){
       .otdNotifBell{ position:fixed; top:12px; right:12px; z-index:9999; display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:999px; background:rgba(0,0,0,.35); border:1px solid rgba(71,181,0,.35); backdrop-filter: blur(10px); cursor:pointer; user-select:none; }
       .otdNotifBell .t{ font-weight:800; color:#dfffd0; font-size:13px; }
       .otdNotifBadge{ min-width:18px; height:18px; padding:0 6px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:900; color:#0b1a07; background:#47b500; }
-      .otdNotifPanel{ position:fixed; top:54px; right:12px; width:min(380px, calc(100vw - 24px)); max-height:60vh; overflow:auto; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; }
+      .otdNotifPanel{ position:fixed; top:54px; right:12px; width:min(390px, calc(100vw - 24px)); max-height:60vh; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; overflow:hidden; }
       .otdNotifPanel header{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); }
       .otdNotifPanel header .h{ font-weight:900; color:#eaffdf; font-size:13px; }
       .otdNotifTabs{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
       .otdNotifPanel header button{ background:transparent; border:1px solid rgba(255,255,255,.16); color:#eaffdf; border-radius:12px; padding:6px 10px; cursor:pointer; }
       .otdNotifTabs button.active{ border-color: rgba(71,181,0,.55); background: rgba(71,181,0,.12); }
+      .otdNotifBody{ max-height:calc(60vh - 56px); overflow:auto; }
       .otdNotifItem{ padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); cursor:pointer; }
       .otdNotifItem:last-child{ border-bottom:none; }
       .otdNotifItem .m{ color:#eaffdf; font-size:13px; line-height:1.25; }
@@ -111,32 +136,63 @@ const _otdNotif = (function(){
       .otdNotifItem.read{ opacity:.55; }
       .otdNotifToast{ position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10000; max-width:min(560px, calc(100vw - 24px)); padding:10px 12px; border-radius:14px; background:rgba(0,0,0,.70); border:1px solid rgba(71,181,0,.30); backdrop-filter: blur(14px); box-shadow: 0 10px 28px rgba(0,0,0,.35); color:#eaffdf; font-size:13px; display:none; }
       .otdNotifToast b{ color:#dfffd0; }
+
+      /* === Chat inside notifications (accountant) === */
+      .otdAccChatWrap{ padding:10px 10px 12px; }
+      .otdAccChatCard{ border:1px solid rgba(255,255,255,.10); background: rgba(0,0,0,.25); border-radius:14px; overflow:hidden; }
+      .otdAccChatThreads{ display:flex; flex-direction:column; }
+      .otdAccChatThread{ padding:10px 10px; border-bottom:1px solid rgba(255,255,255,.08); cursor:pointer; display:flex; gap:10px; align-items:flex-start; }
+      .otdAccChatThread:last-child{ border-bottom:none; }
+      .otdAccChatThread .t{ color:#eaffdf; font-size:13px; font-weight:800; line-height:1.2; }
+      .otdAccChatThread .s{ margin-top:4px; color:rgba(234,255,223,.75); font-size:12px; line-height:1.2; }
+      .otdAccChatThread .r{ margin-left:auto; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+      .otdAccChatPill{ min-width:18px; height:18px; padding:0 6px; border-radius:999px; font-size:10px; font-weight:900; color:#0b1a07; background:#47b500; display:inline-flex; align-items:center; justify-content:center; }
+      .otdAccChatView{ display:flex; flex-direction:column; height:calc(60vh - 56px - 22px); }
+      .otdAccChatTop{ display:flex; gap:8px; align-items:center; padding:10px 10px; border-bottom:1px solid rgba(255,255,255,.08); }
+      .otdAccChatTop .back{ border:1px solid rgba(255,255,255,.16); border-radius:12px; padding:6px 10px; background:transparent; color:#eaffdf; cursor:pointer; }
+      .otdAccChatTop .who{ color:#eaffdf; font-weight:900; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .otdAccChatMsgs{ flex:1; overflow:auto; padding:10px 10px; display:flex; flex-direction:column; gap:8px; }
+      .otdAccChatMsg{ max-width:86%; padding:8px 10px; border-radius:14px; border:1px solid rgba(255,255,255,.10); background: rgba(0,0,0,.25); }
+      .otdAccChatMsg.me{ margin-left:auto; border-color: rgba(71,181,0,.35); background: rgba(71,181,0,.10); }
+      .otdAccChatMsg .txt{ color:#eaffdf; font-size:13px; line-height:1.25; white-space:pre-wrap; word-break:break-word; }
+      .otdAccChatMsg .meta{ margin-top:4px; color:rgba(234,255,223,.65); font-size:10px; display:flex; gap:8px; align-items:center; }
+      .otdAccChatMsg .orig{ opacity:.85; font-size:11px; margin-top:6px; border-top:1px dashed rgba(255,255,255,.12); padding-top:6px; color:rgba(234,255,223,.8); }
+      .otdAccChatComposer{ display:flex; gap:8px; align-items:flex-end; padding:10px 10px; border-top:1px solid rgba(255,255,255,.08); }
+      .otdAccChatComposer textarea{ flex:1; min-height:38px; max-height:120px; resize:vertical; border-radius:12px; border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.20); color:#eaffdf; padding:8px 10px; font-size:13px; }
+      .otdAccChatIconBtn{ width:40px; height:40px; border-radius:12px; border:1px solid rgba(255,255,255,.16); background:transparent; color:#eaffdf; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+      .otdAccChatIconBtn.is-recording{ border-color: rgba(71,181,0,.65); background: rgba(71,181,0,.12); }
+      .otdAccChatToggle{ display:flex; align-items:center; gap:6px; padding:6px 8px; border-radius:12px; border:1px solid rgba(255,255,255,.16); color:#eaffdf; font-size:11px; user-select:none; }
+      .otdAccChatToggle input{ accent-color:#47b500; }
     `;
     document.head.appendChild(st);
   }
 
   function ensureUi(){
     injectCss();
-    if (document.getElementById('otdNotifBellAcc')) return;
+    if (byId('otdNotifBellAcc')) return;
 
     const bell = document.createElement('div');
     bell.id = 'otdNotifBellAcc';
     bell.className = 'otdNotifBell';
-    bell.innerHTML = `<span class="t">🔔</span><span class="t">${TT('accountant.notifs.title', null, 'Powiadomienia')}</span><span class="otdNotifBadge" style="display:none">0</span>`;
+    bell.innerHTML = `<span class="t">🔔</span><span class="t" data-i18n-html="accountant.notifs.title">${esc(TT('accountant.notifs.title', null, 'Powiadomienia'))}</span><span class="otdNotifBadge" style="display:none">0</span>`;
 
     const panel = document.createElement('div');
     panel.id = 'otdNotifPanelAcc';
     panel.className = 'otdNotifPanel';
     panel.innerHTML = `
       <header>
-        <div class="h">${TT('accountant.notifs.title', null, 'Powiadomienia')}</div>
+        <div class="h" data-i18n-html="accountant.notifs.title">${esc(TT('accountant.notifs.title', null, 'Powiadomienia'))}</div>
         <div class="otdNotifTabs">
-          <button id="otdNotifShowNewAcc" class="active" type="button">${TT('accountant.notifs.tab_new', null, 'Nowe')}</button>
-          <button id="otdNotifShowAllAcc" type="button">${TT('accountant.notifs.tab_history', null, 'Historia')}</button>
-          <button id="otdNotifMarkAllAcc" type="button">${TT('accountant.notifs.tab_read', null, 'Przeczytane')}</button>
+          <button id="otdNotifShowNewAcc" class="active" type="button" data-i18n-html="accountant.notifs.tab_new">${esc(TT('accountant.notifs.tab_new', null, 'Nowe'))}</button>
+          <button id="otdNotifShowAllAcc" type="button" data-i18n-html="accountant.notifs.tab_history">${esc(TT('accountant.notifs.tab_history', null, 'Historia'))}</button>
+          <button id="otdNotifShowChatAcc" type="button" data-i18n-html="accountant.notifs.tab_chat">${esc(TT('accountant.notifs.tab_chat', null, 'Czat'))}</button>
+          <button id="otdNotifMarkAllAcc" type="button" data-i18n-html="accountant.notifs.tab_read">${esc(TT('accountant.notifs.tab_read', null, 'Przeczytane'))}</button>
         </div>
       </header>
-      <div id="otdNotifListAcc"></div>
+      <div id="otdNotifBodyAcc" class="otdNotifBody">
+        <div id="otdNotifListAcc"></div>
+        <div id="otdChatWrapAcc" class="otdAccChatWrap" style="display:none"></div>
+      </div>
     `;
 
     const toast = document.createElement('div');
@@ -147,38 +203,73 @@ const _otdNotif = (function(){
     document.body.appendChild(panel);
     document.body.appendChild(toast);
 
+    function setActive(btnId){
+      ['otdNotifShowNewAcc','otdNotifShowAllAcc','otdNotifShowChatAcc'].forEach(id=>{
+        const b = byId(id);
+        if (!b) return;
+        b.classList.toggle('active', id === btnId);
+      });
+    }
+    function setView(v){
+      view = v;
+      setActive(v==='unread' ? 'otdNotifShowNewAcc' : (v==='all' ? 'otdNotifShowAllAcc' : 'otdNotifShowChatAcc'));
+      const list = byId('otdNotifListAcc');
+      const chat = byId('otdChatWrapAcc');
+      if (list) list.style.display = (view === 'chat') ? 'none' : 'block';
+      if (chat) chat.style.display = (view === 'chat') ? 'block' : 'none';
+      if (view !== 'chat') stopChatStream();
+    }
+
     bell.addEventListener('click', async ()=>{
       const shown = panel.style.display === 'block';
       panel.style.display = shown ? 'none' : 'block';
-      if (!shown) { try{ await pull(); }catch(_){ } }
+      if (shown) {
+        stopChatStream();
+      } else {
+        try{ await pull(); }catch(_){ }
+      }
     });
 
     document.addEventListener('click', (e)=>{
       if (!panel || panel.style.display !== 'block') return;
       if (e.target === bell || bell.contains(e.target) || e.target === panel || panel.contains(e.target)) return;
       panel.style.display = 'none';
+      stopChatStream();
     });
 
-    document.getElementById('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
+    byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
       try{
         await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ all:true }) });
       }catch(_){}
+      setView('unread');
       try{ await pull(); }catch(_){}
     });
 
-    document.getElementById('otdNotifShowNewAcc')?.addEventListener('click', async ()=>{
-      showAll = false;
-      document.getElementById('otdNotifShowNewAcc')?.classList.add('active');
-      document.getElementById('otdNotifShowAllAcc')?.classList.remove('active');
+    byId('otdNotifShowNewAcc')?.addEventListener('click', async ()=>{
+      setView('unread');
       try{ await pull(); }catch(_){}
     });
 
-    document.getElementById('otdNotifShowAllAcc')?.addEventListener('click', async ()=>{
-      showAll = true;
-      document.getElementById('otdNotifShowAllAcc')?.classList.add('active');
-      document.getElementById('otdNotifShowNewAcc')?.classList.remove('active');
+    byId('otdNotifShowAllAcc')?.addEventListener('click', async ()=>{
+      setView('all');
       try{ await pull(); }catch(_){}
     });
+
+    byId('otdNotifShowChatAcc')?.addEventListener('click', async ()=>{
+      setView('chat');
+      try{ await pull(); }catch(_){}
+    });
+
+    // keep new dynamic strings in sync with language toggles
+    window.addEventListener('otd:lang', ()=>{
+      try{
+        if (window.i18n && typeof window.i18n.apply === 'function') window.i18n.apply();
+      }catch(_){}
+      try{ renderChat(); }catch(_){}
+    });
+
+    // Default view
+    setView(view);
   }
 
   function getSeen(){
@@ -193,9 +284,9 @@ const _otdNotif = (function(){
   }
 
   function showToast(msg){
-    const t = document.getElementById('otdNotifToastAcc');
+    const t = byId('otdNotifToastAcc');
     if (!t) return;
-    t.innerHTML = `<b>${TT('accountant.notifs.toast_prefix', null, 'Powiadomienie:')}</b> ${esc(String(msg||''))}`;
+    t.innerHTML = `<b>${esc(TT('accountant.notifs.toast_prefix', null, 'Powiadomienie:'))}</b> ${esc(String(msg||''))}`;
     t.style.display = 'block';
     clearTimeout(showToast._tm);
     showToast._tm = setTimeout(()=>{ t.style.display = 'none'; }, 4500);
@@ -221,27 +312,32 @@ const _otdNotif = (function(){
     }
   }
 
-  function render(list, mode){
+  function updateBadge(){
     const badge = document.querySelector('#otdNotifBellAcc .otdNotifBadge');
-    const listEl = document.getElementById('otdNotifListAcc');
+    const total = (notifUnreadCount||0) + (chatUnreadCount||0);
+    if (!badge) return;
+    badge.textContent = String(total || 0);
+    badge.style.display = (total > 0) ? 'inline-flex' : 'none';
+  }
 
-    if (badge){
-      badge.textContent = String(unreadCount || 0);
-      badge.style.display = (unreadCount > 0) ? 'inline-flex' : 'none';
-    }
+  function renderNotifs(list, mode){
+    const listEl = byId('otdNotifListAcc');
     if (!listEl) return;
-
     const arr = Array.isArray(list) ? list : [];
     if (!arr.length){
-      listEl.innerHTML = `<div class="otdNotifItem" style="cursor:default"><div class="m">${mode==='all' ? TT('accountant.notifs.empty_all', null, 'Historia jest pusta.') : TT('accountant.notifs.empty_new', null, 'Brak nowych powiadomień.')}</div></div>`;
+      listEl.innerHTML = `<div class="otdNotifItem" style="cursor:default"><div class="m">${mode==='all' ? esc(TT('accountant.notifs.empty_all', null, 'Historia jest pusta.')) : esc(TT('accountant.notifs.empty_new', null, 'Brak nowych powiadomień.'))}</div></div>`;
       return;
     }
 
     listEl.innerHTML = arr.map(n=>{
       const dt = fmtDate(n.createdAt);
       const readCls = (mode==='all' && n.read) ? ' read' : '';
-      return `<div class="otdNotifItem${readCls}" data-id="${esc(n.id)}" data-request="${esc(n.requestId||'')}" data-client="${esc(n.clientEmail||'')}">
-                <div class="m">${esc((n.i18nKey ? TT(String(n.i18nKey), (n.vars && typeof n.vars==='object')?n.vars:null, String(n.message||'')) : String(n.message||'')) )}</div>
+      const msg = (n && n.i18nKey)
+        ? TT(String(n.i18nKey), (n.vars && typeof n.vars==='object')?n.vars:null, String(n.message||''))
+        : String(n && n.message || '');
+      const chatThread = (n && n.data && n.data.chatThread) ? String(n.data.chatThread) : '';
+      return `<div class="otdNotifItem${readCls}" data-id="${esc(n.id)}" data-request="${esc(n.requestId||'')}" data-client="${esc(n.clientEmail||'')}" data-chat="${esc(chatThread)}">
+                <div class="m">${esc(msg)}</div>
                 <div class="d">${esc(dt)}</div>
               </div>`;
     }).join('');
@@ -251,8 +347,17 @@ const _otdNotif = (function(){
         const id = el.getAttribute('data-id');
         const rid = el.getAttribute('data-request');
         const ce  = el.getAttribute('data-client');
+        const chatThread = el.getAttribute('data-chat');
 
         try{ await markRead([id]); }catch(_){}
+
+        // If it's a chat notification, jump straight into that chat
+        if (chatThread){
+          try{
+            await openChatByThreadId(chatThread);
+            return;
+          }catch(_){}
+        }
 
         // quick jump: select client + open request
         if (ce){
@@ -273,38 +378,601 @@ const _otdNotif = (function(){
     });
   }
 
-  async function pull(){
-    ensureUi();
-
-    // always pull unread to keep badge + toast sane
-    let unread = [];
+  async function fetchUnreadNotifs(){
     try{
       const r = await fetch(API + '?unread=1', { credentials:'include' });
       const j = await r.json().catch(()=>({}));
-      unread = (j && j.notifications) ? j.notifications : [];
-    }catch(_){ unread = []; }
+      return (j && j.notifications) ? j.notifications : [];
+    }catch(_){ return []; }
+  }
 
-    unreadCount = unread.length;
+  async function fetchAllNotifs(){
+    try{
+      const r = await fetch(API, { credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      return (j && j.notifications) ? j.notifications : [];
+    }catch(_){ return []; }
+  }
 
-    if (!showAll){
-      render(unread, 'unread');
-    } else {
-      try{
-        const r2 = await fetch(API, { credentials:'include' });
-        const j2 = await r2.json().catch(()=>({}));
-        const all = (j2 && j2.notifications) ? j2.notifications : [];
-        render(all, 'all');
-      } catch(_){
-        render(unread, 'unread');
+  async function fetchChatUnread(){
+    try{
+      const r = await fetch(CHAT_API_UNREAD, { credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      return (j && j.success === true) ? Number(j.unreadCount||0) : 0;
+    }catch(_){ return 0; }
+  }
+
+  async function fetchChatThreads(){
+    try{
+      const r = await fetch(CHAT_API_THREADS, { credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      const th = (j && j.success === true && Array.isArray(j.threads)) ? j.threads : [];
+      chatState.threads = th;
+      return th;
+    }catch(_){ chatState.threads = []; return []; }
+  }
+
+  async function chatFetchHistory(thread){
+    if (!thread) return [];
+    const qs = new URLSearchParams({
+      accountantEmail: String(thread.accountantEmail || ''),
+      clientEmail: String(thread.clientEmail || ''),
+      limit: '120'
+    });
+    const r = await fetch(`${CHAT_API_HISTORY}?${qs.toString()}`, { credentials:'include' });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok || !j || j.success !== true) throw new Error((j && j.error) || ('HTTP '+r.status));
+    const msgs = Array.isArray(j.messages) ? j.messages : [];
+    return msgs;
+  }
+
+  async function chatMarkRead(thread){
+    if (!thread) return;
+    try{
+      await fetch(CHAT_API_MARK_READ, {
+        method:'POST',
+        credentials:'include',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ accountantEmail: thread.accountantEmail, clientEmail: thread.clientEmail })
+      });
+    }catch(_){}
+  }
+
+  function stopChatStream(){
+    try{ if(chatState.eventSource) chatState.eventSource.close(); }catch(_){}
+    chatState.eventSource = null;
+    if (chatState.pollTimer){ try{ clearInterval(chatState.pollTimer); }catch(_){ } }
+    chatState.pollTimer = null;
+    chatState.voice.opId++;
+    try{ if(chatState.voice.speechRec) chatState.voice.speechRec.stop(); }catch(_){}
+    chatState.voice.speechRec = null;
+    try{
+      if(chatState.voice.mediaStream){
+        chatState.voice.mediaStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){ } });
       }
+    }catch(_){}
+    chatState.voice.mediaStream = null;
+    chatState.voice.mediaRec = null;
+    chatState.voice.chunks = [];
+    chatState.voice.recording = false;
+  }
+
+  function getSpeechLocale(){
+    try{
+      const lg = (window.i18n && typeof window.i18n.getLang === 'function') ? String(window.i18n.getLang()||'') : '';
+      const l = (lg || localStorage.getItem('lang') || 'pl').toLowerCase();
+      if (l.startsWith('ru')) return 'ru-RU';
+      if (l.startsWith('uk')) return 'uk-UA';
+      if (l.startsWith('en')) return 'en-US';
+      return 'pl-PL';
+    }catch(_){
+      return 'pl-PL';
+    }
+  }
+
+  function blobToBase64(blob){
+    return new Promise((resolve, reject)=>{
+      try{
+        const r = new FileReader();
+        r.onload = ()=> {
+          const s = String(r.result || '');
+          const b64 = s.includes(',') ? s.split(',')[1] : s;
+          resolve(b64);
+        };
+        r.onerror = ()=> reject(r.error || new Error('FileReader error'));
+        r.readAsDataURL(blob);
+      }catch(e){ reject(e); }
+    });
+  }
+
+  async function transcribe(blob, mime){
+    const b64 = await blobToBase64(blob);
+    const r = await fetch(`/api/ai/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ audio: b64, mime: mime || blob.type || 'audio/webm', language: getSpeechLocale() })
+    });
+    const j = await r.json().catch(()=> ({}));
+    if(!r.ok || !j || j.success !== true){
+      throw new Error((j && j.error) ? j.error : ('Transcribe failed ' + r.status));
+    }
+    return String(j.text || '').trim();
+  }
+
+  function wireChatVoice(btn, inp){
+    if (!btn || !inp) return;
+    if (btn.dataset && btn.dataset.voiceBound === '1') return;
+    try{ btn.dataset.voiceBound = '1'; }catch(_){}
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    function setUI(on){
+      chatState.voice.recording = !!on;
+      try{
+        btn.classList.toggle('is-recording', chatState.voice.recording);
+        btn.textContent = chatState.voice.recording ? '⏹' : '🎤';
+      }catch(_){}
+    }
+
+    function stopTracks(){
+      try{
+        if(chatState.voice.mediaStream){
+          chatState.voice.mediaStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){ } });
+        }
+      }catch(_){}
+      chatState.voice.mediaStream = null;
+    }
+
+    async function startMedia(){
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      chatState.voice.mediaStream = stream;
+      chatState.voice.chunks = [];
+      let opts = {};
+      try{
+        const prefer = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg','audio/mp4'];
+        for(const m of prefer){
+          if(window.MediaRecorder && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(m)){
+            opts.mimeType = m;
+            break;
+          }
+        }
+      }catch(_){}
+      chatState.voice.mediaRec = new MediaRecorder(stream, opts);
+      chatState.voice.mediaRec.ondataavailable = (e)=>{ try{ if(e.data && e.data.size>0) chatState.voice.chunks.push(e.data); }catch(_){} };
+      return true;
+    }
+
+    function startSpeech(){
+      if(!SR) return false;
+
+      const my = ++chatState.voice.opId;
+      try{
+        const rec = new SR();
+        chatState.voice.speechRec = rec;
+
+        const base = String(inp.value || '').trim();
+        const basePrefix = base ? (base + ' ') : '';
+        let finalText = '';
+        let interimText = '';
+
+        rec.lang = getSpeechLocale();
+        rec.interimResults = true;
+        rec.continuous = true;
+
+        rec.onresult = (ev)=>{
+          if(my !== chatState.voice.opId) return;
+          try{
+            let interim = '';
+            let fin = '';
+            const start = (typeof ev.resultIndex === 'number') ? ev.resultIndex : 0;
+            for(let i=start; i<(ev.results ? ev.results.length : 0); i++){
+              const r = ev.results[i];
+              const t = r && r[0] ? String(r[0].transcript || '') : '';
+              if(!t) continue;
+              if(r.isFinal) fin += t;
+              else interim += t;
+            }
+            if(fin){
+              finalText = (finalText ? (finalText + ' ') : '') + String(fin).trim();
+            }
+            interimText = String(interim || '').trim();
+            const combined = (basePrefix + [finalText, interimText].filter(Boolean).join(' ')).trim();
+            inp.value = combined || base;
+            try{ inp.focus(); }catch(_){}
+          }catch(_){}
+        };
+
+        rec.onerror = (e)=>{
+          if(my !== chatState.voice.opId) return;
+          const err = e && e.error ? String(e.error) : '';
+          if(chatState.voice.recording && (err === 'no-speech' || err === 'aborted')){
+            try{ rec.stop(); }catch(_){}
+            return;
+          }
+          try{ rec.stop(); }catch(_){}
+          setUI(false);
+        };
+
+        rec.onend = ()=>{
+          if(my !== chatState.voice.opId) return;
+          chatState.voice.speechRec = null;
+          if(chatState.voice.recording){
+            setTimeout(()=>{
+              try{
+                if(chatState.voice.recording){
+                  const ok = startSpeech();
+                  if(!ok) setUI(false);
+                }
+              }catch(_e){}
+            }, 250);
+          }else{
+            setUI(false);
+          }
+        };
+
+        setUI(true);
+        rec.start();
+        return true;
+      }catch(_e){
+        chatState.voice.speechRec = null;
+        setUI(false);
+        return false;
+      }
+    }
+
+    async function startFallbackMedia(){
+      const my = ++chatState.voice.opId;
+      if(!(navigator.mediaDevices && window.MediaRecorder)){
+        setUI(false);
+        return;
+      }
+      try{
+        await startMedia();
+        setUI(true);
+
+        chatState.voice.mediaRec.onstop = async ()=>{
+          const localChunks = (chatState.voice.chunks || []).slice();
+          const mime = (chatState.voice.mediaRec && chatState.voice.mediaRec.mimeType) ? chatState.voice.mediaRec.mimeType : '';
+          setUI(false);
+          stopTracks();
+          if(my !== chatState.voice.opId) return;
+          try{
+            const blob = new Blob(localChunks, { type: mime || 'audio/webm' });
+            const text = await transcribe(blob, mime);
+            if(!text) return;
+            const prev = String(inp.value || '').trim();
+            inp.value = (prev ? (prev + ' ') : '') + text;
+            try{ inp.focus(); }catch(_){}
+          }catch(_e){}
+        };
+
+        chatState.voice.mediaRec.start(250);
+      }catch(_e){
+        setUI(false);
+        stopTracks();
+      }
+    }
+
+    async function stopAll(){
+      chatState.voice.opId++;
+      try{ if(chatState.voice.speechRec) chatState.voice.speechRec.stop(); }catch(_){}
+      chatState.voice.speechRec = null;
+      try{ if(chatState.voice.mediaRec && chatState.voice.mediaRec.state !== 'inactive') chatState.voice.mediaRec.stop(); }catch(_){}
+      chatState.voice.mediaRec = null;
+      stopTracks();
+      setUI(false);
+    }
+
+    btn.addEventListener('click', async ()=>{
+      try{
+        if(chatState.voice.recording){
+          await stopAll();
+          return;
+        }
+        // Prefer SpeechRecognition. If not available, record + transcribe.
+        const ok = startSpeech();
+        if(!ok){
+          await startFallbackMedia();
+        }
+      }catch(_e){
+        setUI(false);
+      }
+    });
+  }
+
+  function uniqById(arr){
+    const map = new Map();
+    (arr||[]).forEach(m=>{
+      if(!m || !m.id) return;
+      map.set(String(m.id), m);
+    });
+    return Array.from(map.values()).sort((a,b)=> String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+  }
+
+  function appendChatMessages(msgs){
+    const cur = Array.isArray(chatState.messages) ? chatState.messages : [];
+    chatState.messages = uniqById(cur.concat(Array.isArray(msgs)?msgs:[])).slice(-200);
+    renderChat();
+  }
+
+  function renderChat(){
+    const wrap = byId('otdChatWrapAcc');
+    if (!wrap || view !== 'chat') return;
+
+    // active thread view
+    if (chatState.active){
+      const th = chatState.active;
+      const who = String(th.counterpartEmail || th.clientEmail || th.accountantEmail || '');
+      const meEmail = String(th.meEmail || '');
+      const msgs = Array.isArray(chatState.messages) ? chatState.messages : [];
+      wrap.innerHTML = `
+        <div class="otdAccChatCard">
+          <div class="otdAccChatView">
+            <div class="otdAccChatTop">
+              <button class="back" id="otdAccChatBack" type="button">←</button>
+              <div class="who">${esc(who)}</div>
+              <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+                <span class="otdAccChatPill" title="${esc('unread')}">${Math.max(0, Number(th.unreadCount||0)) || ''}</span>
+              </div>
+            </div>
+            <div class="otdAccChatMsgs" id="otdAccChatMsgs">
+              ${msgs.length ? msgs.map(m=>{
+                const mine = (normalizeEmail(m.fromEmail||'') === normalizeEmail(meEmail));
+                const txt = String(m.text || '');
+                const dt = fmtDate(m.createdAt);
+                const orig = m.originalText ? String(m.originalText) : '';
+                return `
+                  <div class="otdAccChatMsg ${mine?'me':''}">
+                    <div class="txt">${esc(txt)}</div>
+                    <div class="meta"><span>${esc(dt)}</span><span>${mine?'me':'them'}</span></div>
+                    ${orig ? `<div class="orig">${esc(TT('client.chat.original', null, 'Oryginał'))}: ${esc(orig)}</div>` : ``}
+                  </div>
+                `;
+              }).join('') : `<div class="otdNotifItem" style="cursor:default"><div class="m">${esc(TT('client.chat.loading', null, 'Ładowanie…'))}</div></div>`}
+            </div>
+            <div class="otdAccChatComposer">
+              <button class="otdAccChatIconBtn" id="otdAccChatMic" data-i18n-title="client.chat.mic" title="${esc(TT('client.chat.mic', null, 'Mikrofon'))}">🎤</button>
+              <textarea id="otdAccChatInput" data-i18n-ph="client.chat.placeholder" placeholder="${esc(TT('client.chat.placeholder', null, 'Napisz wiadomość…'))}"></textarea>
+              <label class="otdAccChatToggle" title="${esc(TT('client.chat.translate_hint', null, 'Tłumacz na polski'))}">
+                <input id="otdAccChatTranslatePl" type="checkbox" checked />
+                <span>${esc(TT('client.chat.translate_pl', null, 'PL'))}</span>
+              </label>
+              <button class="otdAccChatIconBtn" id="otdAccChatSend" data-i18n-title="client.chat.send" title="${esc(TT('client.chat.send', null, 'Wyślij'))}">➤</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const msgsEl = byId('otdAccChatMsgs');
+      if (msgsEl){
+        try{ msgsEl.scrollTop = msgsEl.scrollHeight; }catch(_){}
+      }
+
+      byId('otdAccChatBack')?.addEventListener('click', async ()=>{
+        chatState.active = null;
+        chatState.messages = [];
+        stopChatStream();
+        await pull(); // refresh threads + unread
+      });
+
+      const inp = byId('otdAccChatInput');
+      const mic = byId('otdAccChatMic');
+      const send = byId('otdAccChatSend');
+
+      wireChatVoice(mic, inp);
+
+      async function doSend(){
+        const t = chatState.active;
+        if (!t) return;
+        const text = String(inp.value || '').trim();
+        if (!text) return;
+        inp.value = '';
+        const translateToPl = !!byId('otdAccChatTranslatePl')?.checked;
+        try{
+          const r = await fetch(CHAT_API_SEND, {
+            method:'POST',
+            credentials:'include',
+            headers:{ 'Content-Type':'application/json' },
+            body: JSON.stringify({ accountantEmail: t.accountantEmail, clientEmail: t.clientEmail, text, translateToPl })
+          });
+          const j = await r.json().catch(()=>({}));
+          if(!r.ok || !j || j.success !== true){
+            showToast(TT('client.chat.error_send', null, 'Nie udało się wysłać.'));
+            return;
+          }
+          if(j.message) appendChatMessages([j.message]);
+          // refresh threads & badges
+          await pullCountsOnly();
+        }catch(_){
+          showToast(TT('client.chat.error_send', null, 'Nie udało się wysłać.'));
+        }
+      }
+
+      send?.addEventListener('click', doSend);
+      inp?.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)){
+          e.preventDefault();
+          doSend();
+        }
+      });
+
+      return;
+    }
+
+    // threads list view
+    const th = Array.isArray(chatState.threads) ? chatState.threads : [];
+    const empty = !th.length;
+    wrap.innerHTML = `
+      <div class="otdAccChatCard">
+        <div class="otdAccChatThreads">
+          ${empty ? `<div class="otdNotifItem" style="cursor:default"><div class="m">${esc(TT('client.chat.threads_empty', null, 'Brak czatów.'))}</div></div>` : ''}
+          ${th.map(t=>{
+            const who = String(t.counterpartEmail || t.clientEmail || t.accountantEmail || '');
+            const last = t.lastMessageText ? String(t.lastMessageText) : '';
+            const dt = fmtDate(t.lastMessageAt);
+            const uc = Math.max(0, Number(t.unreadCount||0));
+            return `
+              <div class="otdAccChatThread" data-thread="${esc(t.id)}">
+                <div style="min-width:0">
+                  <div class="t">${esc(who)}</div>
+                  <div class="s">${esc(last || TT('client.chat.loading', null, 'Ładowanie…'))}</div>
+                </div>
+                <div class="r">
+                  ${uc ? `<span class="otdAccChatPill">${uc}</span>` : ``}
+                  <span style="color:rgba(234,255,223,.6);font-size:10px">${esc(dt)}</span>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+
+    wrap.querySelectorAll('.otdAccChatThread[data-thread]').forEach(el=>{
+      el.addEventListener('click', async ()=>{
+        const id = el.getAttribute('data-thread') || '';
+        await openChatByThreadId(id);
+      });
+    });
+  }
+
+  async function openChatByThreadId(threadId){
+    ensureUi();
+    view = 'chat';
+    // make sure chat UI is visible
+    const list = byId('otdNotifListAcc');
+    const chat = byId('otdChatWrapAcc');
+    if (list) list.style.display = 'none';
+    if (chat) chat.style.display = 'block';
+    byId('otdNotifShowNewAcc')?.classList.remove('active');
+    byId('otdNotifShowAllAcc')?.classList.remove('active');
+    byId('otdNotifShowChatAcc')?.classList.add('active');
+
+    const threads = await fetchChatThreads();
+    const t = threads.find(x=> String(x.id||'') === String(threadId||''));
+    if(!t){
+      chatState.active = null;
+      chatState.messages = [];
+      renderChat();
+      return;
+    }
+    await openChatThread(t);
+  }
+
+  async function openChatThread(thread){
+    // Determine counterpart and me
+    const meEmail = (me && me.email) ? String(me.email) : '';
+    const isMeAccountant = meEmail ? (normalizeEmail(thread.accountantEmail||'') === normalizeEmail(meEmail)) : true;
+    const counterpart = isMeAccountant ? thread.clientEmail : thread.accountantEmail;
+
+    chatState.active = Object.assign({}, thread, {
+      meEmail,
+      counterpartEmail: counterpart
+    });
+
+    renderChat();
+    stopChatStream();
+
+    try{
+      const msgs = await chatFetchHistory(thread);
+      chatState.messages = msgs.slice(-200);
+      renderChat();
+    }catch(_){
+      const wrap = byId('otdChatWrapAcc');
+      if (wrap) wrap.innerHTML = `<div class="otdNotifItem" style="cursor:default"><div class="m">${esc(TT('client.chat.error_load', null, 'Nie udało się załadować czatu.'))}</div></div>`;
+    }
+
+    // mark read + refresh counts
+    try{ await chatMarkRead(thread); }catch(_){}
+    await pullCountsOnly();
+
+    // Live: SSE stream with polling fallback
+    const qs = new URLSearchParams({
+      accountantEmail: String(thread.accountantEmail || ''),
+      clientEmail: String(thread.clientEmail || ''),
+      since: String(Date.now() - 2000)
+    });
+
+    try{
+      const es = new EventSource(`${CHAT_API_STREAM}?${qs.toString()}`);
+      chatState.eventSource = es;
+
+      es.onmessage = (ev)=>{
+        try{
+          const data = JSON.parse(ev.data || '{}');
+          if(data && data.type === 'message' && data.message){
+            appendChatMessages([data.message]);
+            // in-page heads-up
+            try{
+              const my = (me && me.email) ? String(me.email) : '';
+              if(document.hidden && normalizeEmail(data.message.fromEmail||'') !== normalizeEmail(my) && window.Notification && Notification.permission === 'granted'){
+                new Notification('OneTapDay', { body: String(data.message.text||'').slice(0,120) });
+              }
+            }catch(_){}
+          }
+        }catch(_){}
+      };
+      es.onerror = ()=>{
+        try{ es.close(); }catch(_){}
+        if(chatState.eventSource === es) chatState.eventSource = null;
+        chatState.pollTimer = setInterval(async ()=>{
+          try{
+            if(!chatState.active) return;
+            const msgs = await chatFetchHistory(chatState.active);
+            appendChatMessages(msgs.slice(-60));
+            await pullCountsOnly();
+          }catch(_){}
+        }, 3000);
+      };
+    }catch(_e){
+      chatState.pollTimer = setInterval(async ()=>{
+        try{
+          if(!chatState.active) return;
+          const msgs = await chatFetchHistory(chatState.active);
+          appendChatMessages(msgs.slice(-60));
+          await pullCountsOnly();
+        }catch(_){}
+      }, 3000);
+    }
+  }
+
+  async function pullCountsOnly(){
+    const [unreadNotifs, chatU] = await Promise.all([fetchUnreadNotifs(), fetchChatUnread()]);
+    notifUnreadCount = Array.isArray(unreadNotifs) ? unreadNotifs.length : 0;
+    chatUnreadCount = Number(chatU||0) || 0;
+    updateBadge();
+  }
+
+  async function pull(){
+    ensureUi();
+
+    // Always refresh counts for badge
+    const unreadNotifs = await fetchUnreadNotifs();
+    notifUnreadCount = Array.isArray(unreadNotifs) ? unreadNotifs.length : 0;
+    chatUnreadCount = await fetchChatUnread();
+    updateBadge();
+
+    if (view === 'chat'){
+      // threads view when chat not open, otherwise keep current
+      await fetchChatThreads();
+      renderChat();
+      return;
+    }
+
+    if (view === 'unread'){
+      renderNotifs(unreadNotifs, 'unread');
+    } else {
+      const all = await fetchAllNotifs();
+      renderNotifs(all, 'all');
     }
 
     // toast for unseen (from unread only)
     try{
       const seen = new Set(getSeen());
-      const newly = unread.filter(n=> n && n.id && !seen.has(n.id));
+      const newly = (unreadNotifs||[]).filter(n=> n && n.id && !seen.has(n.id));
       if (newly.length){
-        showToast(newly[0].message || TT('accountant.notifs.new', null, 'Новое уведомление'));
+        showToast(newly[0].message || TT('accountant.notifs.new', null, 'Nowe powiadomienie'));
         newly.forEach(n=> seen.add(n.id));
         setSeen(Array.from(seen));
       }
@@ -321,7 +989,6 @@ const _otdNotif = (function(){
 
   return { start, pull };
 })();
-
 
 
   let me = null;
@@ -373,9 +1040,9 @@ const _otdNotif = (function(){
           <td>${title}</td>
           <td>${pill(c.status)}</td>
           <td>
-            <button class="smallBtn primary" data-act="select" data-email="${c.clientEmail}">Открыть</button>
-            <button class="smallBtn" data-act="request" data-email="${c.clientEmail}" ${canReq?'':'disabled'}>Запросить</button>
-            <button class="smallBtn danger" data-act="remove" data-email="${c.clientEmail}">Убрать</button>
+            <button class="smallBtn primary" data-act="select" data-email="${c.clientEmail}">${TT('accountant.btn_open', null, 'Otwórz')}</button>
+            <button class="smallBtn" data-act="request" data-email="${c.clientEmail}" ${canReq?'':'disabled'}>${TT('accountant.btn_invite', null, 'Zaproś')}</button>
+            <button class="smallBtn danger" data-act="remove" data-email="${c.clientEmail}">${TT('accountant.btn_remove', null, 'Usuń')}</button>
           </td>
         </tr>
       `;
@@ -408,7 +1075,7 @@ const _otdNotif = (function(){
           return;
         }
         if (act === 'remove'){
-          if (!confirm('Убрать клиента из списка?')) return;
+          if (!confirm(TT('accountant.confirm_remove_client', null, 'Usunąć klienta z listy?'))) return;
           try {
             await jpost('/api/accountant/clients/remove', { clientEmail: email });
             await loadClients();
@@ -879,56 +1546,57 @@ function selectDocsSmartFolder(){
     const wrap = document.createElement('div');
     wrap.id = 'otdDocsModalBack';
     wrap.style.cssText = 'position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);padding:14px;';
-    wrap.innerHTML = `
-      <style>
-        #otdDocsModalBack select option{ color:#111; background:#fff; }
-      </style>
-      <div style="width:min(900px,96vw);max-height:90vh;overflow:auto;border-radius:18px;background:rgba(18,22,25,.92);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 80px rgba(0,0,0,.55);padding:14px">
-        <div class="row between" style="align-items:flex-start;gap:10px;flex-wrap:wrap">
-          <div>
-            <div style="font-weight:900;font-size:18px">Документы клиента</div>
-            <div class="muted small" id="otdDocsClientLabel" style="margin-top:2px"></div>
+        wrap.innerHTML = `
+      <div id="otdAccDocs" style="position:fixed;inset:0;z-index:99999">
+        <div style="position:absolute;inset:0;background:rgba(0,0,0,.55)"></div>
+        <div id="otdAccDocsCard" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(900px,96vw);max-height:90vh;overflow:auto;background:rgba(0,0,0,.55);border-radius:18px;border:1px solid rgba(71,181,0,.20);backdrop-filter:blur(14px);box-shadow:0 20px 60px rgba(0,0,0,.55);padding:14px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+            <div>
+              <div style="font-weight:900;font-size:18px;line-height:1.1" data-i18n-html="accountant.docs_modal_title">${esc(TT('accountant.docs_modal_title', null, 'Dokumenty klienta'))}</div>
+              <div class="muted small" id="otdDocsClientLabel" style="margin-top:4px"></div>
+            </div>
+            <button class="btn ghost" id="otdDocsClose" type="button" data-i18n-html="accountant.docs_close">${esc(TT('accountant.docs_close', null, 'Zamknij'))}</button>
           </div>
-          <button class="btn ghost" id="otdDocsClose" type="button">Закрыть</button>
-        </div>
-<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
-  <div style="min-width:160px">
-    <div class="muted small" style="margin-bottom:6px">Месяц</div>
-    <select id="otdDocsMonthSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
-  </div>
-  <div style="flex:1;min-width:240px">
-    <div class="muted small" style="margin-bottom:6px">Раздел</div>
-    <div id="otdDocsCatBtns" style="display:flex;gap:8px;flex-wrap:wrap"></div>
-  </div>
-  <button class="btn ghost" id="otdDocsFoldersToggle" type="button">Папки</button>
-  <div class="muted small" id="otdDocsStatus" style="opacity:.85"></div>
-</div>
 
-<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
-  <div style="flex:1;min-width:260px">
-    <div class="muted small" style="margin-bottom:6px">Поиск</div>
-    <input id="otdDocsSearch" type="text" placeholder="Поиск по имени файла…" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff" />
-  </div>
-  <button class="btn ghost" id="otdDocsClearSearch" type="button">Очистить</button>
-  <button class="btn secondary" id="otdDocsExportMonth" type="button">Экспорт пакета месяца</button>
-</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
+            <div style="min-width:160px">
+              <div class="muted small" style="margin-bottom:6px" data-i18n-html="accountant.docs_month">${esc(TT('accountant.docs_month', null, 'Miesiąc'))}</div>
+              <select id="otdDocsMonthSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
+            </div>
+            <div style="flex:1;min-width:240px">
+              <div class="muted small" style="margin-bottom:6px" data-i18n-html="accountant.docs_section">${esc(TT('accountant.docs_section', null, 'Sekcja'))}</div>
+              <div id="otdDocsCatBtns" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+            </div>
+            <button class="btn ghost" id="otdDocsFoldersToggle" type="button" data-i18n-html="accountant.docs_folders">${esc(TT('accountant.docs_folders', null, 'Foldery'))}</button>
+            <div class="muted small" id="otdDocsStatus" style="opacity:.85"></div>
+          </div>
 
-<div id="otdDocsFoldersPanel" style="display:none;margin-top:12px">
-  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-    <div style="min-width:240px;flex:1">
-      <div class="muted small" style="margin-bottom:6px">Папка</div>
-      <select id="otdDocsFolderSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
-    </div>
-  </div>
-</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+            <div style="flex:1;min-width:260px">
+              <div class="muted small" style="margin-bottom:6px" data-i18n-html="accountant.docs_search">${esc(TT('accountant.docs_search', null, 'Szukaj'))}</div>
+              <input id="otdDocsSearch" type="text" data-i18n-ph="accountant.docs_search_ph" placeholder="${esc(TT('accountant.docs_search_ph', null, 'Szukaj po nazwie pliku…'))}"
+                style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff" />
+            </div>
+            <button class="btn ghost" id="otdDocsClearSearch" type="button" data-i18n-html="accountant.docs_clear">${esc(TT('accountant.docs_clear', null, 'Wyczyść'))}</button>
+            <button class="btn secondary" id="otdDocsExportMonth" type="button" data-i18n-html="accountant.docs_export_month">${esc(TT('accountant.docs_export_month', null, 'Eksport pakietu miesiąca'))}</button>
+          </div>
 
-        <div style="margin-top:12px">
-          <div style="font-weight:800;margin-bottom:8px">Файлы</div>
-          <div id="otdDocsFiles" style="display:flex;flex-direction:column;gap:8px"></div>
+          <div id="otdDocsFoldersPanel" style="display:none;margin-top:12px">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+              <div style="min-width:240px;flex:1">
+                <div class="muted small" style="margin-bottom:6px" data-i18n-html="accountant.docs_folder">${esc(TT('accountant.docs_folder', null, 'Folder'))}</div>
+                <select id="otdDocsFolderSel" style="width:100%;padding:10px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#fff"></select>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:12px">
+            <div style="font-weight:800;margin-bottom:8px" data-i18n-html="accountant.docs_files">${esc(TT('accountant.docs_files', null, 'Pliki'))}</div>
+            <div id="otdDocsFiles" style="display:flex;flex-direction:column;gap:8px"></div>
+          </div>
         </div>
       </div>
-    `;
-    document.body.appendChild(wrap);
+    `;    document.body.appendChild(wrap);
     docsModal = wrap;
     wrap.addEventListener('click', (e)=>{ if (e.target === wrap) closeDocsModal(); });
     wrap.querySelector('#otdDocsClose')?.addEventListener('click', closeDocsModal);
@@ -1030,7 +1698,7 @@ function selectDocsSmartFolder(){
               <div class="muted small" style="margin-top:4px">${esc(dt)} ${size?('• '+esc(size)):""}</div>
             </div>
             <div style="display:flex;gap:8px;align-items:center">
-              <a class="btn ghost small" href="${esc(f.fileUrl||'#')}" target="_blank" rel="noopener">Открыть</a>
+              <a class="btn ghost small" href="${esc(f.fileUrl||'#')}" target="_blank" rel="noopener">${esc(TT('accountant.btn_open', null, 'Otwórz'))}</a>
             </div>
           </div>
         </div>
