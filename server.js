@@ -3270,6 +3270,406 @@ app.post('/api/ai/cash/parse', async (req, res) => {
 });
 
 
+// === AI: Bank statements (transactions) parsing ===
+function _aiB64ToBuffer(dataUrlOrB64){
+  let s = (typeof dataUrlOrB64 === 'string') ? dataUrlOrB64.trim() : '';
+  if(!s) return null;
+  if(s.startsWith('data:')){
+    const comma = s.indexOf(',');
+    if(comma !== -1) s = s.slice(comma + 1);
+  }
+  // tolerate URL-safe base64
+  s = s.replace(/\s+/g, '').replace(/-/g,'+').replace(/_/g,'/');
+  try{ return Buffer.from(s, 'base64'); }catch(e){ return null; }
+}
+
+function _aiCsvGuessSep(line){
+  const l = String(line || '');
+  const c1 = (l.split(';').length - 1);
+  const c2 = (l.split(',').length - 1);
+  const c3 = (l.split('\t').length - 1);
+  if(c3 >= c1 && c3 >= c2) return '\t';
+  return (c1 >= c2) ? ';' : ',';
+}
+
+function _aiCsvParse(text, maxRows){
+  const t = String(text || '').replace(/^\uFEFF/, '').replace(/\r/g, '');
+  const lines = t.split('\n').filter(l => l.trim());
+  if(!lines.length) return [];
+  const sep = _aiCsvGuessSep(lines[0]);
+  const out = [];
+  const lim = Math.min(lines.length, Math.max(2, Number(maxRows || 1200)));
+
+  // CSV split with basic quotes support
+  const split = (line)=>{
+    const s = String(line || '');
+    const cells = [];
+    let cur = '';
+    let q = false;
+    for(let i=0;i<s.length;i++){
+      const ch = s[i];
+      if(ch === '"'){
+        // double-quote escape
+        if(q && s[i+1] === '"'){ cur += '"'; i++; continue; }
+        q = !q;
+        continue;
+      }
+      if(!q && ch === sep){
+        cells.push(cur);
+        cur = '';
+        continue;
+      }
+      cur += ch;
+    }
+    cells.push(cur);
+    return cells;
+  };
+
+  for(let i=0;i<lim;i++) out.push(split(lines[i]));
+  return out;
+}
+
+function _aiTableFromFileBuffer(buf, fileName, mime){
+  const name = String(fileName || '').toLowerCase();
+  const ext = (name.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase();
+  const m = String(mime || '').toLowerCase();
+
+  // XLSX/XLS
+  if(ext === '.xlsx' || ext === '.xls' || m.includes('spreadsheet') || m.includes('excel')){
+    const XLSX = require('xlsx');
+    const wb = XLSX.read(buf, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const table = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    return Array.isArray(table) ? table : [];
+  }
+
+  // CSV/TXT
+  const text = buf.toString('utf8');
+  return _aiCsvParse(text, 2000);
+}
+
+function _aiPickHeaderRowIndex(table){
+  const rows = Array.isArray(table) ? table : [];
+  const maxScan = Math.min(rows.length, 25);
+  let bestIdx = 0;
+  let bestScore = -1;
+
+  const kws = [
+    'data','date','data ksi','księg','operac','zaksi',
+    'kwota','amount','net','brutto','debet','kredyt',
+    'opis','tytu','description','details','nazwa',
+    'kontrah','counterparty','nadaw','odbior',
+    'waluta','currency',
+    'saldo','balance',
+    'id','transakc'
+  ];
+
+  for(let i=0;i<maxScan;i++){
+    const r = rows[i];
+    if(!Array.isArray(r)) continue;
+    const nonEmpty = r.filter(x => String(x || '').trim()).length;
+    if(nonEmpty < 2) continue;
+    const joined = r.map(x => String(x || '').trim().toLowerCase()).join(' | ');
+    let score = nonEmpty;
+    kws.forEach(k => { if(joined.includes(k)) score += 4; });
+    // header rows usually have fewer long numbers
+    const digits = (joined.match(/\d/g) || []).length;
+    if(digits > 40) score -= 6;
+    if(score > bestScore){ bestScore = score; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+function _aiNormHeader(row){
+  const r = Array.isArray(row) ? row : [];
+  return r.map((x)=> String(x || '').trim()).map((x)=> x.length > 80 ? x.slice(0,80) : x);
+}
+
+function _aiIndexFromAnswer(ans, header){
+  const h = _aiNormHeader(header);
+  const n = h.length;
+  const toIdx = (v)=>{
+    if(v == null) return -1;
+    if(typeof v === 'number' && isFinite(v)) return (v >= 0 && v < n) ? Math.floor(v) : -1;
+    const s = String(v || '').trim();
+    if(!s) return -1;
+    // numeric string
+    const m = s.match(/^-?\d+$/);
+    if(m){
+      const k = Number(s);
+      return (k >= 0 && k < n) ? k : -1;
+    }
+    // header name
+    const low = s.toLowerCase();
+    for(let i=0;i<n;i++){
+      if(String(h[i]||'').toLowerCase() === low) return i;
+    }
+    for(let i=0;i<n;i++){
+      if(String(h[i]||'').toLowerCase().includes(low)) return i;
+    }
+    return -1;
+  };
+
+  return {
+    dateIdx: toIdx(ans && (ans.dateIdx ?? ans.dateCol ?? ans.date)),
+    amountIdx: toIdx(ans && (ans.amountIdx ?? ans.amountCol ?? ans.amount)),
+    descIdx: toIdx(ans && (ans.descIdx ?? ans.descriptionIdx ?? ans.descCol ?? ans.description)),
+    cpIdx: toIdx(ans && (ans.cpIdx ?? ans.counterpartyIdx ?? ans.cpCol ?? ans.counterparty)),
+    currencyIdx: toIdx(ans && (ans.currencyIdx ?? ans.currencyCol ?? ans.currency)),
+    balanceIdx: toIdx(ans && (ans.balanceIdx ?? ans.balanceCol ?? ans.balance)),
+    accountIdx: toIdx(ans && (ans.accountIdx ?? ans.accountCol ?? ans.account)),
+    txIdIdx: toIdx(ans && (ans.txIdIdx ?? ans.txIdCol ?? ans.transactionIdIdx ?? ans.transactionId))
+  };
+}
+
+async function _aiDetectTxMapping(header, sampleRows){
+  const h = _aiNormHeader(header);
+  const cols = h.map((c,i)=> `${i}: ${c}`).join('\n');
+  const sample = (Array.isArray(sampleRows) ? sampleRows : []).slice(0, 6).map(r=>{
+    const cells = Array.isArray(r) ? r : [];
+    return h.map((_,i)=> String(cells[i] ?? '').trim()).join('\t');
+  }).join('\n');
+
+  const sys = 'You are a strict JSON generator. Output JSON only. No markdown, no extra text.';
+  const dev = [
+    'We need to import a bank statement into OneTapDay.',
+    'Given the columns (with 0-based indices) and a few sample rows, return a JSON mapping of column indices.',
+    '',
+    'Return JSON exactly in this shape (use -1 if column not present):',
+    '{"dateIdx":0,"amountIdx":1,"descIdx":2,"cpIdx":3,"currencyIdx":4,"balanceIdx":5,"accountIdx":6,"txIdIdx":7}',
+    '',
+    'Rules:',
+    '- dateIdx: booking/operation date.',
+    '- amountIdx: transaction amount (can be signed or absolute).',
+    '- descIdx: title/description/statement details.',
+    '- cpIdx: counterparty/merchant/client/sender/receiver.',
+    '- currencyIdx: currency like PLN/EUR (optional).',
+    '- balanceIdx: balance after transaction (optional).',
+    '- accountIdx: account/card identifier (optional).',
+    '- txIdIdx: bank transaction id (optional).',
+    '',
+    'Columns:',
+    cols,
+    '',
+    'Sample rows (tab-separated, same column order):',
+    sample
+  ].join('\n');
+
+  const messages = [
+    { role:'system', content:[{ type:'input_text', text: sys }] },
+    { role:'developer', content:[{ type:'input_text', text: dev.slice(0, 12000) }] }
+  ];
+
+  const result = await _callOpenAI({
+    model: OTD_AI_MODEL_DEFAULT,
+    messages,
+    maxOutputTokens: Math.min(220, OTD_AI_MAX_OUTPUT_TOKENS)
+  });
+
+  const parsed = _aiExtractJson(result.text);
+  return parsed && typeof parsed === 'object' ? parsed : null;
+}
+
+
+app.post('/api/ai/tx/parse_file', async (req, res) => {
+  const user = getUserBySession(req);
+  if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  if (!(process.env.OTD_AI_ENABLED === '1' || process.env.OTD_AI_ENABLED === 'true')) {
+    return res.status(503).json({ success: false, error: 'AI is disabled' });
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
+  }
+
+  const who = String(user.email || user.id || user.username || user.login || 'user');
+  if (!_aiAllow(who)) {
+    return res.status(429).json({ success: false, error: 'AI rate limit' });
+  }
+
+  const body = req.body || {};
+  const fileName = String(body.fileName || body.name || 'statement').slice(0, 180);
+  const mime = String(body.mime || body.type || '').slice(0, 120);
+  const dataUrl = String(body.dataUrl || body.file || body.base64 || '').trim();
+
+  if(!dataUrl) return res.status(400).json({ success:false, error:'Missing file' });
+
+  const buf = _aiB64ToBuffer(dataUrl);
+  if(!buf || !buf.length) return res.status(400).json({ success:false, error:'Bad file encoding' });
+
+  // MVP safety
+  const MAX_BYTES = 6 * 1024 * 1024;
+  if(buf.length > MAX_BYTES){
+    return res.status(413).json({ success:false, error:'File too big for AI import (max 6MB)' });
+  }
+
+  try{
+    const table = _aiTableFromFileBuffer(buf, fileName, mime);
+    if(!Array.isArray(table) || table.length < 2){
+      return res.json({ success:true, rows: [] });
+    }
+
+    const headerIdx = _aiPickHeaderRowIndex(table);
+    const header = _aiNormHeader(table[headerIdx] || []);
+    const dataRows = table.slice(headerIdx + 1);
+
+    if(header.length < 2 || dataRows.length < 1){
+      return res.json({ success:true, rows: [] });
+    }
+
+    // Sample rows to help mapping
+    const sampleRows = dataRows.slice(0, 8);
+
+    const mappingAns = await _aiDetectTxMapping(header, sampleRows);
+    const map = _aiIndexFromAnswer(mappingAns, header);
+
+    if(map.dateIdx < 0 || map.amountIdx < 0){
+      return res.json({ success:true, rows: [] });
+    }
+
+    const rows = [];
+    const lim = Math.min(dataRows.length, 5000);
+    for(let i=0;i<lim;i++){
+      const r = dataRows[i];
+      if(!Array.isArray(r)) continue;
+      const date = String((r[map.dateIdx] ?? '')).trim();
+      const amtRaw = (r[map.amountIdx] ?? '');
+      const amt = _aiClampNum(amtRaw, -1000000000, 1000000000);
+      if(!date || amt == null || !isFinite(amt) || Math.abs(amt) < 0.00001) continue;
+
+      const desc = (map.descIdx >= 0) ? String((r[map.descIdx] ?? '')).trim() : '';
+      const cp = (map.cpIdx >= 0) ? String((r[map.cpIdx] ?? '')).trim() : '';
+      const cur = (map.currencyIdx >= 0) ? String((r[map.currencyIdx] ?? '')).trim().toUpperCase() : '';
+      const bal = (map.balanceIdx >= 0) ? String((r[map.balanceIdx] ?? '')).trim() : '';
+      const acc = (map.accountIdx >= 0) ? String((r[map.accountIdx] ?? '')).trim() : '';
+      const txid = (map.txIdIdx >= 0) ? String((r[map.txIdIdx] ?? '')).trim() : '';
+
+      rows.push({
+        'Data': date,
+        'Kwota': amt,
+        'Waluta': cur || 'PLN',
+        'Opis': desc,
+        'Kontrahent': cp,
+        'Saldo po operacji': bal,
+        'ID konta': acc,
+        'ID transakcji': txid,
+        '_src': 'ai_file'
+      });
+    }
+
+    return res.json({ success:true, rows });
+  }catch(e){
+    return res.status(502).json({
+      success:false,
+      error: (e && e.message) ? String(e.message) : 'AI parse error'
+    });
+  }
+});
+
+
+app.post('/api/ai/tx/parse_images', async (req, res) => {
+  const user = getUserBySession(req);
+  if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  if (!(process.env.OTD_AI_ENABLED === '1' || process.env.OTD_AI_ENABLED === 'true')) {
+    return res.status(503).json({ success: false, error: 'AI is disabled' });
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ success: false, error: 'AI not connected (missing OPENAI_API_KEY)' });
+  }
+
+  const who = String(user.email || user.id || user.username || user.login || 'user');
+  if (!_aiAllow(who)) {
+    return res.status(429).json({ success: false, error: 'AI rate limit' });
+  }
+
+  const body = req.body || {};
+  const images = Array.isArray(body.images) ? body.images : [];
+  if(!images.length) return res.status(400).json({ success:false, error:'Missing images' });
+
+  const MAX_IMAGES = 3;
+  const MAX_BYTES = 4 * 1024 * 1024;
+  const safe = [];
+
+  for(const img of images.slice(0, MAX_IMAGES)){
+    const buf = _aiB64ToBuffer(img);
+    if(!buf || !buf.length) continue;
+    if(buf.length > MAX_BYTES) continue;
+    // Keep original data URL for OpenAI
+    safe.push(String(img || '').trim());
+  }
+
+  if(!safe.length) return res.status(400).json({ success:false, error:'Images too big or invalid' });
+
+  const sys = 'You are a strict JSON generator. Output JSON only. No markdown, no extra text.';
+  const dev = [
+    'Extract bank transactions from the provided banking screenshots.',
+    'Return JSON exactly in this shape:',
+    '{"rows":[{"Data":"","Kwota":0.0,"Waluta":"PLN","Opis":"","Kontrahent":"","Saldo po operacji":"","ID transakcji":"","ID konta":""}]}' ,
+    '',
+    'Rules:',
+    '- rows: list every visible transaction line you can confidently read.',
+    '- Data: date string (keep original if unsure).',
+    '- Kwota: signed number (expenses negative if visible; otherwise keep sign as shown).',
+    '- Waluta: PLN/EUR if visible, else PLN.',
+    '- Opis / Kontrahent: short text from the line.',
+    '- If you cannot read a field, keep it empty string, but still include the transaction if date+amount are clear.',
+    '- Output JSON only.'
+  ].join('\n');
+
+  const userContent = [{ type:'input_text', text: 'Parse these screenshots.' }];
+  safe.forEach(u => userContent.push({ type:'input_image', image_url: u }));
+
+  const messages = [
+    { role:'system', content:[{ type:'input_text', text: sys }] },
+    { role:'developer', content:[{ type:'input_text', text: dev.slice(0, 12000) }] },
+    { role:'user', content: userContent }
+  ];
+
+  try{
+    const result = await _callOpenAI({
+      model: OTD_AI_MODEL_DEFAULT,
+      messages,
+      maxOutputTokens: Math.min(900, OTD_AI_MAX_OUTPUT_TOKENS)
+    });
+
+    const parsed = _aiExtractJson(result.text);
+    let rows = (parsed && Array.isArray(parsed.rows)) ? parsed.rows : [];
+    rows = rows.slice(0, 500).map(r=>{
+      const date = String((r && (r.Data || r.date)) || '').trim();
+      const amt = _aiClampNum(r && (r.Kwota ?? r.amount), -1000000000, 1000000000);
+      const cur = String((r && (r.Waluta || r.currency)) || 'PLN').trim().toUpperCase();
+      const desc = String((r && (r.Opis || r.description)) || '').trim();
+      const cp = String((r && (r.Kontrahent || r.counterparty)) || '').trim();
+      const bal = String((r && (r['Saldo po operacji'] || r.balance)) || '').trim();
+      const txid = String((r && (r['ID transakcji'] || r.txId || r.transactionId)) || '').trim();
+      const acc = String((r && (r['ID konta'] || r.accountId || r.account)) || '').trim();
+      return {
+        'Data': date,
+        'Kwota': amt,
+        'Waluta': cur || 'PLN',
+        'Opis': desc,
+        'Kontrahent': cp,
+        'Saldo po operacji': bal,
+        'ID transakcji': txid,
+        'ID konta': acc,
+        '_src': 'ai_image'
+      };
+    }).filter(r=> r && r.Data && r.Kwota != null && isFinite(r.Kwota));
+
+    return res.json({ success:true, rows, model: result.model, usage: result.usage });
+  }catch(e){
+    return res.status(502).json({
+      success:false,
+      error: (e && e.message) ? String(e.message) : 'OpenAI error',
+      openai_status: e && e.status ? e.status : undefined
+    });
+  }
+});
+
+
 // AI chat state sync (cross-device).
 // Client stores locally for speed, server keeps an authoritative copy for other devices.
 app.get('/api/ai/state', (req, res) => {

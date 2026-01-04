@@ -2409,30 +2409,108 @@ async function safeImportFile(kindLabel, importerFn, file){
   }
 }
 
+// === AI fallback for statements import (server-side parsing via ChatGPT) ===
+function _otdReadAsDataURL(file){
+  return new Promise((resolve, reject)=>{
+    try{
+      const fr = new FileReader();
+      fr.onload = ()=> resolve(String(fr.result || ''));
+      fr.onerror = ()=> reject(fr.error || new Error('File read error'));
+      fr.readAsDataURL(file);
+    }catch(e){
+      reject(e);
+    }
+  });
+}
+
+async function _aiParseTxByFile(file){
+  const MAX_MB = 5;
+  const MAX_BYTES = MAX_MB * 1024 * 1024;
+  if(file && file.size && file.size > MAX_BYTES){
+    alert('Файл слишком большой для AI-импорта (' + MAX_MB + 'MB). Экспортируйте CSV или импортируйте частями.');
+    return [];
+  }
+  const dataUrl = await _otdReadAsDataURL(file);
+  const r = await fetch(`${API_BASE}/ai/tx/parse_file`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file?.name || '', mime: file?.type || '', dataUrl })
+  });
+  let j = null;
+  try{ j = await r.json(); }catch(_){ j = null; }
+  if(!r.ok || !j || !j.success){
+    throw new Error((j && j.error) ? String(j.error) : 'AI parse failed');
+  }
+  return Array.isArray(j.rows) ? j.rows : [];
+}
+
+async function _aiParseTxByImages(files){
+  const list = Array.isArray(files) ? files.slice(0, 3) : [];
+  if(!list.length) return [];
+  const images = [];
+  for(const f of list){
+    if(!f) continue;
+    images.push(await _otdReadAsDataURL(f));
+  }
+  if(!images.length) return [];
+
+  const r = await fetch(`${API_BASE}/ai/tx/parse_images`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ images })
+  });
+  let j = null;
+  try{ j = await r.json(); }catch(_){ j = null; }
+  if(!r.ok || !j || !j.success){
+    throw new Error((j && j.error) ? String(j.error) : 'AI parse failed');
+  }
+  return Array.isArray(j.rows) ? j.rows : [];
+}
+
 $id('txFile')?.addEventListener('change', async e=>{
   const f = e.target.files[0];
   if(!f) return;
 
-  // Защищённый импорт выписки
-  const newRows = await safeImportFile("выписка", importTxByFile, f);
+  // Импорт выписки: сначала локально, потом (если не получилось) через AI на сервере
+  let newRows = await safeImportFile("выписка", importTxByFile, f);
+  let usedAI = false;
 
   if(!newRows.length){
-alert(
-  "Не могу распознать файл.\n\n" +
-  "Как это работает сейчас:\n" +
-  "- если это CSV, приложение может спросить номера колонок: дата, сумма, описание, контрагент;\n" +
-  "- если таких окон не было, файл вообще не читается как таблица.\n\n" +
-  "Лучше всего сейчас работает простой CSV-экспорт из банка или Stripe.\n" +
-  "Если это уже CSV и ошибка повторяется – пришлите файл команде OneTapDay, формат добавим в импорт."
-);
-    e.target.value = "";
-    return;
+    try{
+      try{ toast?.('AI: распознаю выписку…'); }catch(_){ }
+      newRows = await _aiParseTxByFile(f);
+      usedAI = true;
+    }catch(err){
+      console.warn('AI parse_file failed', err);
+      alert(
+        "Не могу распознать выписку.\n\n" +
+        "Что лучше всего работает сейчас: CSV-экспорт из банка/Stripe.\n" +
+        "Если файла много или формат нестандартный – экспортируйте CSV или импортируйте частями."
+      );
+      e.target.value = "";
+      return;
+    }
   }
 
-  const normalized = normalizeImportedTxRows(newRows);
+  let normalized = normalizeImportedTxRows(newRows);
+
+  // Если локальный парсер что-то вернул, но нормализация дала пусто — пробуем AI один раз.
+  if(!normalized.length && !usedAI){
+    try{
+      try{ toast?.('AI: пробую распознать выписку…'); }catch(_){ }
+      const aiRows = await _aiParseTxByFile(f);
+      usedAI = true;
+      newRows = aiRows;
+      normalized = normalizeImportedTxRows(aiRows);
+    }catch(err){
+      console.warn('AI fallback failed', err);
+    }
+  }
 
   if(!normalized.length){
-    alert("Не могу распознать файл. Проверьте формат или выберите колонки вручную.");
+    alert("Не могу распознать выписку. Проверьте формат или попробуйте CSV.");
     e.target.value = "";
     return;
   }
@@ -2561,23 +2639,84 @@ if(typeof ensureTxIds === "function") ensureTxIds();
 
 
 
-  $id('txImage')?.addEventListener('change', async (e)=>{ 
+  $id('txImage')?.addEventListener('change', async (e)=>{
     const files = [...(e.target.files || [])];
     if(!files.length) return;
+
     try{
-      if(window.OTD_DocVault?.addFiles){
-        await window.OTD_DocVault.addFiles(files, { source:'image', type:'statement' });
-        try{ await window.OTD_DocVault.refresh?.(null); }catch(_){}
-        try{ window.appGoSection?.('docs'); }catch(_){}
-        try{ toast?.('Dodano do Dokumentów (OCR wyłączony)'); }catch(_){}
-      }else{
-        alert('Dokumenty: moduł DocVault nie jest gotowy.');
+      try{ toast?.('AI: распознаю операции со скриншота…'); }catch(_){ }
+      const aiRows = await _aiParseTxByImages(files);
+
+      if(!aiRows.length){
+        alert('Не удалось распознать операции на скриншоте. Попробуйте более чёткий скрин или импорт файлом (CSV/XLSX).');
+        return;
       }
+
+      const normalized = normalizeImportedTxRows(aiRows);
+      if(!normalized.length){
+        alert('Скрин распознан, но транзакции не найдены. Попробуйте другой скрин или импорт файлом.');
+        return;
+      }
+
+      if(typeof confirmTxImport === 'function'){
+        const ok = confirmTxImport(normalized);
+        if(!ok){
+          alert('Импорт отменён.');
+          return;
+        }
+      }
+
+      // привязка к счёту
+      if(typeof assignImportedTxToAccount === 'function'){
+        assignImportedTxToAccount(normalized);
+      }
+
+      // merge логика как в импорте файла
+      const existingTx = Array.isArray(tx) ? tx : [];
+      function _otdNormTxt(s){
+        return String(s||'').trim().toLowerCase().replace(/\s+/g,' ').slice(0,120);
+      }
+      function _otdAmt(v){
+        try{ return (typeof asNum==='function') ? asNum(v) : Number(String(v||'').replace(',','.')); }catch(_){ return 0; }
+      }
+      function _otdTxFp(r){
+        const d = String(toISO(getVal(r,["Data księgowania","Data","date","Дата"])||"") || "").slice(0,10);
+        const amt = _otdAmt(getVal(r,["Kwota","Kwота","amount","Kwota_raw"])||0);
+        const cur = String(getVal(r,["Waluta","currency","Валюта"])||"PLN").toUpperCase().trim();
+        const desc = _otdNormTxt(getVal(r,["Tytuł/Opis","Opis transakcji","Opis","description","Описание"])||"");
+        const cp = _otdNormTxt(getVal(r,["Kontrahent","Nazwa kontrahenta","counterparty","Контрагент"])||"");
+        const acc = _otdNormTxt(getVal(r,["accountId","Account","Konto","Karta","card","ID konta"])||"");
+        return [d, String(Math.round(amt*100)/100), cur, desc, cp, acc].join('|');
+      }
+
+      const existingFp = new Set(existingTx.map(_otdTxFp));
+      const toAdd = [];
+      for(const r of normalized){
+        const fp = _otdTxFp(r);
+        // dedupe ONLY vs existing history; do not dedupe inside this import (identical ops can be real)
+        if(existingFp.has(fp)) continue;
+        toAdd.push(r);
+      }
+
+      if(!toAdd.length){
+        alert('Новых транзакций не найдено (похоже, вы уже импортировали этот скрин).');
+        return;
+      }
+
+      tx = existingTx.concat(toAdd);
+      if(typeof ensureTxIds === 'function') ensureTxIds();
+      if(typeof ensureCardAccountsFromTx === 'function') ensureCardAccountsFromTx();
+      if(typeof dropTxGeneratedAccounts === 'function') dropTxGeneratedAccounts();
+
+      if(typeof render === 'function') render();
+      if(typeof saveLocal === 'function') saveLocal();
+      if(typeof pushState === 'function') pushState();
+      try{ toast?.('Импортировано: ' + toAdd.length + ' транзакций'); }catch(_){ }
     }catch(err){
-      console.warn('txImage->DocVault error', err);
-      alert('Nie udało się dodać plików do Dokumentów.');
+      console.warn('txImage->AI parse error', err);
+      alert('Не удалось импортировать операции со скриншота.');
     }finally{
-      try{ e.target.value = ''; }catch(_){}
+      try{ e.target.value = ''; }catch(_){ }
     }
   });
 
