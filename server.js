@@ -1153,19 +1153,33 @@ function langHumanName(code){
 }
 
 async function aiTranslateToLang(text, targetLang){
-  if (!_aiAllow('translate')) return String(text || '');
+  const input = String(text || '').slice(0, 4000).trim();
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return input;
+
+  // guard: respect rate limits and allow disabling AI in local dev
+  if (!_aiAllow('translate')) return input;
+
   const tgt = normLang(targetLang);
   const languageName = langHumanName(tgt);
 
-  // Keep it extremely strict: only the translated text, no extra words.
-  const prompt = `Translate the text into ${languageName}. Keep meaning, numbers, names, and formatting. If it is already in ${languageName}, return it unchanged. Return ONLY the translated text.\n\nTEXT:\n${String(text||'')}`;
-  const r = await _callOpenAI('translate', [{
-    role:'user',
-    content: prompt
-  }], { max_output_tokens: 600 });
+  // Prefer the same model used by the AI‑consultant unless overridden.
+  const model = process.env.OTD_AI_MODEL || process.env.OTD_AI_MODEL_DEFAULT || 'gpt-4o-mini';
 
-  const out = (r && r.text) ? String(r.text).trim() : '';
-  return out || String(text || '');
+  const messages = [
+    { role: 'system', content: [{ type: 'input_text', text:
+      `Translate the user text to ${languageName}. If it is already ${languageName}, return it unchanged. ` +
+      `Keep meaning, numbers, names, and formatting. Do not add commentary. Return ONLY the translated text.` }] },
+    { role: 'user', content: [{ type: 'input_text', text: input }] }
+  ];
+
+  try{
+    const out = await _callOpenAI({ model, messages, maxOutputTokens: 450 });
+    const t = String(out && out.text ? out.text : '').trim();
+    return t.replace(/^["“”]+|["“”]+$/g, '').trim() || input;
+  }catch(_e){
+    return input;
+  }
 }
 
 function chatTextForViewer(m, viewerLang){
