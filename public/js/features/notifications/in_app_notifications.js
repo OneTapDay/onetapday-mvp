@@ -466,17 +466,31 @@ async function showChatPanel(threadId){
     const from = String(m.fromEmail || '').toLowerCase().trim();
     const mine = from && myEmail && from === myEmail;
     const cls = mine ? 'otdChatMsg me' : 'otdChatMsg';
-    const txt = esc(String(m.text || '').trim());
+
+    // Client UX: always show ORIGINAL as main text.
+    // - Incoming: show translation to client's UI language underneath (m.text)
+    // - Outgoing: show translation that the accountant will receive underneath (m.toCounterpartText)
+    const original = String(m.originalText || m.text || '').trim();
     const dt = m.createdAt ? fmtDate(m.createdAt) : '';
-    const orig = (m.originalText && String(m.originalText).trim() && String(m.originalText).trim() !== String(m.text||'').trim()) ? esc(String(m.originalText).trim()) : '';
+
+    let tr = '';
+    if (mine){
+      tr = String(m.toCounterpartText || '').trim() || String(m.text || '').trim();
+    } else {
+      tr = String(m.text || '').trim();
+    }
+
+    const showTr = !!(tr && original && tr.trim() !== original.trim());
+
     return `
       <div class="${cls}">
-        <div class="txt">${txt}</div>
-        ${orig ? `<div class="orig">${esc(TT('client.chat.original', null, 'Oryginał'))}: ${orig}</div>` : ``}
+        <div class="txt">${esc(original || tr || '')}</div>
+        ${showTr ? `<div class="orig">${esc(tr)}</div>` : ``}
         <div class="meta"><span>${esc(dt)}</span></div>
       </div>
     `;
   }
+
 
   async function chatOpenThread(th){
     await ensureMeEmail();

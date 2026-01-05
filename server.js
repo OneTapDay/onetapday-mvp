@@ -1176,19 +1176,44 @@ function chatTextForViewer(m, viewerLang){
   return String(display || '').trim();
 }
 
-function mapChatMessageForViewer(m, viewer){
+function mapChatMessageForViewer(m, viewer, ctx){
+  ctx = ctx || {};
   const role = String((viewer && viewer.role) || 'freelance_business');
   const viewerLang = normLang(viewer && viewer.lang);
   const orig = String((m && (m.originalText || m.text)) || '').trim();
   const display = chatTextForViewer(m, viewerLang);
 
   const out = Object.assign({}, m, { text: display });
+
+  // Accountants see only the translated text in their UI language.
   if (role === 'accountant'){
     out.originalText = '';
-  } else {
-    out.originalText = (display.trim() === orig) ? '' : orig;
+    out.toCounterpartText = '';
+    out.toCounterpartLang = '';
+    return out;
   }
+
+  // Clients see original + translation.
+  out.originalText = orig; // always include original for client UI
+
+  // Provide a "for-accountant" translation so the client can see what the accountant will receive.
+  const accountantLang = normLang(ctx.accountantLang || '');
+  const counterpartLang = accountantLang || viewerLang;
+  const cpText = chatTextForViewer(m, counterpartLang);
+
+  out.toCounterpartLang = counterpartLang;
+  out.toCounterpartText = String(cpText || '').trim();
+
   return out;
+}
+
+function chatThreadLangs(accountantEmail, clientEmail){
+  const users = loadJsonFile(USERS_FILE) || {};
+  const ae = normalizeEmail(accountantEmail || '');
+  const ce = normalizeEmail(clientEmail || '');
+  const clientLang = normLang((users[ce] && users[ce].lang) || 'pl');
+  const accountantLang = normLang((users[ae] && users[ae].lang) || 'pl');
+  return { clientLang, accountantLang };
 }
 
 
@@ -1279,7 +1304,9 @@ app.get('/api/chat/history', (req, res)=>{
   const limit = Math.min(200, Math.max(10, Number(req.query && req.query.limit || 120) || 120));
   const msgs = Array.isArray(t.messages) ? t.messages.slice(-limit) : [];
 
-  return res.json({ success:true, threadId: t.id, messages: msgs.map(m=>mapChatMessageForViewer(m, u)) });
+  const langs = chatThreadLangs(ae, ce);
+
+  return res.json({ success:true, threadId: t.id, messages: msgs.map(m=>mapChatMessageForViewer(m, u, langs)) });
 });
 
 app.post('/api/chat/mark-read', (req, res)=>{
@@ -1368,7 +1395,7 @@ t.messages.push(msg);
     });
   }catch(_e){}
 
-  return res.json({ success:true, message: mapChatMessageForViewer(msg, u), threadId: t.id });
+  return res.json({ success:true, message: mapChatMessageForViewer(msg, u, { clientLang, accountantLang }), threadId: t.id });
 });
 
 app.get('/api/chat/stream', (req, res)=>{
@@ -1383,6 +1410,8 @@ app.get('/api/chat/stream', (req, res)=>{
   const t = ensureChatThread(ae, ce);
   let lastTs = Number(req.query && req.query.since || 0) || 0;
 
+  const langs = chatThreadLangs(ae, ce);
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
@@ -1392,7 +1421,7 @@ app.get('/api/chat/stream', (req, res)=>{
   res.write(`event: hello\ndata: ${JSON.stringify({ ok:true, threadId: t.id })}\n\n`);
 
   const sendMsg = (m)=>{
-    res.write(`data: ${JSON.stringify({ type:'message', message: mapChatMessageForViewer(m, u) })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type:'message', message: mapChatMessageForViewer(m, u, langs) })}\n\n`);
   };
 
   const timer = setInterval(()=>{
