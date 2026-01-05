@@ -144,14 +144,21 @@
   toast.id = 'otdNotifToast';
   toast.className = 'otdNotifToast';
 
-  // Place buttons into the existing top bar (keep original order: Settings -> Chat -> Bell)
+  // Place buttons into the existing top bar (keep Settings at the far right edge)
   const right = byId('topRight') || document.querySelector('.topRight') || null;
   const top = document.querySelector('#topBar') || document.querySelector('.top') || null;
+  const settingsBtn = byId('navSettingsBtn') || (right ? right.querySelector('#navSettingsBtn') : null);
 
   try{
     if (right){
-      right.appendChild(chatBtn);
-      right.appendChild(bell);
+      if (settingsBtn && settingsBtn.parentElement === right){
+        // order: Chat, Bell, Settings (settings stays at the edge)
+        right.insertBefore(bell, settingsBtn);
+        right.insertBefore(chatBtn, bell);
+      } else {
+        right.appendChild(chatBtn);
+        right.appendChild(bell);
+      }
     } else if (top){
       top.appendChild(chatBtn);
       top.appendChild(bell);
@@ -209,20 +216,22 @@
     closeChat();
   });
 
-  document.addEventListener('click', (e)=>{
-    const t = e.target;
+    document.addEventListener('click', (e)=>{
+    const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
     const notifOpen = panel && panel.style.display === 'block';
     const chatOpen = chatPanel && chatPanel.style.display === 'block';
 
+    // Use composedPath so clicks don't get treated as "outside" after innerHTML swaps.
     if (notifOpen){
-      if (t === bell || bell.contains(t) || t === panel || panel.contains(t)) return;
+      if (path.includes(bell) || path.includes(panel)) return;
     }
     if (chatOpen){
-      if (t === chatBtn || chatBtn.contains(t) || t === chatPanel || chatPanel.contains(t)) return;
+      if (path.includes(chatBtn) || path.includes(chatPanel)) return;
     }
+
     if (notifOpen) closeNotif();
     if (chatOpen) closeChat();
-  });
+  }, true);
 
   byId('otdNotifMarkAll')?.addEventListener('click', async ()=>{
     try{
@@ -311,7 +320,8 @@ async function showChatPanel(threadId){
               </div>`;
     }).join('');
     listEl.querySelectorAll('.otdNotifItem[data-id]').forEach(el=>{
-      el.addEventListener('click', async ()=>{
+      el.addEventListener('click', async (ev)=>{
+        try{ ev.preventDefault(); ev.stopPropagation(); }catch(_e){}
         const id = el.getAttribute('data-id');
         const rid = el.getAttribute('data-request');
         const cth = el.getAttribute('data-chat');
@@ -436,7 +446,8 @@ async function showChatPanel(threadId){
     }).join('');
 
     list.querySelectorAll('.otdChatThread').forEach(el=>{
-      el.addEventListener('click', async ()=>{
+      el.addEventListener('click', async (ev)=>{
+        try{ ev.preventDefault(); ev.stopPropagation(); }catch(_e){}
         const id = el.getAttribute('data-thread');
         // Prefer thread id (robust across casing/normalization), fallback to emails.
         let th = threads.find(x => String(x.id||'') === String(id||''));
