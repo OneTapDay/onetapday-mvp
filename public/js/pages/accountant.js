@@ -131,7 +131,7 @@ const _otdNotif = (function(){
       .otdNotifBody{ max-height:calc(60vh - 56px); overflow:auto; }
       .otdNotifItem{ padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08); cursor:pointer; }
       .otdNotifItem:last-child{ border-bottom:none; }
-      .otdNotifItem .m{ color:#eaffdf; font-size:13px; line-height:1.25; }
+      .otdNotifItem .m{ color:#eaffdf; font-size:13px; line-height:1.25; white-space:pre-wrap; word-break:break-word; }
       .otdNotifItem .d{ margin-top:4px; color:rgba(234,255,223,.7); font-size:11px; }
       .otdNotifItem.read{ opacity:.55; }
       .otdNotifToast{ position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10000; max-width:min(560px, calc(100vw - 24px)); padding:10px 12px; border-radius:14px; background:rgba(0,0,0,.70); border:1px solid rgba(71,181,0,.30); backdrop-filter: blur(14px); box-shadow: 0 10px 28px rgba(0,0,0,.35); color:#eaffdf; font-size:13px; display:none; }
@@ -157,9 +157,9 @@ const _otdNotif = (function(){
       .otdAccChatMsg .txt{ color:#eaffdf; font-size:13px; line-height:1.25; white-space:pre-wrap; word-break:break-word; }
       .otdAccChatMsg .meta{ margin-top:4px; color:rgba(234,255,223,.65); font-size:10px; display:flex; gap:8px; align-items:center; }
       .otdAccChatMsg .orig{ opacity:.85; font-size:11px; margin-top:6px; border-top:1px dashed rgba(255,255,255,.12); padding-top:6px; color:rgba(234,255,223,.8); }
-      .otdAccChatComposer{ display:flex; gap:8px; align-items:flex-end; padding:10px 10px; border-top:1px solid rgba(255,255,255,.08); }
-      .otdAccChatComposer textarea{ flex:1; min-height:38px; max-height:120px; resize:vertical; border-radius:12px; border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.20); color:#eaffdf; padding:8px 10px; font-size:13px; }
-      .otdAccChatIconBtn{ width:40px; height:40px; border-radius:12px; border:1px solid rgba(255,255,255,.16); background:transparent; color:#eaffdf; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+      .otdAccChatComposer{ display:flex; gap:8px; align-items:flex-end; flex-wrap:nowrap; padding:10px 10px; border-top:1px solid rgba(255,255,255,.08); }
+      .otdAccChatComposer textarea{ flex:1; min-width:0; min-height:38px; max-height:120px; resize:vertical; border-radius:12px; border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.20); color:#eaffdf; padding:8px 10px; font-size:13px; }
+      .otdAccChatIconBtn{ width:40px; height:40px; border-radius:12px; border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.20); color:#eaffdf; display:inline-flex; align-items:center; justify-content:center; }
       .otdAccChatIconBtn.is-recording{ border-color: rgba(71,181,0,.65); background: rgba(71,181,0,.12); }
       .otdAccChatToggle{ display:flex; align-items:center; gap:6px; padding:6px 8px; border-radius:12px; border:1px solid rgba(255,255,255,.16); color:#eaffdf; font-size:11px; user-select:none; }
       .otdAccChatToggle input{ accent-color:#47b500; }
@@ -192,15 +192,29 @@ const _otdNotif = (function(){
         <div class="otdNotifTabs">
           <button id="otdNotifShowNewAcc" class="active" type="button" data-i18n-html="accountant.notifs.tab_new">${esc(TT('accountant.notifs.tab_new', null, 'Nowe'))}</button>
           <button id="otdNotifShowAllAcc" type="button" data-i18n-html="accountant.notifs.tab_history">${esc(TT('accountant.notifs.tab_history', null, 'Historia'))}</button>
-          <button id="otdNotifShowChatAcc" type="button" data-i18n-html="accountant.notifs.tab_chat">${esc(TT('accountant.notifs.tab_chat', null, 'Czat'))}</button>
-          <button id="otdNotifMarkAllAcc" type="button" data-i18n-html="accountant.notifs.tab_read">${esc(TT('accountant.notifs.tab_read', null, 'Przeczytane'))}</button>
+<button id="otdNotifMarkAllAcc" type="button" data-i18n-html="accountant.notifs.tab_read">${esc(TT('accountant.notifs.tab_read', null, 'Przeczytane'))}</button>
         </div>
       </header>
       <div id="otdNotifBodyAcc" class="otdNotifBody">
         <div id="otdNotifListAcc"></div>
-        <div id="otdChatWrapAcc" class="otdAccChatWrap" style="display:none"></div>
+</div>
+    `;
+
+    // Separate Chat panel (chat is NOT inside notifications)
+    const chatPanel = document.createElement('div');
+    chatPanel.id = 'otdChatPanelAcc';
+    chatPanel.className = 'otdNotifPanel';
+    chatPanel.style.display = 'none';
+    chatPanel.innerHTML = `
+      <header>
+        <div class="h" data-i18n="accountant.notifs.tab_chat">${esc(TT('accountant.notifs.tab_chat', null, 'Czat'))}</div>
+      </header>
+      <div class="otdNotifBody">
+        <div id="otdChatWrapAcc" class="otdAccChatWrap"></div>
       </div>
     `;
+
+
 
     const toast = document.createElement('div');
     toast.id = 'otdNotifToastAcc';
@@ -223,10 +237,11 @@ const _otdNotif = (function(){
       document.body.appendChild(dock);
     }
     document.body.appendChild(panel);
+    document.body.appendChild(chatPanel);
     document.body.appendChild(toast);
 
     function setActive(btnId){
-      ['otdNotifShowNewAcc','otdNotifShowAllAcc','otdNotifShowChatAcc'].forEach(id=>{
+      ['otdNotifShowNewAcc','otdNotifShowAllAcc'].forEach(id=>{
         const b = byId(id);
         if (!b) return;
         b.classList.toggle('active', id === btnId);
@@ -234,12 +249,7 @@ const _otdNotif = (function(){
     }
     function setView(v){
       view = v;
-      setActive(v==='unread' ? 'otdNotifShowNewAcc' : (v==='all' ? 'otdNotifShowAllAcc' : 'otdNotifShowChatAcc'));
-      const list = byId('otdNotifListAcc');
-      const chat = byId('otdChatWrapAcc');
-      if (list) list.style.display = (view === 'chat') ? 'none' : 'block';
-      if (chat) chat.style.display = (view === 'chat') ? 'block' : 'none';
-      if (view !== 'chat') stopChatStream();
+      setActive(v==='unread' ? 'otdNotifShowNewAcc' : 'otdNotifShowAllAcc');
     }
 
     bell.addEventListener('click', async ()=>{
@@ -257,20 +267,48 @@ const _otdNotif = (function(){
     });
 
     chatBtn.addEventListener('click', async ()=>{
-      panel.style.display = 'block';
-      setView('chat');
-      try{ await openChatHome(); }catch(_){}
+      const shown = chatPanel.style.display === 'block';
+      if (shown){
+        chatPanel.style.display = 'none';
+        stopChatStream();
+        return;
+      }
+      // close notifications panel if open
+      panel.style.display = 'none';
+      chatPanel.style.display = 'block';
+      try{
+        // load threads for current viewer language (backend returns translated messages)
+        await fetchChatThreads();
+        chatState.active = null;
+        chatState.messages = [];
+      }catch(_e){}
+      try{ renderChat(); }catch(_e){}
       try{ await pull(); }catch(_){ }
     });
 
-    document.addEventListener('click', (e)=>{
-      if (!panel || panel.style.display !== 'block') return;
-      if (e.target === bell || bell.contains(e.target) || e.target === chatBtn || chatBtn.contains(e.target) || e.target === panel || panel.contains(e.target)) return;
-      panel.style.display = 'none';
-      stopChatStream();
+document.addEventListener('click', (e)=>{
+      const path = (e && typeof e.composedPath === 'function') ? e.composedPath() : null;
+      const inPath = (el)=>{
+        if (!el) return false;
+        if (path) return path.includes(el);
+        try{ return (e.target === el) || el.contains(e.target); }catch(_){ return false; }
+      };
+
+      // Close notifications on outside click
+      if (panel && panel.style.display === 'block'){
+        if (inPath(bell) || inPath(panel) || inPath(chatBtn) || inPath(chatPanel)) return;
+        panel.style.display = 'none';
+      }
+
+      // Close chat on outside click
+      if (chatPanel && chatPanel.style.display === 'block'){
+        if (inPath(chatBtn) || inPath(chatPanel) || inPath(bell) || inPath(panel)) return;
+        chatPanel.style.display = 'none';
+        stopChatStream();
+      }
     });
 
-    byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
+byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
       try{
         await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ all:true }) });
       }catch(_){}
@@ -288,21 +326,21 @@ const _otdNotif = (function(){
       try{ await pull(); }catch(_){}
     });
 
-    byId('otdNotifShowChatAcc')?.addEventListener('click', async ()=>{
-      setView('chat');
-      try{ await pull(); }catch(_){}
-    });
-
     // keep new dynamic strings in sync with language toggles
-    window.addEventListener('otd:lang', ()=>{
+    document.addEventListener('otd:lang', ()=>{
       try{
         if (window.i18n && typeof window.i18n.apply === 'function') window.i18n.apply();
       }catch(_){}
+      try{ renderClients(); }catch(_e){}
+      try{ if (byId('otdChatBellAcc')) byId('otdChatBellAcc').setAttribute('title', TT('accountant.notifs.tab_chat', null, 'Czat')); }catch(_e){}
+      try{ if (docsModal) renderDocsSmartControls(); }catch(_e){}
+
       (async ()=>{
         try{
           // Chat texts are served from backend already translated to the viewer's lang.
           // When lang changes we must re-fetch threads/history, not just re-render old text.
-          if (view === 'chat'){
+          const cp = byId('otdChatPanelAcc');
+          if (cp && cp.style.display === 'block'){
             const activeId = (chatState.active && chatState.active.id) ? String(chatState.active.id) : '';
             try{ await fetchChatThreads(); }catch(_e){}
             if (activeId){
@@ -758,7 +796,8 @@ const _otdNotif = (function(){
 
   function renderChat(){
     const wrap = byId('otdChatWrapAcc');
-    if (!wrap || view !== 'chat') return;
+    const cp = byId('otdChatPanelAcc');
+    if (!wrap || !cp || cp.style.display !== 'block') return;
 
     // active thread view
     if (chatState.active){
@@ -892,18 +931,14 @@ const _otdNotif = (function(){
 
   async function openChatByThreadId(threadId){
     ensureUi();
-    view = 'chat';
-    // make sure chat UI is visible
-    const list = byId('otdNotifListAcc');
-    const chat = byId('otdChatWrapAcc');
-    if (list) list.style.display = 'none';
-    if (chat) chat.style.display = 'block';
-    byId('otdNotifShowNewAcc')?.classList.remove('active');
-    byId('otdNotifShowAllAcc')?.classList.remove('active');
-    byId('otdNotifShowChatAcc')?.classList.add('active');
+    // Open chat panel (chat is separate from notifications)
+    const notifPanel = byId('otdNotifPanelAcc');
+    const chatPanelEl = byId('otdChatPanelAcc');
+    if (notifPanel) notifPanel.style.display = 'none';
+    if (chatPanelEl) chatPanelEl.style.display = 'block';
 
-    const threads = await fetchChatThreads();
-    const t = threads.find(x=> String(x.id||'') === String(threadId||''));
+    const threads = await fetchChatThreads();;
+const t = threads.find(x=> String(x.id||'') === String(threadId||''));
     if(!t){
       chatState.active = null;
       chatState.messages = [];
@@ -1006,7 +1041,8 @@ const _otdNotif = (function(){
     chatUnreadCount = await fetchChatUnread();
     updateBadge();
 
-    if (view === 'chat'){
+    const cp = byId('otdChatPanelAcc');
+    if (cp && cp.style.display === 'block'){
       // threads view when chat not open, otherwise keep current
       await fetchChatThreads();
       renderChat();
@@ -1501,11 +1537,11 @@ const _otdNotif = (function(){
   let docsState = { folders:[], files:[], selectedFolder:'', query:'' };
 
 const DOC_CATS = [
-  { id:'incoming', label:'Входящие' },
-  { id:'outgoing', label:'Выставленные' },
-  { id:'tax', label:'ZUS/PIT' },
-  { id:'proof', label:'Подтверждения' },
-  { id:'other', label:'Другое' }
+  { id:'incoming', key:'vault.tabs.incoming', fallback:'Wchodzące' },
+  { id:'outgoing', key:'vault.tabs.outgoing', fallback:'Wystawione' },
+  { id:'tax',      key:'vault.tabs.tax',      fallback:'ZUS/PIT' },
+  { id:'proof',    key:'vault.tabs.proof',    fallback:'Potwierdzenia' },
+  { id:'other',    key:'vault.tabs.other',    fallback:'Inne' }
 ];
 
 function curMonth(){
@@ -1548,7 +1584,7 @@ function setDocsCat(v){ docsCat = v || 'incoming'; lsSet('otd_docs_cat', docsCat
 function catBtnHtml(cat){
   const active = (cat.id === docsCat);
   const cls = active ? 'btn' : 'btn secondary';
-  return `<button type="button" class="${cls} small" data-cat="${esc(cat.id)}">${esc(cat.label)}</button>`;
+  return `<button type="button" class="${cls} small" data-cat="${esc(cat.id)}">${esc(TT(cat.key, null, cat.fallback))}</button>`;
 }
 
 function renderDocsSmartControls(){
@@ -1801,8 +1837,8 @@ function selectDocsSmartFolder(){
     try{
       const want = (me && me.lang) ? String(me.lang) : '';
       if (want && window.i18n && typeof window.i18n.load === 'function'){
-        const cur = (typeof window.i18n.getLang === 'function') ? String(window.i18n.getLang()||'') : '';
-        if (cur !== want) window.i18n.load(want);
+        const cur = (window.i18n && window.i18n.lang) ? String(window.i18n.lang||'') : '';
+        if (cur !== want) await window.i18n.load(want);
       }
     }catch(_e){}
     const role = (me && me.role) || '';

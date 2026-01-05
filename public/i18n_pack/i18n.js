@@ -102,6 +102,12 @@ const I18N_VER = '2025-12-28-03'; // cache-bust
         if (typeof v === 'string' && v !== k) el.textContent = v;
       });
 
+      q('[data-i18n-html]').forEach(el => {
+        const k = el.getAttribute('data-i18n-html');
+        const v = i18n.t(k);
+        if (typeof v === 'string' && v !== k) el.innerHTML = v;
+      });
+
       q('[data-i18n-ph]').forEach(el => {
         const k = el.getAttribute('data-i18n-ph');
         const v = i18n.t(k);
