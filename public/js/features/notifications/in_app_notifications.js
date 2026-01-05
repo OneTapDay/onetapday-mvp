@@ -18,7 +18,6 @@
 
   let otdNotifShowAll = false;
   let otdNotifUnreadCount = 0; // combined: notifications + chat
-  let otdNotifView = 'unread'; // 'unread' | 'all' | 'chat'
   let otdChatUnreadCount = 0;
 
   const chatState = {
@@ -90,156 +89,173 @@
   }
 
   function ensureUi(){
-    injectCss();
-    if (byId('otdNotifBell')) return;
+  injectCss();
+  if (byId('otdNotifBell')) return;
 
-    const bell = document.createElement('button');
-    bell.type = 'button';
-    bell.id = 'otdNotifBell';
-    bell.className = 'iconBtn iconPill otdNotifBellBtn';
-    bell.setAttribute('aria-label', TT('client.notifs.aria', null, 'Powiadomienia'));
-    bell.innerHTML = `<svg class="otdBellIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="otdNotifBadge" aria-label="0" style="display:none">0</span>`;
+  const bell = document.createElement('button');
+  bell.type = 'button';
+  bell.id = 'otdNotifBell';
+  bell.className = 'iconBtn iconPill otdNotifBellBtn';
+  bell.setAttribute('aria-label', TT('client.notifs.aria', null, 'Powiadomienia'));
+  bell.innerHTML = `<svg class="otdBellIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="otdNotifBadge" aria-label="0" style="display:none">0</span>`;
 
+  const chatBtn = document.createElement('button');
+  chatBtn.type = 'button';
+  chatBtn.id = 'otdChatBell';
+  chatBtn.className = 'iconBtn iconPill otdNotifBellBtn otdChatBellBtn';
+  chatBtn.setAttribute('aria-label', TT('client.chat.aria', null, 'Czat'));
+  chatBtn.innerHTML = `<svg class="otdBellIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-2.93-.38-4.18-1.05L3 20l1.09-4.32A8.46 8.46 0 0 1 3.5 11.5 8.5 8.5 0 0 1 12 3a8.5 8.5 0 0 1 9 8.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="otdNotifBadge" style="display:none">0</span>`;
 
-    const chatBtn = document.createElement('button');
-    chatBtn.type = 'button';
-    chatBtn.id = 'otdChatBell';
-    chatBtn.className = 'iconBtn iconPill otdNotifBellBtn otdChatBellBtn';
-    chatBtn.setAttribute('aria-label', TT('client.chat.aria', null, 'Czat'));
-    chatBtn.innerHTML = `<svg class="otdBellIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-2.93-.38-4.18-1.05L3 20l1.09-4.32A8.46 8.46 0 0 1 3.5 11.5 8.5 8.5 0 0 1 12 3a8.5 8.5 0 0 1 9 8.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="otdNotifBadge" style="display:none">0</span>`;
-
-    const panel = document.createElement('div');
-    panel.id = 'otdNotifPanel';
-    panel.className = 'otdNotifPanel';
-    panel.innerHTML = `
-      <header>
-        <div class="h">${TT('client.notifs.title', null, 'Powiadomienia')}</div>
-        <div class="otdNotifTabs">
-          <button id="otdNotifShowNew" class="active">${TT('client.notifs.tab_new', null, 'Nowe')}</button>
-          <button id="otdNotifShowAll">${TT('client.notifs.tab_history', null, 'Historia')}</button>
-          <button id="otdNotifShowChat">${TT('client.notifs.tab_chat', null, 'Czat')}</button>
-          <button id="otdNotifMarkAll">${TT('client.notifs.tab_read', null, 'Przeczytane')}</button>
-        </div>
-      </header>
-      <div id="otdNotifBody" class="otdNotifBody">
-        <div id="otdNotifListWrap"><div id="otdNotifList"></div></div>
-        <div id="otdChatWrap" class="otdChatWrap" style="display:none"></div>
+  // Notifications panel (no chat tab)
+  const panel = document.createElement('div');
+  panel.id = 'otdNotifPanel';
+  panel.className = 'otdNotifPanel';
+  panel.innerHTML = `
+    <header>
+      <div class="h">${TT('client.notifs.title', null, 'Powiadomienia')}</div>
+      <div class="otdNotifTabs">
+        <button id="otdNotifShowNew" class="active">${TT('client.notifs.tab_new', null, 'Nowe')}</button>
+        <button id="otdNotifShowAll">${TT('client.notifs.tab_history', null, 'Historia')}</button>
+        <button id="otdNotifMarkAll">${TT('client.notifs.tab_read', null, 'Przeczytane')}</button>
       </div>
-    `;
+    </header>
+    <div id="otdNotifBody" class="otdNotifBody">
+      <div id="otdNotifListWrap"><div id="otdNotifList"></div></div>
+    </div>
+  `;
 
-    const toast = document.createElement('div');
-    toast.id = 'otdNotifToast';
-    toast.className = 'otdNotifToast';
+  // Chat panel (opened ONLY by chat button or from a notification)
+  const chatPanel = document.createElement('div');
+  chatPanel.id = 'otdChatPanel';
+  chatPanel.className = 'otdNotifPanel otdChatPanel';
+  chatPanel.innerHTML = `
+    <header>
+      <div class="h">${TT('client.notifs.tab_chat', null, 'Czat')}</div>
+      <div class="otdNotifTabs">
+        <button id="otdChatClose" title="${TT('client.chat.close', null, 'Zamknij')}">✕</button>
+      </div>
+    </header>
+    <div class="otdNotifBody">
+      <div id="otdChatWrap" class="otdChatWrap"></div>
+    </div>
+  `;
 
-    const top = document.querySelector('.top');
-    const right = document.querySelector('.top .right') || document.querySelector('.top .row') || null;
-    const settingsBtn = document.querySelector('#settingsBtn') || document.querySelector('#menuBtn') || null;
+  const toast = document.createElement('div');
+  toast.id = 'otdNotifToast';
+  toast.className = 'otdNotifToast';
 
-    if (right && settingsBtn && settingsBtn.parentElement===right){
-      right.insertBefore(chatBtn, settingsBtn);
-      right.insertBefore(bell, settingsBtn);
-    } else if (right) {
+  // Place buttons into the existing top bar (keep original order: Settings -> Chat -> Bell)
+  const right = byId('topRight') || document.querySelector('.topRight') || null;
+  const top = document.querySelector('#topBar') || document.querySelector('.top') || null;
+
+  try{
+    if (right){
       right.appendChild(chatBtn);
       right.appendChild(bell);
-    } else if (top && settingsBtn && settingsBtn.parentElement===top){
-      top.insertBefore(chatBtn, settingsBtn);
-      top.insertBefore(bell, settingsBtn);
-    } else if (top) {
+    } else if (top){
       top.appendChild(chatBtn);
       top.appendChild(bell);
     } else {
       document.body.appendChild(chatBtn);
       document.body.appendChild(bell);
     }
-
-    document.body.appendChild(panel);
-    document.body.appendChild(toast);
-
-    function setTabs(){
-      byId('otdNotifShowNew')?.classList.toggle('active', otdNotifView === 'unread');
-      byId('otdNotifShowAll')?.classList.toggle('active', otdNotifView === 'all');
-      byId('otdNotifShowChat')?.classList.toggle('active', otdNotifView === 'chat');
-    }
-
-    bell.addEventListener('click', async ()=>{
-      const shown = panel.style.display === 'block';
-      if (shown){
-        panel.style.display = 'none';
-        stopChatStream();
-        return;
-      }
-
-      // open in notifications view
-      if (otdNotifView === 'chat'){
-        otdNotifView = 'unread';
-        setTabs();
-        byId('otdNotifListWrap').style.display = 'block';
-        byId('otdChatWrap').style.display = 'none';
-        stopChatStream();
-      }
-
-      panel.style.display = 'block';
-      try{ await pull(); }catch(_){}
-    });
-
-    chatBtn.addEventListener('click', async ()=>{
-      panel.style.display = 'block';
-
-      if (otdNotifView !== 'chat'){
-        otdNotifView = 'chat';
-        setTabs();
-        byId('otdNotifListWrap').style.display = 'none';
-        byId('otdChatWrap').style.display = 'block';
-      }
-
-      try{ await openChatHome(); }catch(_){}
-      try{ await pull(); }catch(_){}
-    });
-
-    document.addEventListener('click', (e)=>{
-      if (!panel || panel.style.display !== 'block') return;
-      if (e.target === bell || bell.contains(e.target) || e.target === chatBtn || chatBtn.contains(e.target) || e.target === panel || panel.contains(e.target)) return;
-      panel.style.display = 'none';
-      stopChatStream();
-    });
-
-    byId('otdNotifMarkAll')?.addEventListener('click', async ()=>{
-      if (otdNotifView === 'chat') return;
-      try{
-        await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({all:true}) });
-      }catch(_){}
-      try{ await pull(); }catch(_){}
-    });
-
-    byId('otdNotifShowNew')?.addEventListener('click', async ()=>{
-      otdNotifShowAll = false;
-      otdNotifView = 'unread';
-      setTabs();
-      byId('otdChatWrap').style.display = 'none';
-      byId('otdNotifListWrap').style.display = 'block';
-      stopChatStream();
-      try{ await pull(); }catch(_){}
-    });
-
-    byId('otdNotifShowAll')?.addEventListener('click', async ()=>{
-      otdNotifShowAll = true;
-      otdNotifView = 'all';
-      setTabs();
-      byId('otdChatWrap').style.display = 'none';
-      byId('otdNotifListWrap').style.display = 'block';
-      stopChatStream();
-      try{ await pull(); }catch(_){}
-    });
-
-    byId('otdNotifShowChat')?.addEventListener('click', async ()=>{
-      otdNotifView = 'chat';
-      setTabs();
-      byId('otdNotifListWrap').style.display = 'none';
-      byId('otdChatWrap').style.display = 'block';
-      try{ await openChatHome(); }catch(_){}
-      try{ await pull(); }catch(_){}
-    });
+  }catch(_){
+    document.body.appendChild(chatBtn);
+    document.body.appendChild(bell);
   }
+
+  document.body.appendChild(panel);
+  document.body.appendChild(chatPanel);
+  document.body.appendChild(toast);
+
+  function setTabs(){
+    byId('otdNotifShowNew')?.classList.toggle('active', !otdNotifShowAll);
+    byId('otdNotifShowAll')?.classList.toggle('active', !!otdNotifShowAll);
+  }
+
+  function closeNotif(){
+    panel.style.display = 'none';
+  }
+  function closeChat(){
+    chatPanel.style.display = 'none';
+    stopChatStream();
+  }
+
+  bell.addEventListener('click', async ()=>{
+    const shown = panel.style.display === 'block';
+    if (shown){
+      closeNotif();
+      return;
+    }
+    closeChat();
+    panel.style.display = 'block';
+    try{ await pull(); }catch(_){}
+  });
+
+  chatBtn.addEventListener('click', async ()=>{
+    const shown = chatPanel.style.display === 'block';
+    if (shown){
+      closeChat();
+      return;
+    }
+    closeNotif();
+    chatPanel.style.display = 'block';
+    try{ await openChatHome(); }catch(_){}
+    try{ await pull(); }catch(_){}
+  });
+
+  byId('otdChatClose')?.addEventListener('click', (e)=>{
+    e.preventDefault();
+    closeChat();
+  });
+
+  document.addEventListener('click', (e)=>{
+    const t = e.target;
+    const notifOpen = panel && panel.style.display === 'block';
+    const chatOpen = chatPanel && chatPanel.style.display === 'block';
+
+    if (notifOpen){
+      if (t === bell || bell.contains(t) || t === panel || panel.contains(t)) return;
+    }
+    if (chatOpen){
+      if (t === chatBtn || chatBtn.contains(t) || t === chatPanel || chatPanel.contains(t)) return;
+    }
+    if (notifOpen) closeNotif();
+    if (chatOpen) closeChat();
+  });
+
+  byId('otdNotifMarkAll')?.addEventListener('click', async ()=>{
+    try{
+      await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({all:true}) });
+    }catch(_){}
+    try{ await pull(); }catch(_){}
+  });
+
+  byId('otdNotifShowNew')?.addEventListener('click', async ()=>{
+    otdNotifShowAll = false;
+    setTabs();
+    try{ await pull(); }catch(_){}
+  });
+
+  byId('otdNotifShowAll')?.addEventListener('click', async ()=>{
+    otdNotifShowAll = true;
+    setTabs();
+    try{ await pull(); }catch(_){}
+  });
+}
+
+async function showChatPanel(threadId){
+  ensureUi();
+  const notifPanel = byId('otdNotifPanel');
+  const chatPanel = byId('otdChatPanel');
+  if (!chatPanel) return;
+
+  try{ if (notifPanel) notifPanel.style.display = 'none'; }catch(_){}
+  chatPanel.style.display = 'block';
+
+  try{ await openChatHome(threadId); }catch(_){}
+  try{ await pull(); }catch(_){}
+}
 
   function showToast(msg){
     const t = byId('otdNotifToast');
@@ -304,17 +320,9 @@
         if (rid){
           try{ byId('openClientRequestsBtn')?.click(); }catch(_){}
         }
-        // If notification contains a chat thread, jump to chat
+        // If notification contains a chat thread, jump to chat (dedicated panel)
         if (cth){
-          try{
-            otdNotifView = 'chat';
-            byId('otdNotifListWrap').style.display = 'none';
-            byId('otdChatWrap').style.display = 'block';
-            byId('otdNotifShowChat')?.classList.add('active');
-            byId('otdNotifShowNew')?.classList.remove('active');
-            byId('otdNotifShowAll')?.classList.remove('active');
-            await openChatHome(cth);
-          }catch(_){}
+          try{ await showChatPanel(cth); }catch(_){}
         }
         try{ await pull(); }catch(_){}
       });
@@ -907,31 +915,17 @@
     // combined badge
     otdNotifUnreadCount = unreadNotifCount;
 
-    // Render notifications list only if not in chat view
-    if (otdNotifView !== 'chat'){
-      if (!otdNotifShowAll){
+    // Render notifications list (chat is in a separate panel)
+    if (!otdNotifShowAll){
+      renderNotifications(unread, 'unread');
+    } else {
+      try{
+        const r2 = await fetch(API, { credentials:'include' });
+        const j2 = await r2.json().catch(()=>({}));
+        const all = (j2 && j2.notifications) ? j2.notifications : [];
+        renderNotifications(all, 'all');
+      } catch(_){
         renderNotifications(unread, 'unread');
-      } else {
-        try{
-          const r2 = await fetch(API, { credentials:'include' });
-          const j2 = await r2.json().catch(()=>({}));
-          const all = (j2 && j2.notifications) ? j2.notifications : [];
-          renderNotifications(all, 'all');
-        } catch(_){
-          renderNotifications(unread, 'unread');
-        }
-      }
-    }else{
-      // just update badge
-      const bellBadge = document.querySelector('#otdNotifBell .otdNotifBadge');
-      const chatBadge = document.querySelector('#otdChatBell .otdNotifBadge');
-      if (bellBadge){
-        bellBadge.textContent = String(otdNotifUnreadCount || 0);
-        bellBadge.style.display = (otdNotifUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
-      }
-      if (chatBadge){
-        chatBadge.textContent = String(otdChatUnreadCount || 0);
-        chatBadge.style.display = (otdChatUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
       }
     }
 
