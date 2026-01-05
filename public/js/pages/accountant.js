@@ -119,7 +119,7 @@ const _otdNotif = (function(){
     const st = document.createElement('style');
     st.id = 'otdNotifCssAcc';
     st.textContent = `
-      .otdNotifBell{ position:relative; display:inline-flex; align-items:center; justify-content:center; z-index:9999; display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:999px; background:rgba(0,0,0,.35); border:1px solid rgba(71,181,0,.35); backdrop-filter: blur(10px); cursor:pointer; user-select:none; }
+      .otdNotifBell{ position:relative; top:auto; right:auto; z-index:2; display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:999px; background:rgba(0,0,0,.35); border:1px solid rgba(71,181,0,.35); backdrop-filter: blur(10px); cursor:pointer; user-select:none; }
       .otdNotifBell .t{ font-weight:800; color:#dfffd0; font-size:13px; }
       .otdNotifBadge{ min-width:18px; height:18px; padding:0 6px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:900; color:#0b1a07; background:#47b500; }
       .otdNotifPanel{ position:fixed; top:54px; right:12px; width:min(390px, calc(100vw - 24px)); max-height:60vh; z-index:9999; border-radius:16px; background:rgba(0,0,0,.55); border:1px solid rgba(71,181,0,.25); backdrop-filter: blur(14px); box-shadow: 0 12px 30px rgba(0,0,0,.35); display:none; overflow:hidden; }
@@ -169,22 +169,21 @@ const _otdNotif = (function(){
 
   function ensureUi(){
     injectCss();
-    if (byId('otdNotifBellAcc') && byId('otdChatBellAcc')) return;
+    if (byId('otdNotifBellAcc')) return;
 
-    const bell = document.createElement('button');
-    bell.type = 'button';
+    const bell = document.createElement('div');
     bell.id = 'otdNotifBellAcc';
     bell.className = 'otdNotifBell';
-    bell.setAttribute('aria-label', TT('accountant.notifs.aria', null, 'Powiadomienia'));
-    bell.innerHTML = `<span class="t">🔔</span><span class="otdNotifBadge" style="display:none">0</span>`;
+    bell.innerHTML = `<span class="t">🔔</span><span class="t" data-i18n-html="accountant.notifs.title">${esc(TT('accountant.notifs.title', null, 'Powiadomienia'))}</span><span class="otdNotifBadge" style="display:none">0</span>`;
 
-    const chatBtn = document.createElement('button');
-    chatBtn.type = 'button';
+
+    const chatBtn = document.createElement('div');
     chatBtn.id = 'otdChatBellAcc';
-    chatBtn.className = 'otdNotifBell';
-    chatBtn.setAttribute('aria-label', TT('accountant.notifs.chat_aria', null, 'Czat'));
+    chatBtn.className = 'otdNotifBell otdChatBell';
+    chatBtn.setAttribute('title', TT('accountant.chat', null, 'Czat'));
     chatBtn.innerHTML = `<span class="t">💬</span><span class="otdNotifBadge" style="display:none">0</span>`;
-const panel = document.createElement('div');
+
+    const panel = document.createElement('div');
     panel.id = 'otdNotifPanelAcc';
     panel.className = 'otdNotifPanel';
     panel.innerHTML = `
@@ -207,30 +206,26 @@ const panel = document.createElement('div');
     toast.id = 'otdNotifToastAcc';
     toast.className = 'otdNotifToast';
 
-    // Mount buttons into top bar (prevents overlay with 🌐 and Wyloguj)
-    try{
-      const row = document.querySelector('.top .row') || document.querySelector('.top');
-      const logout = byId('logoutBtn');
-      if (row){
-        if (logout && logout.parentElement===row){
-          row.insertBefore(chatBtn, logout);
-          row.insertBefore(bell, logout);
-        }else{
-          row.appendChild(chatBtn);
-          row.appendChild(bell);
-        }
-      }else{
-        document.body.appendChild(chatBtn);
-        document.body.appendChild(bell);
-      }
-    }catch(_){
-      document.body.appendChild(chatBtn);
-      document.body.appendChild(bell);
-    }
+    const dock = document.createElement('div');
+    dock.id = 'otdNotifDockAcc';
+    dock.style.display = 'flex';
+    dock.style.alignItems = 'center';
+    dock.style.gap = '8px';
+    dock.appendChild(chatBtn);
+    dock.appendChild(bell);
 
+    const topRow = document.querySelector('.top .row');
+    const langWrap = document.getElementById('otdLangWrap');
+    if (topRow){
+      if (langWrap && langWrap.parentElement === topRow) topRow.insertBefore(dock, langWrap);
+      else topRow.prepend(dock);
+    } else {
+      document.body.appendChild(dock);
+    }
     document.body.appendChild(panel);
     document.body.appendChild(toast);
-function setActive(btnId){
+
+    function setActive(btnId){
       ['otdNotifShowNewAcc','otdNotifShowAllAcc','otdNotifShowChatAcc'].forEach(id=>{
         const b = byId(id);
         if (!b) return;
@@ -249,39 +244,33 @@ function setActive(btnId){
 
     bell.addEventListener('click', async ()=>{
       const shown = panel.style.display === 'block';
-      if (shown && view !== 'chat'){
+      if (shown){
         panel.style.display = 'none';
         stopChatStream();
         return;
       }
+
+      // keep view values consistent: 'unread' | 'all' | 'chat'
+      setView('unread');
       panel.style.display = 'block';
-      try{ setView('unread'); }catch(_){}
-      try{ await pull(); }catch(_){}
+      try{ await pull(); }catch(_){ }
     });
 
     chatBtn.addEventListener('click', async ()=>{
-      const shown = panel.style.display === 'block';
-      if (shown && view === 'chat'){
-        panel.style.display = 'none';
-        stopChatStream();
-        return;
-      }
       panel.style.display = 'block';
-      try{ setView('chat'); }catch(_){}
-      try{ await pull(); }catch(_){}
+      setView('chat');
+      try{ await openChatHome(); }catch(_){}
+      try{ await pull(); }catch(_){ }
     });
 
     document.addEventListener('click', (e)=>{
       if (!panel || panel.style.display !== 'block') return;
-      if (
-        e.target === bell || bell.contains(e.target) ||
-        e.target === chatBtn || chatBtn.contains(e.target) ||
-        e.target === panel || panel.contains(e.target)
-      ) return;
+      if (e.target === bell || bell.contains(e.target) || e.target === chatBtn || chatBtn.contains(e.target) || e.target === panel || panel.contains(e.target)) return;
       panel.style.display = 'none';
       stopChatStream();
     });
-byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
+
+    byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
       try{
         await fetch(API_MARK, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ all:true }) });
       }catch(_){}
@@ -309,7 +298,22 @@ byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
       try{
         if (window.i18n && typeof window.i18n.apply === 'function') window.i18n.apply();
       }catch(_){}
-      try{ renderChat(); }catch(_){}
+      (async ()=>{
+        try{
+          // Chat texts are served from backend already translated to the viewer's lang.
+          // When lang changes we must re-fetch threads/history, not just re-render old text.
+          if (view === 'chat'){
+            const activeId = (chatState.active && chatState.active.id) ? String(chatState.active.id) : '';
+            try{ await fetchChatThreads(); }catch(_e){}
+            if (activeId){
+              const t = chatState.threads.find(x=>String(x.id||'')===activeId);
+              if (t) chatState.active = t;
+              try{ chatState.messages = await chatFetchHistory(chatState.active); }catch(_e){ chatState.messages = []; }
+            }
+          }
+        }catch(_e){}
+        try{ renderChat(); }catch(_e){}
+      })();
     });
 
     // Default view
@@ -357,15 +361,16 @@ byId('otdNotifMarkAllAcc')?.addEventListener('click', async ()=>{
   }
 
   function updateBadge(){
-    const badgeNotif = document.querySelector('#otdNotifBellAcc .otdNotifBadge');
-    const badgeChat = document.querySelector('#otdChatBellAcc .otdNotifBadge');
-    if (badgeNotif){
-      badgeNotif.textContent = String(notifUnreadCount || 0);
-      badgeNotif.style.display = (notifUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
+    const bellBadge = document.querySelector('#otdNotifBellAcc .otdNotifBadge');
+    const chatBadge = document.querySelector('#otdChatBellAcc .otdNotifBadge');
+
+    if (bellBadge){
+      bellBadge.textContent = String(notifUnreadCount || 0);
+      bellBadge.style.display = (notifUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
     }
-    if (badgeChat){
-      badgeChat.textContent = String(chatUnreadCount || 0);
-      badgeChat.style.display = (chatUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
+    if (chatBadge){
+      chatBadge.textContent = String(chatUnreadCount || 0);
+      chatBadge.style.display = (chatUnreadCount || 0) > 0 ? 'inline-flex' : 'none';
     }
   }
 
@@ -1767,7 +1772,14 @@ function selectDocsSmartFolder(){
         menu.style.display = open ? 'none' : 'block';
         globe.setAttribute('aria-expanded', open ? 'false' : 'true');
       });
-      menu.addEventListener('click', (e)=>{ e.stopPropagation(); });
+      // IMPORTANT: let language buttons bubble to document so i18n_pack can catch [data-lang]
+      // (otherwise language switch does nothing).
+      menu.addEventListener('click', (e)=>{
+        try{
+          if (e && e.target && e.target.closest && e.target.closest('button[data-lang]')) return;
+        }catch(_){ }
+        e.stopPropagation();
+      });
       document.addEventListener('click', ()=> hide());
       menu.querySelectorAll('button[data-lang]').forEach(btn=>{
         btn.addEventListener('click', ()=>{ try{ hide(); }catch(_){} });
@@ -1783,6 +1795,16 @@ function selectDocsSmartFolder(){
       window.location.href = '/';
       return;
     }
+
+    // Sync UI language from server (per-user), not from a shared localStorage tab.
+    // This stabilizes translations between different accounts on the same device.
+    try{
+      const want = (me && me.lang) ? String(me.lang) : '';
+      if (want && window.i18n && typeof window.i18n.load === 'function'){
+        const cur = (typeof window.i18n.getLang === 'function') ? String(window.i18n.getLang()||'') : '';
+        if (cur !== want) window.i18n.load(want);
+      }
+    }catch(_e){}
     const role = (me && me.role) || '';
     if (role !== 'accountant'){
       window.location.href = '/app.html';
